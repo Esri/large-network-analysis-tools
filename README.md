@@ -5,7 +5,7 @@ The tools and code samples here help you solve large network analysis problems i
 
 ## Features
 * The SolverTools.tbx toolbox has a geoprocessing tool called "Solve Origin Destination Cost Matrix" that can be used to solve large origin destination cost matrix problems. You can run this tool as-is out of the box with no changes to the code.
-* The odcm.py does all the work. You can modify this script to suit your needs, or you can use it as an example when writing your own script.
+* The odcm.py script does all the work. You can modify this script to suit your needs, or you can use it as an example when writing your own script.
 
 ## Instructions
 
