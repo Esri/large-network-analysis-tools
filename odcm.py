@@ -21,6 +21,7 @@ logger.addHandler(logging.NullHandler())
 ORIGINS_UNIQUE_ID_FIELD = "OriginalOriginsOID"
 DESTINATIONS_UNIQUE_ID_FIELD = "OriginalDestinationsOID"
 
+
 class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     """Solve a OD Cost Matrix problem."""
 
@@ -304,10 +305,16 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         arcpy.management.CalculateField(input_features, unique_id_field_name, f"!{desc_input_features.oidFieldName}!")
 
         # Spatially sort input features
-        logger.debug("Spatially sorting %s", input_features)
-        result = arcpy.management.Sort(input_features, output_features,
-                                       [[desc_input_features.shapeFieldName, "ASCENDING"]], "PEANO")
-        logger.debug(result.getMessages().split("\n")[-1])
+        arc_license = arcpy.ProductInfo()
+        if arc_license != "ArcInfo":
+            logger.debug("Skipping spatial sorting because the Advanced license is not available.")
+            arcpy.management.Copy(input_features, output_features)
+        else:
+            logger.debug("Spatially sorting %s", input_features)
+            result = arcpy.management.Sort(input_features, output_features,
+                                           [[desc_input_features.shapeFieldName, "ASCENDING"]], "PEANO")
+            logger.debug(result.getMessages().split("\n")[-1])
+
         # Calculate network location fields if network data source is local
         if not ODCostMatrix.is_nds_service(network_data_source):
             logger.debug("Calculating network locations for %s", input_features)
