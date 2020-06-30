@@ -16,16 +16,18 @@ import arcpy
 logger = logging.getLogger(__name__)  # pylint:disable=invalid-name
 logger.addHandler(logging.NullHandler())
 
+# These fields will be added to the input origin and destination feature classes and will be calculated to equal
+# the original OID so we can later reliably join between the final OD Lines output and these original inputs.
+ORIGINS_UNIQUE_ID_FIELD = "OriginalOriginsOID"
+DESTINATIONS_UNIQUE_ID_FIELD = "OriginalDestinationsOID"
 
 class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     """Solve a OD Cost Matrix problem."""
 
     # Constants
-    ORIGINS_OID_FIELD_NAME = "OriginOID"
-    DESTINATIONS_OID_FIELD_NAME = "DestinationOID"
     MINUTES_TO_MILES = 1.6667  # Travel speed of 100 miles per hour.
     SEARCH_TOL = "20000 Meters"  # Distance to search for locations of the inputs on the street network.
-    OD_LINE_SHAPE = "NO_LINES"  # shape type for the od lines
+    OD_LINE_SHAPE = ""  # shape type for the od lines
 
     def __init__(self, **kwargs):
         """Set up names used in other methods."""
@@ -80,102 +82,14 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         desc_destinations = arcpy.Describe(self.destinations)
         self.origins_oid_field_name = desc_origins.oidFieldName
         self.destinations_oid_field_name = desc_destinations.oidFieldName
+        # These candidate fields are used for loading origins and desinations. They allow us to pass through the unique
+        # ID fields that we're adding to the outputs so we can join the output Lines back to the original input data.
+        self.origins_candidate_fields = [f for f in desc_origins.fields if f.name == ORIGINS_UNIQUE_ID_FIELD]
+        self.destinations_candidate_fields = [
+            f for f in desc_destinations.fields if f.name == DESTINATIONS_UNIQUE_ID_FIELD]
 
         # Get the impedance, time impedance and distance impedance from the travel mode
         self._get_travel_mode_info()
-
-    def solve_legacy(self, origins_criteria,  # pylint:disable = too-many-locals, too-many-statements
-                     destinations_criteria):
-        """Generate a origin destination cost matrix using a network data source.
-
-        Args:
-            network_data_source: The network dataset layer or the portal URL for the network dataset source used to
-                                 compute the origin destination cost matrix
-            origins_criteria: A two value tuple representing the range of object ids for the origins to process.
-                              For example, to process origins with object id between 101 and 200, pass (101, 200)
-            destinations_criteria: A two value tuple representing the range of object ids for the destinations to
-                              process. For example, to process destinations with object id between 101 and 200,
-                              pass (101, 200)
-
-        """
-        # Set the workspace that will contains input and output NA classes used by OD Cost Matrix solver
-        arcpy.env.workspace = self.od_workspace
-
-        # Determine if we need to use the network dataset layer pointing to a local network dataset or a portal url as
-        # our network data source. For a local network dataset, we also need to checkout the network analyst extension
-        # license.
-        if self.is_service:
-            network_data_source = self.network_data_source
-        else:
-            network_data_source = self.nds_layer_name
-            arcpy.CheckOutExtension("network")
-
-        # Create a new OD cost matrix layer
-        self.logger.debug("Creating OD Cost Matrix layer")
-        result = arcpy.na.MakeODCostMatrixAnalysisLayer(network_data_source, travel_mode=self.travel_mode,
-                                                        cutoff=self.cutoff, line_shape=self.OD_LINE_SHAPE,
-                                                        number_of_destinations_to_find=self.target_count,
-                                                        accumulate_attributes=[self.time_attribute,
-                                                                               self.distance_attribute])
-        od_layer = result.getOutput(0)
-
-        # Get the names of all the sublayers within the OD cost matrix layer.
-        sublayer_names = arcpy.na.GetNAClassNames(od_layer)
-        # Stores the layer names that we will use later
-        origins_layer_name = sublayer_names["Origins"]
-        destinations_layer_name = sublayer_names["Destinations"]
-
-        # Select the origins and destinations to process
-        self._select_inputs(origins_criteria, destinations_criteria)
-
-        # Map the ObjectID field from input origin to the Name field on the origins sub layer and the ObjectID field
-        # from input destinations to the Name field on the destinations sub layer. Map the network locations fields
-        # using field mappings.
-        origins_field_mappings = arcpy.na.NAClassFieldMappings(od_layer, origins_layer_name, True,
-                                                               arcpy.ListFields(self.input_origins_layer))
-        origins_field_mappings["Name"].mappedFieldName = self.origins_oid_field_name
-        destinations_field_mappings = arcpy.na.NAClassFieldMappings(od_layer, destinations_layer_name, True,
-                                                                    arcpy.ListFields(self.input_destinations_layer))
-        destinations_field_mappings["Name"].mappedFieldName = self.destinations_oid_field_name
-
-        # Load the origins and destinations using the field mappings and a search tolerance of 20000 Meters.
-        self.logger.debug("Loading origins and destinations")
-        arcpy.na.AddLocations(od_layer, origins_layer_name, self.input_origins_layer, origins_field_mappings,
-                              self.SEARCH_TOL, append="CLEAR")
-        arcpy.na.AddLocations(od_layer, destinations_layer_name, self.input_destinations_layer,
-                              destinations_field_mappings, self.SEARCH_TOL, append="CLEAR")
-
-        # Solve the OD cost matrix layer
-        self.logger.debug("Solving OD cost matrix")
-        try:
-            solve_result = arcpy.na.Solve(od_layer)
-        except arcpy.ExecuteError:
-            self.job_result["solveMessages"] = arcpy.GetMessages()
-            return
-        self.job_result["solveSucceeded"] = True
-        self.job_result["solveMessages"] = solve_result.getMessages()
-        self.logger.debug("Solving OD cost matrix %s", self.job_result["solveMessages"].split("\n")[-1])
-        lyr_file = os.path.join(self.job_folder, "result_{}.lyrx".format(self.job_id))
-        self.job_result["outputLayerFile"] = lyr_file
-        arcpy.management.SaveToLayerFile(od_layer, lyr_file)
-
-        # Get sublayers
-        # listLayers returns a list of sublayer layer objects contained in the NA group layer, filtered by layer name
-        # used as a wildcard. Use the sublayer name from GetNAClassNames as the wildcard string in case the sublayers
-        # have non-default names.
-        self.origins_sublayer = od_layer.listLayers(origins_layer_name)[0]
-        self.destinations_sublayer = od_layer.listLayers(destinations_layer_name)[0]
-        self.lines_sublayer = od_layer.listLayers(sublayer_names["ODLines"])[0]
-
-        # Transfer OIDs
-        perf_start = time.perf_counter()
-        self.logger.debug("Transferring OIDs from origins and destinations to OD lines")
-        self._transfer_oids()
-        perf_end = time.perf_counter()
-        self.logger.debug("Transferred OIDs in %.2f minutes", (perf_end - perf_start) / 60)
-
-        # Export the ODlines as output feature class
-        self.job_result["outputLines"] = self._export_od_lines()
 
     def solve(self, origins_criteria,  # pylint:disable = too-many-locals, too-many-statements
               destinations_criteria):
@@ -222,15 +136,17 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Select the origins and destinations to process
         self._select_inputs(origins_criteria, destinations_criteria)
 
-        # Map the ObjectID field from input origin to the Name field on the origins sub layer and the ObjectID field
+        # Map the unique ID field from input origin to the Name field on the origins sub layer and the unique ID field
         # from input destinations to the Name field on the destinations sub layer. Map the network locations fields
-        # using field mappings.
+        # using field mappings. Use the candidate field mappings with the unique ID field to pass through those unique
+        # IDs to the input and then to the output.
         origins_field_mappings = od_solver.fieldMappings(arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
-                                                         True)
-        origins_field_mappings["Name"].mappedFieldName = self.origins_oid_field_name
-        destinations_field_mappings = od_solver.fieldMappings(arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,  # noqa pylint:disable=line-too-long
-                                                              True)
-        destinations_field_mappings["Name"].mappedFieldName = self.destinations_oid_field_name
+                                                         True, self.origins_candidate_fields)
+        origins_field_mappings["Name"].mappedFieldName = ORIGINS_UNIQUE_ID_FIELD
+        destinations_field_mappings = od_solver.fieldMappings(
+            arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
+            True, self.destinations_candidate_fields)
+        destinations_field_mappings["Name"].mappedFieldName = DESTINATIONS_UNIQUE_ID_FIELD
 
         # Load the origins and destinations using the field mappings and a search tolerance of 20000 Meters.
         self.logger.debug("Loading origins and destinations")
@@ -254,9 +170,18 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.job_result["outputLayerFile"] = lyr_file
         solve_result.saveAsLayerFile(lyr_file)
 
-        # Export the ODlines as output feature class
+        # Export the ODlines and output origins and destinations to feature classes
+        output_od_origins = os.path.join(self.od_workspace, "output_od_origins")
+        solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Origins, output_od_origins)
+        output_od_destinations = os.path.join(self.od_workspace, "output_od_destinations")
+        solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Destinations, output_od_destinations)
         output_od_lines = os.path.join(self.od_workspace, "output_od_lines")
         solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, output_od_lines)
+        # Join unique ID fields to Lines so the original origin and destination OIDs are preserved in the output lines
+        arcpy.management.JoinField(
+            output_od_lines, "OriginOID", output_od_origins, "OriginOID", [ORIGINS_UNIQUE_ID_FIELD])
+        arcpy.management.JoinField(
+            output_od_lines, "DestinationOID", output_od_destinations, "DestinationOID", [DESTINATIONS_UNIQUE_ID_FIELD])
         self.job_result["outputLines"] = output_od_lines
 
     def _select_inputs(self, origins_criteria, destinations_criteria):
@@ -311,67 +236,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             self.logger.debug("Creating network dataset layer")
             arcpy.na.MakeNetworkDatasetLayer(self.network_data_source, self.nds_layer_name)
 
-    def _transfer_oids_using_join(self):
-        """Transfer OIDs from origins and destinations sub layers to OD lines sub layer using attribute joins."""
-        # Add an attribute index to the OD lines feature class
-        arcpy.management.AddIndex(self.lines_sublayer, "OriginID", "OriginID", "NON_UNIQUE", "NON_ASCENDING")
-        arcpy.management.AddIndex(self.lines_sublayer, "DestinationID", "DestinationID", "NON_UNIQUE", "NON_ASCENDING")
-        # Use the JoinField tool to transfer OD Cost Matrix information to the output feature class
-        # Transfer the OriginOID from the input Origins to the output Lines
-        arcpy.management.JoinField(self.lines_sublayer, "OriginID", self.origins_sublayer, "ObjectID",
-                                   self.ORIGINS_OID_FIELD_NAME)
-        # Transfer the DestinationOID field from the input Destinations to the output Lines
-        arcpy.management.JoinField(self.lines_sublayer, "DestinationID", self.destinations_sublayer, "ObjectID",
-                                   self.DESTINATIONS_OID_FIELD_NAME)
-
-    def _transfer_oids(self):
-        """Calculate OIDs from name field."""
-        # Add OID fields
-        arcpy.management.AddFields(self.lines_sublayer, [[self.ORIGINS_OID_FIELD_NAME, "LONG"],
-                                                         [self.DESTINATIONS_OID_FIELD_NAME, "LONG"]])
-        # Calculate OID fields from the Name field
-        with arcpy.da.UpdateCursor(self.lines_sublayer, ("Name",  # pylint:disable = no-member
-                                                         self.ORIGINS_OID_FIELD_NAME,
-                                                         self.DESTINATIONS_OID_FIELD_NAME)) as cursor:
-            for row in cursor:
-                row[1], row[2] = map(int, row[0].split("-"))
-                cursor.updateRow(row)
-
-    def _export_od_lines(self):
-        """Export OD lines to an output feature class.
-
-        Returns:
-            The full catalog path of the output feature class.
-
-        """
-        self.logger.debug("Exporting OD lines")
-        travel_time_field_name = "Total_{}".format(self.time_attribute)
-        travel_distance_field_name = "Total_{}".format(self.distance_attribute)
-        fields_to_copy = (self.ORIGINS_OID_FIELD_NAME, self.DESTINATIONS_OID_FIELD_NAME, "DestinationRank",
-                          travel_time_field_name, travel_distance_field_name)
-        field_mappings = arcpy.FieldMappings()
-        for field in fields_to_copy:
-            field_map = arcpy.FieldMap()
-            field_map.addInputField(self.lines_sublayer, field)
-            if field == travel_time_field_name:
-                output_field = field_map.outputField
-                output_field.name = "Total_Time"
-                output_field.aliasName = "Total Time"
-                field_map.outputField = output_field
-            elif field == travel_distance_field_name:
-                output_field = field_map.outputField
-                output_field.name = "Total_Distance"
-                output_field.aliasName = "Total Distance"
-                field_map.outputField = output_field
-            else:
-                pass
-            field_mappings.addFieldMap(field_map)
-
-        result = arcpy.conversion.FeatureClassToFeatureClass(self.lines_sublayer, self.od_workspace, "output_od_lines",
-                                                             field_mapping=field_mappings)
-        self.logger.debug("Exporting OD lines %s", result.getMessages().split("\n")[-1])
-        return result.getOutput(0)
-
     @staticmethod
     def get_nds_search_criteria(network_data_source):  # pylint:disable = too-many-locals
         """Return the search criteria for a network dataset that can be used with Calculate Locations GP tool.
@@ -410,7 +274,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         return search_criteria
 
     @staticmethod
-    def preprocess_inputs(input_features, network_data_source, travel_mode, output_workspace):
+    def preprocess_inputs(input_features, network_data_source, travel_mode, output_workspace, unique_id_field_name):
         """Preprocess input features so that they can be processed in chunks.
 
         The function performs tasks such as sptially sorting input features and calculate network locations for the
@@ -421,15 +285,23 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             network_data_source: The catalog path to the network dataset used for analysis
             travel_mode: Name of the travel mode used for the analysis.
             output_workspace: The catalog path of the output workspace in which to write the output feature class.
+            unique_id_field_name: Field name of a unique ID to add and populate.
         Returns:
             The full catalog path of the processed feature class.
 
         """
         logger.info("Preprocessing %s", input_features)
+
         # Create output features in a feature class with the same name as input feature class.
         desc_input_features = arcpy.Describe(input_features)
         input_path = desc_input_features.catalogPath
         output_features = arcpy.CreateUniqueName(os.path.basename(input_path), output_workspace)
+
+        # Add a unique ID field so we don't lose OID info when we sort
+        logger.debug("Adding unique ID field for %s", input_features)
+        if unique_id_field_name not in [f.name for f in desc_input_features.fields]:
+            arcpy.management.AddField(input_features, unique_id_field_name, "LONG")
+        arcpy.management.CalculateField(input_features, unique_id_field_name, f"!{desc_input_features.oidFieldName}!")
 
         # Spatially sort input features
         logger.debug("Spatially sorting %s", input_features)
@@ -537,29 +409,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         return True if network_data_source.startswith("http") else False
 
     @staticmethod
-    def get_service_toolbox(routing_utils_url):
-        """Return the remote toolbox for a portal utility service.
-
-        Args:
-            routing_utils_url: The URL of the routing utilities service configured with the portal.
-        Returns:
-            A named tuple representing a remote toolbox. The toolbox property of the named tuple can be used with
-            arcpy.ImportToolbox.
-        Raises:
-            A ValueError if the utility service is not configured
-
-        """
-        RemoteToolInfo = namedtuple("RemoteToolInfo", ("service_name", "toolbox"))  # pylint: disable=invalid-name
-
-        # Get the service name, folder name and SOAP URL for the utility service.
-        folder_url, service_name = os.path.split(os.path.dirname(routing_utils_url))
-        rest_url, folder_name = os.path.split(folder_url)
-        soap_url = rest_url.replace("/rest/", "/")
-
-        tbx = f"{soap_url};{folder_name}/{service_name};UseSSOIdentityIfPortalOwned"
-        return RemoteToolInfo(service_name, tbx)
-
-    @staticmethod
     def get_tool_limits(portal_url, service_name="asyncODCostMatrix",
                         tool_name="GenerateOriginDestinationCostMatrix"):
         """Return a dictionary of various limits supported by a portal tool.
@@ -615,9 +464,9 @@ def main(**inputs):  # pylint:disable = too-many-locals, too-many-statements, to
 
     # Preprocess inputs
     pp_origins = ODCostMatrix.preprocess_inputs(inputs["origins"], inputs["network_data_source"], inputs["travel_mode"],
-                                                out_gdb)
+                                                out_gdb, ORIGINS_UNIQUE_ID_FIELD)
     pp_destinations = ODCostMatrix.preprocess_inputs(inputs["destinations"], inputs["network_data_source"],
-                                                     inputs["travel_mode"], out_gdb)
+                                                     inputs["travel_mode"], out_gdb, DESTINATIONS_UNIQUE_ID_FIELD)
 
     inputs["origins"] = pp_origins
     inputs["destinations"] = pp_destinations
