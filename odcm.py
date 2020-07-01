@@ -23,6 +23,7 @@ import argparse
 from collections import namedtuple
 
 import arcpy
+import arcgisscripting
 
 # Module level logger
 logger = logging.getLogger(__name__)  # pylint:disable=invalid-name
@@ -317,15 +318,18 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         arcpy.management.CalculateField(input_features, unique_id_field_name, f"!{desc_input_features.oidFieldName}!")
 
         # Spatially sort input features
-        arc_license = arcpy.ProductInfo()
-        if arc_license != "ArcInfo":
-            logger.debug("Skipping spatial sorting because the Advanced license is not available.")
-            arcpy.management.Copy(input_features, output_features)
-        else:
+        try:
             logger.debug("Spatially sorting %s", input_features)
             result = arcpy.management.Sort(input_features, output_features,
                                            [[desc_input_features.shapeFieldName, "ASCENDING"]], "PEANO")
             logger.debug(result.getMessages().split("\n")[-1])
+        except arcgisscripting.ExecuteError:  # pylint:disable = no-member
+            msgs = arcpy.GetMessages(2)
+            if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
+                logger.debug("Skipping spatial sorting because the Advanced license is not available.")
+            else:
+                logger.debug("Skipping spatial sorting because the tool failed. Messages:\n%s", msgs)
+            arcpy.management.Copy(input_features, output_features)
 
         # Calculate network location fields if network data source is local
         if not ODCostMatrix.is_nds_service(network_data_source):
