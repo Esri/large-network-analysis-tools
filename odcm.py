@@ -41,7 +41,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     # Constants
     MINUTES_TO_MILES = 1.6667  # Travel speed of 100 miles per hour.
     SEARCH_TOL = "20000 Meters"  # Distance to search for locations of the inputs on the street network.
-    OD_LINE_SHAPE = ""  # shape type for the od lines
+    OD_LINE_SHAPE = "NO_LINES"  # shape type for the od lines
 
     def __init__(self, **kwargs):
         """Set up names used in other methods."""
