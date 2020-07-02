@@ -38,9 +38,6 @@ DESTINATIONS_UNIQUE_ID_FIELD = "OriginalDestinationsOID"
 class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     """Solve a OD Cost Matrix problem."""
 
-    # Constants
-    SEARCH_TOL = "20000 Meters"  # Distance to search for locations of the inputs on the street network.
-s
     def __init__(self, **kwargs):
         """Set up names used in other methods."""
         # Store keyword args as instance attributes
@@ -145,9 +142,8 @@ s
         od_solver.defaultImpedanceCutoff = self.cutoff
         od_solver.accumulateAttributeNames = [self.time_attribute, self.distance_attribute]
         od_solver.lineShapeType = arcpy.nax.LineShapeType.NoLine
-        search_tol, search_tol_units = self.SEARCH_TOL.split()
-        od_solver.searchTolerance = float(search_tol)
-        od_solver.searchToleranceUnits = arcpy.nax.DistanceUnits[search_tol_units]
+        od_solver.searchTolerance = 20000
+        od_solver.searchToleranceUnits = arcpy.nax.DistanceUnits.Meters
 
         # Select the origins and destinations to process
         self._select_inputs(origins_criteria, destinations_criteria)
