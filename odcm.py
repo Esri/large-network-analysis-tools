@@ -40,8 +40,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
     # Constants
     SEARCH_TOL = "20000 Meters"  # Distance to search for locations of the inputs on the street network.
-    OD_LINE_SHAPE = "NO_LINES"  # shape type for the od lines
-
+s
     def __init__(self, **kwargs):
         """Set up names used in other methods."""
         # Store keyword args as instance attributes
@@ -130,9 +129,14 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             network_data_source = self.nds_layer_name
             arcpy.CheckOutExtension("network")
 
-        # Create a new OD cost matrix layer
+        # Create a new OD cost matrix object
         self.logger.debug("Creating OD Cost Matrix object")
         od_solver = arcpy.nax.OriginDestinationCostMatrix(network_data_source)
+
+        # Set the OD cost matrix analysis properties. Some of these are set based on user inputs. Others are
+        # hard-coded here.  You should modify these to suit your analysis needs. Read about the OD Cost Matrix object's
+        # properties and settings in the documentation:
+        # https://pro.arcgis.com/en/pro-app/arcpy/network-analyst/odcostmatrix.htm
         od_solver.allowSaveLayerFile = True
         od_solver.travelMode = self.travel_mode
         od_solver.defaultDestinationCount = self.target_count
@@ -140,10 +144,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         od_solver.timeUnits = arcpy.nax.TimeUnits.Minutes
         od_solver.defaultImpedanceCutoff = self.cutoff
         od_solver.accumulateAttributeNames = [self.time_attribute, self.distance_attribute]
-        if self.OD_LINE_SHAPE == "NO_LINES":
-            od_solver.lineShapeType = arcpy.nax.LineShapeType.NoLine
-        else:
-            od_solver.lineShapeType = arcpy.nax.LineShapeType.StraightLine
+        od_solver.lineShapeType = arcpy.nax.LineShapeType.NoLine
         search_tol, search_tol_units = self.SEARCH_TOL.split()
         od_solver.searchTolerance = float(search_tol)
         od_solver.searchToleranceUnits = arcpy.nax.DistanceUnits[search_tol_units]
@@ -170,7 +171,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations, self.input_destinations_layer,
                        destinations_field_mappings, False)
 
-        # Solve the OD cost matrix layer
+        # Solve the OD cost matrix analysis
         self.logger.debug("Solving OD cost matrix")
         solve_start = time.time()
         solve_result = od_solver.solve()
