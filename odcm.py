@@ -39,7 +39,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     """Solve a OD Cost Matrix problem."""
 
     # Constants
-    MINUTES_TO_MILES = 1.6667  # Travel speed of 100 miles per hour.
     SEARCH_TOL = "20000 Meters"  # Distance to search for locations of the inputs on the street network.
     OD_LINE_SHAPE = "NO_LINES"  # shape type for the od lines
 
@@ -137,6 +136,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         od_solver.allowSaveLayerFile = True
         od_solver.travelMode = self.travel_mode
         od_solver.defaultDestinationCount = self.target_count
+        od_solver.distanceUnits = arcpy.nax.DistanceUnits.Miles
+        od_solver.timeUnits = arcpy.nax.TimeUnits.Minutes
         od_solver.defaultImpedanceCutoff = self.cutoff
         od_solver.accumulateAttributeNames = [self.time_attribute, self.distance_attribute]
         if self.OD_LINE_SHAPE == "NO_LINES":
@@ -207,7 +208,13 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         if self.cutoff:
             # select destinations within the cutoff from origins
             arcpy.management.MakeFeatureLayer(self.destinations, self.input_destinations_layer)
-            cutoff = self.cutoff * self.MINUTES_TO_MILES if self.is_travel_mode_time_based else self.cutoff
+            # Convert from travel time to distance if needed.  Assume a very fast travel speed of 100 miles per hour to
+            # give a safe buffer distance and make sure all relevant points get included. Note that we are assuming
+            # the cutoff is specified in units of either Minutes or Miles. If you want to use different units, you need
+            # to modify the code here and also change the distanceUnits and timeUnits properties of the OD Cost Matrix
+            # object.
+            minutes_to_miles = 1.6667  # Travel speed of 100 miles per hour.
+            cutoff = self.cutoff * minutes_to_miles if self.is_travel_mode_time_based else self.cutoff
             result = arcpy.management.SelectLayerByLocation(self.input_destinations_layer, "WITHIN_A_DISTANCE_GEODESIC",
                                                             self.input_origins_layer, "{} Miles".format(cutoff),)
             # If no destinations are within the cutoff, skip this iteration
@@ -596,8 +603,9 @@ def _cli():
     parser.add_argument("-f", "--folder", action="store", dest="output_folder", help=help_string, required=True)
 
     # --cutoff parameter
-    help_string = ("The impedance value at which to stop searching for destinations for a given origin in the units of"
-                   " the impedance attribute used by your chosen travel mode. By default no cutoff is used.")
+    help_string = ("The impedance value at which to stop searching for destinations for a given origin. This value "
+                   "should be specified in Minutes if your chosen travel mode is time based or in Miles if your chosen "
+                   "travel mode is distance based. By default no cutoff is used.")
     parser.add_argument("-c", "--cutoff", action="store", type=float, dest="cutoff", help=help_string, default=0)
 
     # --target-count parameter
