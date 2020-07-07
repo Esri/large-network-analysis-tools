@@ -260,6 +260,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     def get_nds_search_criteria(network_data_source):  # pylint:disable = too-many-locals
         """Return the search criteria for a network dataset that can be used with Calculate Locations GP tool.
 
+        Note: This method is not needed in ArcGIS Pro 2.6 or later because the Calculate Locations tool was given a
+        good default value for this parameter at that release.
+
         Args:
             network_data_source: The catalog path to the network dataset
         Returns:
