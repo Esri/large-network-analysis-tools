@@ -315,30 +315,35 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         """
         logger.info("Preprocessing %s", input_features)
 
-        # Create output features in a feature class with the same name as input feature class.
+        # Create a copy of the input features in the output workspace
         desc_input_features = arcpy.Describe(input_features)
         input_path = desc_input_features.catalogPath
         output_features = arcpy.CreateUniqueName(os.path.basename(input_path), output_workspace)
+        arcpy.management.Copy(input_features, output_features)
+        desc_output_features = arcpy.Describe(output_features)
 
-        # Add a unique ID field so we don't lose OID info when we sort
+        # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
+        # Note that if the original input was a shapefile, these IDs will likely be wrong because the Copy process
+        # above will have altered the original ObjectIDs. Consequently, don't use shapefiles as inputs.
         logger.debug("Adding unique ID field for %s", input_features)
-        if unique_id_field_name not in [f.name for f in desc_input_features.fields]:
-            arcpy.management.AddField(input_features, unique_id_field_name, "LONG")
-        arcpy.management.CalculateField(input_features, unique_id_field_name, f"!{desc_input_features.oidFieldName}!")
+        if unique_id_field_name not in [f.name for f in desc_output_features.fields]:
+            arcpy.management.AddField(output_features, unique_id_field_name, "LONG")
+        arcpy.management.CalculateField(output_features, unique_id_field_name, f"!{desc_output_features.oidFieldName}!")
 
         # Spatially sort input features
         try:
+            output_features_sorted = output_features + "_Sorted"
             logger.debug("Spatially sorting %s", input_features)
-            result = arcpy.management.Sort(input_features, output_features,
-                                           [[desc_input_features.shapeFieldName, "ASCENDING"]], "PEANO")
+            result = arcpy.management.Sort(output_features, output_features_sorted,
+                                           [[desc_output_features.shapeFieldName, "ASCENDING"]], "PEANO")
             logger.debug(result.getMessages().split("\n")[-1])
+            output_features = output_features_sorted
         except arcgisscripting.ExecuteError:  # pylint:disable = no-member
             msgs = arcpy.GetMessages(2)
             if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
                 logger.debug("Skipping spatial sorting because the Advanced license is not available.")
             else:
                 logger.debug("Skipping spatial sorting because the tool failed. Messages:\n%s", msgs)
-            arcpy.management.Copy(input_features, output_features)
 
         # Calculate network location fields if network data source is local
         if not ODCostMatrix.is_nds_service(network_data_source):
