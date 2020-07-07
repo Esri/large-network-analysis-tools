@@ -70,6 +70,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.is_travel_mode_time_based = True
         self.input_origins_layer = "InputOrigins" + self.job_id
         self.input_destinations_layer = "InputDestinations" + self.job_id
+        self.input_origins_layer_obj = None
+        self.input_destinations_layer_obj = None
         self.job_result = {  # Store information about each OD cost matrix result
             "jobId": self.job_id,
             "jobFolder": self.job_folder,
@@ -162,10 +164,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the origins and destinations using the field mappings and a search tolerance of 20000 Meters.
         self.logger.debug("Loading origins and destinations")
-        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins, self.input_origins_layer,
+        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins, self.input_origins_layer_obj,
                        origins_field_mappings, False)
-        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations, self.input_destinations_layer,
-                       destinations_field_mappings, False)
+        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
+                       self.input_destinations_layer_obj, destinations_field_mappings, False)
 
         # Solve the OD cost matrix analysis
         self.logger.debug("Solving OD cost matrix")
@@ -201,7 +203,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Select the origins and destinations to process
         origins_where_clause = "{} >= {} And {} <= {}".format(self.origins_oid_field_name, origins_criteria[0],
                                                               self.origins_oid_field_name, origins_criteria[1])
-        arcpy.management.MakeFeatureLayer(self.origins, self.input_origins_layer, origins_where_clause)
+        self.input_origins_layer_obj = arcpy.management.MakeFeatureLayer(
+            self.origins, self.input_origins_layer, origins_where_clause).getOutput(0)
         if self.cutoff:
             # select destinations within the cutoff from origins
             arcpy.management.MakeFeatureLayer(self.destinations, self.input_destinations_layer)
@@ -226,8 +229,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
                                                                        destinations_criteria[0],
                                                                        self.destinations_oid_field_name,
                                                                        destinations_criteria[1])
-            arcpy.management.MakeFeatureLayer(self.destinations, self.input_destinations_layer,
-                                              destinations_where_clause)
+            self.input_destinations_layer_obj = arcpy.management.MakeFeatureLayer(
+                self.destinations, self.input_destinations_layer, destinations_where_clause).getOutput(0)
 
     def _get_travel_mode_info(self):
         """Get additional info from the travel mode."""
