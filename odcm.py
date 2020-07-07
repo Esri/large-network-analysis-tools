@@ -236,7 +236,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         """Get additional info from the travel mode."""
         # When working with services, get the travel modes defined in the portal
         if self.is_service:
-            # travel_modes = self._get_portal_travel_modes()
             travel_modes = arcpy.na.GetTravelModes(self.network_data_source)
         else:
             travel_modes = arcpy.na.GetTravelModes(self.nds_layer_name)
