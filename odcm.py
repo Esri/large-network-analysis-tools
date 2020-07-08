@@ -70,6 +70,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.is_travel_mode_time_based = True
         self.input_origins_layer = "InputOrigins" + self.job_id
         self.input_destinations_layer = "InputDestinations" + self.job_id
+        self.input_origins_layer_obj = None
+        self.input_destinations_layer_obj = None
         self.job_result = {  # Store information about each OD cost matrix result
             "jobId": self.job_id,
             "jobFolder": self.job_folder,
@@ -162,10 +164,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the origins and destinations using the field mappings and a search tolerance of 20000 Meters.
         self.logger.debug("Loading origins and destinations")
-        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins, self.input_origins_layer,
+        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins, self.input_origins_layer_obj,
                        origins_field_mappings, False)
-        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations, self.input_destinations_layer,
-                       destinations_field_mappings, False)
+        od_solver.load(arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
+                       self.input_destinations_layer_obj, destinations_field_mappings, False)
 
         # Solve the OD cost matrix analysis
         self.logger.debug("Solving OD cost matrix")
@@ -201,7 +203,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Select the origins and destinations to process
         origins_where_clause = "{} >= {} And {} <= {}".format(self.origins_oid_field_name, origins_criteria[0],
                                                               self.origins_oid_field_name, origins_criteria[1])
-        arcpy.management.MakeFeatureLayer(self.origins, self.input_origins_layer, origins_where_clause)
+        self.input_origins_layer_obj = arcpy.management.MakeFeatureLayer(
+            self.origins, self.input_origins_layer, origins_where_clause).getOutput(0)
         if self.cutoff:
             # select destinations within the cutoff from origins
             arcpy.management.MakeFeatureLayer(self.destinations, self.input_destinations_layer)
@@ -226,14 +229,13 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
                                                                        destinations_criteria[0],
                                                                        self.destinations_oid_field_name,
                                                                        destinations_criteria[1])
-            arcpy.management.MakeFeatureLayer(self.destinations, self.input_destinations_layer,
-                                              destinations_where_clause)
+            self.input_destinations_layer_obj = arcpy.management.MakeFeatureLayer(
+                self.destinations, self.input_destinations_layer, destinations_where_clause).getOutput(0)
 
     def _get_travel_mode_info(self):
         """Get additional info from the travel mode."""
         # When working with services, get the travel modes defined in the portal
         if self.is_service:
-            # travel_modes = self._get_portal_travel_modes()
             travel_modes = arcpy.na.GetTravelModes(self.network_data_source)
         else:
             travel_modes = arcpy.na.GetTravelModes(self.nds_layer_name)
@@ -257,6 +259,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     @staticmethod
     def get_nds_search_criteria(network_data_source):  # pylint:disable = too-many-locals
         """Return the search criteria for a network dataset that can be used with Calculate Locations GP tool.
+
+        Note: This method is not needed in ArcGIS Pro 2.6 or later because the Calculate Locations tool was given a
+        good default value for this parameter at that release.
 
         Args:
             network_data_source: The catalog path to the network dataset
@@ -310,30 +315,35 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         """
         logger.info("Preprocessing %s", input_features)
 
-        # Create output features in a feature class with the same name as input feature class.
+        # Create a copy of the input features in the output workspace
         desc_input_features = arcpy.Describe(input_features)
         input_path = desc_input_features.catalogPath
         output_features = arcpy.CreateUniqueName(os.path.basename(input_path), output_workspace)
+        arcpy.management.Copy(input_features, output_features)
+        desc_output_features = arcpy.Describe(output_features)
 
-        # Add a unique ID field so we don't lose OID info when we sort
+        # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
+        # Note that if the original input was a shapefile, these IDs will likely be wrong because the Copy process
+        # above will have altered the original ObjectIDs. Consequently, don't use shapefiles as inputs.
         logger.debug("Adding unique ID field for %s", input_features)
-        if unique_id_field_name not in [f.name for f in desc_input_features.fields]:
-            arcpy.management.AddField(input_features, unique_id_field_name, "LONG")
-        arcpy.management.CalculateField(input_features, unique_id_field_name, f"!{desc_input_features.oidFieldName}!")
+        if unique_id_field_name not in [f.name for f in desc_output_features.fields]:
+            arcpy.management.AddField(output_features, unique_id_field_name, "LONG")
+        arcpy.management.CalculateField(output_features, unique_id_field_name, f"!{desc_output_features.oidFieldName}!")
 
         # Spatially sort input features
         try:
+            output_features_sorted = output_features + "_Sorted"
             logger.debug("Spatially sorting %s", input_features)
-            result = arcpy.management.Sort(input_features, output_features,
-                                           [[desc_input_features.shapeFieldName, "ASCENDING"]], "PEANO")
+            result = arcpy.management.Sort(output_features, output_features_sorted,
+                                           [[desc_output_features.shapeFieldName, "ASCENDING"]], "PEANO")
             logger.debug(result.getMessages().split("\n")[-1])
+            output_features = output_features_sorted
         except arcgisscripting.ExecuteError:  # pylint:disable = no-member
             msgs = arcpy.GetMessages(2)
             if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
                 logger.debug("Skipping spatial sorting because the Advanced license is not available.")
             else:
                 logger.debug("Skipping spatial sorting because the tool failed. Messages:\n%s", msgs)
-            arcpy.management.Copy(input_features, output_features)
 
         # Calculate network location fields if network data source is local
         if not ODCostMatrix.is_nds_service(network_data_source):
