@@ -273,6 +273,11 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             The search criteria for the netrwork dataset.
 
         """
+        if arcpy.GetInstallInfo()["Version"] >= "2.6":
+            # In ArcGIS Pro 2.6, the Calculate Locations tool was given a good default value for this parameter.
+            # Because the code below can be slow for some networks, in version 2.6 or later, skip it and rely on
+            # the tool defaults.
+            return ""
         # Determine if a network source defines subtypes. The search criteria needs to be specified for each subtype
         # using the following pattern ["SourceName : subtype description", "SHAPE"]
         tmp_search_criteria = []
