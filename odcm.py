@@ -325,10 +325,12 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         logger.info("Preprocessing %s", input_features)
 
         # Create a copy of the input features in the output workspace
+        logger.debug("Copying %s", input_features)
         desc_input_features = arcpy.Describe(input_features)
         input_path = desc_input_features.catalogPath
         output_features = arcpy.CreateUniqueName(os.path.basename(input_path), output_workspace)
-        arcpy.management.Copy(input_features, output_features)
+        result = arcpy.management.Copy(input_features, output_features)
+        logger.debug(result.getMessages().split("\n")[-1])
         desc_output_features = arcpy.Describe(output_features)
 
         # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
@@ -337,7 +339,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         logger.debug("Adding unique ID field for %s", input_features)
         if unique_id_field_name not in [f.name for f in desc_output_features.fields]:
             arcpy.management.AddField(output_features, unique_id_field_name, "LONG")
-        arcpy.management.CalculateField(output_features, unique_id_field_name, f"!{desc_output_features.oidFieldName}!")
+        result = arcpy.management.CalculateField(output_features, unique_id_field_name, f"!{desc_output_features.oidFieldName}!")
+        logger.debug(result.getMessages().split("\n")[-1])
 
         # Spatially sort input features
         try:
