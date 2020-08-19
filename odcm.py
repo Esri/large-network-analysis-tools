@@ -149,6 +149,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Select the origins and destinations to process
         self._select_inputs(origins_criteria, destinations_criteria)
+        if not self.input_destinations_layer_obj:
+            # No destinations met the criteria for this set of origins
+            return
 
         # Map the unique ID field from input origin to the Name field on the origins sub layer and the unique ID field
         # from input destinations to the Name field on the destinations sub layer. Map the network locations fields
@@ -200,14 +203,20 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
     def _select_inputs(self, origins_criteria, destinations_criteria):
         """Select origins and destinations to process."""
-        # Select the origins and destinations to process
+        # Select the origins and destinations to process based on the OIDs for this chunk
         origins_where_clause = "{} >= {} And {} <= {}".format(self.origins_oid_field_name, origins_criteria[0],
                                                               self.origins_oid_field_name, origins_criteria[1])
         self.input_origins_layer_obj = arcpy.management.MakeFeatureLayer(
             self.origins, self.input_origins_layer, origins_where_clause).getOutput(0)
+        destinations_where_clause = "{} >= {} And {} <= {}".format(self.destinations_oid_field_name,
+                                                                       destinations_criteria[0],
+                                                                       self.destinations_oid_field_name,
+                                                                       destinations_criteria[1])
+        self.input_destinations_layer_obj = arcpy.management.MakeFeatureLayer(
+            self.destinations, self.input_destinations_layer, destinations_where_clause).getOutput(0)
+
+        # If a cutoff is specified, select a subset of the destinations in this chunk that fall within the cutoff
         if self.cutoff:
-            # select destinations within the cutoff from origins
-            arcpy.management.MakeFeatureLayer(self.destinations, self.input_destinations_layer)
             # Convert from travel time to distance if needed.  Assume a very fast travel speed of 100 miles per hour to
             # give a safe buffer distance and make sure all relevant points get included. Note that we are assuming
             # the cutoff is specified in units of either Minutes or Miles. If you want to use different units, you need
@@ -215,23 +224,18 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             # object.
             minutes_to_miles = 1.6667  # Travel speed of 100 miles per hour.
             cutoff = self.cutoff * minutes_to_miles if self.is_travel_mode_time_based else self.cutoff
-            result = arcpy.management.SelectLayerByLocation(self.input_destinations_layer, "WITHIN_A_DISTANCE_GEODESIC",
-                                                            self.input_origins_layer, "{} Miles".format(cutoff),)
-            # If no destinations are within the cutoff, skip this iteration
-            if not result.getOutput(0).getSelectionSet():
+            self.input_destinations_layer_obj = arcpy.management.SelectLayerByLocation(
+                self.input_destinations_layer, "WITHIN_A_DISTANCE_GEODESIC", self.input_origins_layer,
+                "{} Miles".format(cutoff)).getOutput(0)
+            # If no destinations are within the cutoff, skip reset the destinations layer object
+            # so the iteration will be skipped
+            if not self.input_destinations_layer_obj.getSelectionSet():
+                self.input_destinations_layer_obj = None
                 msg = "No destinations found within the cutoff"
                 self.logger.warning(msg)
                 self.job_result["solveMessages"] = msg
                 return
-        else:
-
-            destinations_where_clause = "{} >= {} And {} <= {}".format(self.destinations_oid_field_name,
-                                                                       destinations_criteria[0],
-                                                                       self.destinations_oid_field_name,
-                                                                       destinations_criteria[1])
-            self.input_destinations_layer_obj = arcpy.management.MakeFeatureLayer(
-                self.destinations, self.input_destinations_layer, destinations_where_clause).getOutput(0)
-
+ 
     def _get_travel_mode_info(self):
         """Get additional info from the travel mode."""
         # When working with services, get the travel modes defined in the portal
@@ -269,6 +273,11 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             The search criteria for the netrwork dataset.
 
         """
+        if arcpy.GetInstallInfo()["Version"] >= "2.6":
+            # In ArcGIS Pro 2.6, the Calculate Locations tool was given a good default value for this parameter.
+            # Because the code below can be slow for some networks, in version 2.6 or later, skip it and rely on
+            # the tool defaults.
+            return ""
         # Determine if a network source defines subtypes. The search criteria needs to be specified for each subtype
         # using the following pattern ["SourceName : subtype description", "SHAPE"]
         tmp_search_criteria = []
@@ -316,10 +325,12 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         logger.info("Preprocessing %s", input_features)
 
         # Create a copy of the input features in the output workspace
+        logger.debug("Copying %s", input_features)
         desc_input_features = arcpy.Describe(input_features)
         input_path = desc_input_features.catalogPath
         output_features = arcpy.CreateUniqueName(os.path.basename(input_path), output_workspace)
-        arcpy.management.Copy(input_features, output_features)
+        result = arcpy.management.Copy(input_features, output_features)
+        logger.debug(result.getMessages().split("\n")[-1])
         desc_output_features = arcpy.Describe(output_features)
 
         # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
@@ -328,7 +339,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         logger.debug("Adding unique ID field for %s", input_features)
         if unique_id_field_name not in [f.name for f in desc_output_features.fields]:
             arcpy.management.AddField(output_features, unique_id_field_name, "LONG")
-        arcpy.management.CalculateField(output_features, unique_id_field_name, f"!{desc_output_features.oidFieldName}!")
+        result = arcpy.management.CalculateField(output_features, unique_id_field_name, f"!{desc_output_features.oidFieldName}!")
+        logger.debug(result.getMessages().split("\n")[-1])
 
         # Spatially sort input features
         try:
