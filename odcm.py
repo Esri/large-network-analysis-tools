@@ -1,6 +1,6 @@
 """Compute Origin Destination (OD) cost matrix and save the output matrix as a feature class."""
 ################################################################################
-'''Copyright 2020 Esri
+'''Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -20,7 +20,6 @@ import shutil
 import itertools
 import time
 import argparse
-from collections import namedtuple
 
 import arcpy
 import arcgisscripting
@@ -93,7 +92,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         desc_destinations = arcpy.Describe(self.destinations)
         self.origins_oid_field_name = desc_origins.oidFieldName
         self.destinations_oid_field_name = desc_destinations.oidFieldName
-        # These candidate fields are used for loading origins and desinations. They allow us to pass through the unique
+        # These candidate fields are used for loading origins and destinations. They allow us to pass through the unique
         # ID fields that we're adding to the outputs so we can join the output Lines back to the original input data.
         self.origins_candidate_fields = [f for f in desc_origins.fields if f.name == ORIGINS_UNIQUE_ID_FIELD]
         self.destinations_candidate_fields = [
@@ -209,9 +208,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.input_origins_layer_obj = arcpy.management.MakeFeatureLayer(
             self.origins, self.input_origins_layer, origins_where_clause).getOutput(0)
         destinations_where_clause = "{} >= {} And {} <= {}".format(self.destinations_oid_field_name,
-                                                                       destinations_criteria[0],
-                                                                       self.destinations_oid_field_name,
-                                                                       destinations_criteria[1])
+                                                                   destinations_criteria[0],
+                                                                   self.destinations_oid_field_name,
+                                                                   destinations_criteria[1])
         self.input_destinations_layer_obj = arcpy.management.MakeFeatureLayer(
             self.destinations, self.input_destinations_layer, destinations_where_clause).getOutput(0)
 
@@ -270,7 +269,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         Args:
             network_data_source: The catalog path to the network dataset
         Returns:
-            The search criteria for the netrwork dataset.
+            The search criteria for the network dataset.
 
         """
         if arcpy.GetInstallInfo()["Version"] >= "2.6":
@@ -309,7 +308,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     def preprocess_inputs(input_features, network_data_source, travel_mode, output_workspace, unique_id_field_name):
         """Preprocess input features so that they can be processed in chunks.
 
-        The function performs tasks such as sptially sorting input features and calculate network locations for the
+        The function performs tasks such as spatially sorting input features and calculate network locations for the
         features.
 
         Args:
@@ -339,7 +338,11 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         logger.debug("Adding unique ID field for %s", input_features)
         if unique_id_field_name not in [f.name for f in desc_output_features.fields]:
             arcpy.management.AddField(output_features, unique_id_field_name, "LONG")
-        result = arcpy.management.CalculateField(output_features, unique_id_field_name, f"!{desc_output_features.oidFieldName}!")
+        result = arcpy.management.CalculateField(
+            output_features,
+            unique_id_field_name,
+            f"!{desc_output_features.oidFieldName}!"
+        )
         logger.debug(result.getMessages().split("\n")[-1])
 
         # Spatially sort input features
@@ -477,15 +480,15 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
 
 def solve_od_cost_matrix(inputs, chunk):
-    """Solve OD cost matrix on a seperate process for each iteration.
+    """Solve OD cost matrix on a separate process for each iteration.
 
     Args:
-        inputs: An iterable of dictinories containing the inputs such as origins and destinations to process for each
+        inputs: An iterable of dictionaries containing the inputs such as origins and destinations to process for each
                 iteration.
         chunk: An iterable of OID ranges for origins and destinations defining the origins and destinations that will be
                processed in each iteration.
     Returns:
-        A dictionary which contains information about the result. The dictinory has the following keys:
+        A dictionary which contains information about the result. The dictionary has the following keys:
             "jobId" -- A unique ID
             "jobFolder" -- Folder that stores intermidiate results
             "solveSucceeded" -- Status of the OD cost matrix solve
