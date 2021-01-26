@@ -81,6 +81,8 @@ def solve_odcm():
     create_no_window = 0x08000000
     # Store any output messages (failure as well as success) from the command line tool in a log file
     output_msg_file = os.path.join(cwd, "odcm_outputs.txt")
+    arcpy.AddMessage("Calculating OD Cost Matrix...")
+    arcpy.AddMessage(f"Progress messages for this calculation are being written to {output_msg_file}.")
     with open(output_msg_file, "w") as output_fp:
         try:
             subprocess.run(
