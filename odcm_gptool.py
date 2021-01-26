@@ -1,6 +1,6 @@
 """Execution code for Solve Origin Destination Cost Matrix tool."""
 ################################################################################
-'''Copyright 2020 Esri
+'''Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -83,13 +83,17 @@ def solve_odcm():
     output_msg_file = os.path.join(cwd, "odcm_outputs.txt")
     with open(output_msg_file, "w") as output_fp:
         try:
-            odcm_result = subprocess.run(odcm_inputs, stderr=subprocess.STDOUT, stdout=output_fp, check=True,
-                                         creationflags=create_no_window)
+            subprocess.run(
+                odcm_inputs,
+                stderr=subprocess.STDOUT,
+                stdout=output_fp,
+                check=True,
+                creationflags=create_no_window
+            )
         except subprocess.CalledProcessError as ex:
             arcpy.AddError(f"Call to ODCM command line tool failed. Check {output_msg_file} for additional details.")
             arcpy.AddError(f"{ex}")
             raise SystemExit(-1)
-        # arcpy.AddMessage(output_fp.readlines())
 
 
 if __name__ == "__main__":
