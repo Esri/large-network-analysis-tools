@@ -294,10 +294,8 @@ def convert_distance_units_str_to_enum(distance_units_str):
     raise ValueError(err)
 
 
-def get_oid_ranges_for_input(input, max_chunk_size, where=""):
+def get_oid_ranges_for_input(input, max_chunk_size):
     """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
-
-    A where clause can be used to eliminate any data that should not contribute to the chunks.
 
     Args:
         input (str, layer): Data that needs to be split into chunks
@@ -314,7 +312,7 @@ def get_oid_ranges_for_input(input, max_chunk_size, where=""):
     # Loop through all OIDs of the input and construct tuples of min and max OID for each chunk
     # We do it this way and not by straight-up looking at the numerical values of OIDs to account
     # for definition queries, selection sets, or feature layers with gaps in OIDs
-    for row in arcpy.da.SearchCursor(input, "OID@", where):
+    for row in arcpy.da.SearchCursor(input, "OID@"):
         oid = row[0]
         if num_in_range == 0:
             # Starting new range
@@ -643,7 +641,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # update this.
         max_speed = 80.  # Miles per hour
         # Convert the assumed max speed to the user-specified distance units / time units
-        max_speed = max_speed * (self._hour_to_time_units() / self._mile_to_dist_units())  # distance units / time units
+        max_speed = max_speed * (self._mile_to_dist_units() / self._hour_to_time_units())  # distance units / time units
         # Convert the user's cutoff from time to the user's distance units
         cutoff_dist = self.cutoff * max_speed
         # Add a 5% margin to be on the safe side
@@ -701,7 +699,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             cutoff_dist = self._convert_time_cutoff_to_distance()
 
         # Use SelectLayerByLocation to select those within a straight-line distance
-        self.logger.debug("Eliminating destinations outside of distance threshold...")
+        self.logger.debug(
+            f"Eliminating destinations outside of distance threshold {cutoff_dist} {self.distance_units.name}...")
         self.input_destinations_layer_obj = run_gp_tool(arcpy.management.SelectLayerByLocation, [
             self.input_destinations_layer,
             "WITHIN_A_DISTANCE_GEODESIC",
@@ -743,30 +742,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             formatter = logging.Formatter("%(process)d | %(message)s")
             fh.setFormatter(formatter)
             logger_obj.addHandler(fh)
-
-
-def validate_out_gdb(out_gdb_name, out_folder):
-    """Validate the output gdb name and make sure it doesn't already exist.
-
-    Args:
-        out_gdb_name (str): Name for the output geodatabase
-        out_folder (str): Output folder catalog path
-
-    Raises:
-        ValueError: If a geodatabase with this name already exists in the output folder
-
-    Returns:
-        str: Updated geodatabase name
-    """
-    LOGGER.debug("Validating output geodatabase name and location...")
-    if not out_gdb_name.lower().endswith(".gdb"):
-        out_gdb_name += ".gdb"
-    out_gdb = os.path.join(out_folder, out_gdb_name)
-    if os.path.exists(out_gdb):
-        err = f"Output geodatabase {out_gdb} already exists."
-        LOGGER.error(err)
-        raise ValueError(err)
-    return out_gdb_name
 
 
 def validate_od_settings(**od_inputs):
