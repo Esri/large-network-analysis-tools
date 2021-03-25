@@ -1,2 +1,6 @@
 
 odcm_outputs.txt
+
+*.pyc
+
+LargeNetworkAnalysisTools.pyt.xml
