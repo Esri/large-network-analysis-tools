@@ -174,6 +174,9 @@ class TestODCM(unittest.TestCase):
 
     def test_validate_od_settings(self):
         '''Test the validate_od_settings function.'''
+        # Test that with good inputs, we return the correct optimized field name
+        field_name = odcm.validate_od_settings(**self.od_args)
+        self.assertEqual("Total_Distance", field_name)
         # Test completely invalid travel mode
         od_inputs = deepcopy(self.od_args)
         od_inputs["travel_mode"] = "Pizza"

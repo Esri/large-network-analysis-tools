@@ -431,6 +431,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.distance_attribute = ""
         self.is_travel_mode_time_based = True
         self.is_travel_mode_dist_based = True
+        self.optimized_field_name = None
         self.input_origins_layer = "InputOrigins" + self.job_id
         self.input_destinations_layer = "InputDestinations" + self.job_id
         self.input_origins_layer_obj = None
@@ -774,6 +775,13 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         distance_attribute = travel_mode.distanceAttributeName
         self.is_travel_mode_time_based = True if time_attribute == impedance else False
         self.is_travel_mode_dist_based = True if distance_attribute == impedance else False
+        # Determine which of the OD Lines output table fields contains the optimized cost values
+        if not self.is_travel_mode_time_based and not self.is_travel_mode_dist_based:
+            self.optimized_field_name = "Total_Other"
+        elif self.is_travel_mode_time_based:
+            self.optimized_field_name = "Total_Time"
+        else:
+            self.optimized_field_name = "Total_Distance"
 
     def setup_logger(self, logger_obj):
         """Set up the logger used for logging messages for this process. Logs are written to a text file.
@@ -792,14 +800,24 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
 
 def validate_od_settings(**od_inputs):
-    """Validate OD cost matrix settings before spinning up a bunch of parallel processes doomed to failure."""
+    """Validate OD cost matrix settings before spinning up a bunch of parallel processes doomed to failure.
+
+    Also check which field name in the output OD Lines will store the optimized cost values. This depends on the travel
+    mode being used by the analysis, and we capture it here to use in later steps.
+
+    Returns:
+        str: The name of the field in the output OD Lines table containing the optimized costs for the analysis
+    """
     # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties
     # This allows us to detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
     LOGGER.debug("Validating OD Cost Matrix settings...")
     odcm = None
+    optimized_cost_field = None
     try:
         odcm = ODCostMatrix(**od_inputs)
         odcm._initialize_od_solver()
+        # Check which field name in the output OD Lines will store the optimized cost values
+        optimized_cost_field = odcm.optimized_field_name
         LOGGER.debug("OD Cost Matrix settings successfully validated.")
     except Exception:
         LOGGER.error(f"Error initializing OD Cost Matrix analysis.")
@@ -811,6 +829,8 @@ def validate_od_settings(**od_inputs):
         if odcm:
             LOGGER.debug("Deleting temporary test OD Cost Matrix job folder...")
             shutil.rmtree(odcm.job_result["jobFolder"], ignore_errors=True)
+
+    return optimized_cost_field
 
 
 def solve_od_cost_matrix(inputs, chunk):
@@ -834,7 +854,7 @@ def solve_od_cost_matrix(inputs, chunk):
     return odcm.job_result
 
 
-def post_process_od_lines(od_line_fcs, out_fc, num_destinations):
+def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
     """Merge and post-process the OD Lines calculated in each separate process.
 
     Args:
@@ -855,8 +875,7 @@ def post_process_od_lines(od_line_fcs, out_fc, num_destinations):
     if num_destinations:
         LOGGER.debug(f"Sorting merged OD Lines results...")
         out_sorted_lines = arcpy.CreateUniqueName(f"ODLines_Sorted", arcpy.env.scratchGDB)
-        ## TODO: Use correct sort field
-        sort_fields = [["OriginOID", "ASCENDING"], ["Total_Time", "ASCENDING"]]
+        sort_fields = [["OriginOID", "ASCENDING"], [sort_field, "ASCENDING"]]
         run_gp_tool(arcpy.management.Sort, [out_fc, out_sorted_lines, sort_fields])
         desc = arcpy.Describe(out_sorted_lines)
         # Delete the original output OD lines feature class and re-create it from scratch with the same schema.
@@ -1036,8 +1055,9 @@ def compute_ods_in_parallel(**kwargs):
 
     # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the solver
     # object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes that are
-    # guaranteed to all fail.
-    validate_od_settings(**od_inputs)
+    # guaranteed to all fail. While we're doing this, check and store the field name that will represent the optimized
+    # costs in the output OD Lines table. We'll use this in post processing.
+    optimized_cost_field = validate_od_settings(**od_inputs)
     od_inputs["origins"] = output_origins
     od_inputs["destinations"] = output_destinations
 
@@ -1113,7 +1133,7 @@ def compute_ods_in_parallel(**kwargs):
 
     # Merge individual OD Lines feature classes into a single feature class
     if od_line_fcs:
-        post_process_od_lines(od_line_fcs, output_od_lines, num_destinations)
+        post_process_od_lines(od_line_fcs, output_od_lines, num_destinations, optimized_cost_field)
     else:
         LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
