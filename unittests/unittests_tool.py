@@ -41,7 +41,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         arcpy.ImportToolbox(tbx_path)
 
         self.input_data_folder = os.path.join(CWD, "TestInput")
-        sf_gdb = os.path.join(self.input_data_folder, r"Network Analyst\Tutorial\SanFrancisco.gdb")
+        sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
         self.origins = os.path.join(sf_gdb, "Analysis", "TractCentroids")
         self.destinations = os.path.join(sf_gdb, "Analysis", "Hospitals")
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
