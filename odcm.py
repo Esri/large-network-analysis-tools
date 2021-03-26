@@ -990,6 +990,8 @@ def compute_ods_in_parallel(**kwargs):
             tool_limits
         )
 
+    ## TODO: Spatially sort inputs
+
     # Precalculate network location fields for inputs
     if is_service and should_precalc_network_locations:
         LOGGER.warning("Cannot precalculate network location fields when the network data source is a service.")
