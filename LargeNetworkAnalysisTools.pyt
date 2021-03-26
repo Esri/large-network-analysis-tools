@@ -62,9 +62,25 @@ class SolveLargeODCostMatrix(object):
             direction="Input"
         )
 
-        param_out_fc = arcpy.Parameter(
-            displayName="Output Feature Class",
-            name="Output_Feature_Class",
+        param_out_od_lines = arcpy.Parameter(
+            displayName="Output OD Lines Feature Class",
+            name="Output_OD_Lines_Feature_Class",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_out_origins = arcpy.Parameter(
+            displayName="Output Updated Origins",
+            name="Output_Updated_Origins",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_out_destinations = arcpy.Parameter(
+            displayName="Output Updated Destinations",
+            name="Output_Updated_Destinations",
             datatype="DEFeatureClass",
             parameterType="Required",
             direction="Output"
@@ -164,7 +180,9 @@ class SolveLargeODCostMatrix(object):
         params = [
             param_origins,
             param_destinations,
-            param_out_fc,
+            param_out_od_lines,
+            param_out_origins,
+            param_out_destinations,
             param_network,
             param_travel_mode,
             param_time_units,
@@ -187,8 +205,8 @@ class SolveLargeODCostMatrix(object):
         """Modify the values and properties of parameters before internal
         validation is performed.  This method is called whenever a parameter
         has been changed."""
-        param_network = parameters[7]
-        param_precalculate = parameters[14]
+        param_network = parameters[9]
+        param_precalculate = parameters[16]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         if param_network.altered and param_network.value:
@@ -203,8 +221,8 @@ class SolveLargeODCostMatrix(object):
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
-        param_network = parameters[7]
-        param_max_processes = parameters[12]
+        param_network = parameters[9]
+        param_max_processes = parameters[14]
 
         # If the network data source is arcgis.com, cap max processes
         if param_max_processes.altered and param_max_processes.value and \
@@ -227,18 +245,20 @@ class SolveLargeODCostMatrix(object):
             os.path.join(cwd, "odcm.py"),
             "--origins", get_catalog_path(parameters[0]),
             "--destinations", get_catalog_path(parameters[1]),
-            "--output-feature-class", parameters[2].valueAsText,
-            "--network-data-source", get_catalog_path(parameters[3]),
-            "--travel-mode", get_travel_mode_json(parameters[4]),
-            "--time-units", parameters[5].valueAsText,
-            "--distance-units", parameters[6].valueAsText,
-            "--chunk-size", parameters[7].valueAsText,
-            "--max-processes", parameters[8].valueAsText,
-            "--cutoff", parameters[9].valueAsText,
-            "--num-destinations", parameters[10].valueAsText,
-            "--precalculate-network-locations", parameters[12].valueAsText.capitalize(),
+            "--output-od-lines", parameters[2].valueAsText,
+            "--output-origins", parameters[3].valueAsText,
+            "--output-destinations", parameters[4].valueAsText,
+            "--network-data-source", get_catalog_path(parameters[5]),
+            "--travel-mode", get_travel_mode_json(parameters[6]),
+            "--time-units", parameters[7].valueAsText,
+            "--distance-units", parameters[8].valueAsText,
+            "--chunk-size", parameters[9].valueAsText,
+            "--max-processes", parameters[10].valueAsText,
+            "--cutoff", parameters[11].valueAsText,
+            "--num-destinations", parameters[12].valueAsText,
+            "--precalculate-network-locations", parameters[14].valueAsText.capitalize(),
             "--barriers"
-        ] + get_catalog_path_multivalue(parameters[11])
+        ] + get_catalog_path_multivalue(parameters[13])
         # We do not want to show the console window when calling the command line tool from within our GP tool.
         # This can be done by setting this hex code.
         create_no_window = 0x08000000

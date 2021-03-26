@@ -147,6 +147,53 @@ def is_nds_service(network_data_source):
     return True if network_data_source.startswith("http") else False
 
 
+def spatially_sort_input(input_features, is_origins):
+    """Spatially sort the input feature class.
+
+    Also adds a field to the input feature class to preserve the original OID values. This field is called "OriginOID"
+    for origins and "DestinationOID" for destinations.
+
+    Args:
+        input_features (str): Catalog path to the feature class to sort
+        is_origins (bool): True if the feature class represents origins; False otherwise.
+    """
+    LOGGER.info(f"Spatially sorting input dataset {input_features}...")
+
+    # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
+    # Note that if the original input was a shapefile, these IDs will likely be wrong because copying the original
+    # input to the output geodatabase will have altered the original ObjectIDs.
+    # Consequently, don't use shapefiles as inputs.
+    LOGGER.debug("Transferring original OID values to new field...")
+    oid_field = "OriginOID" if is_origins else "DestinationOID"
+    desc = arcpy.Describe(input_features)
+    if oid_field in [f.name for f in desc.fields]:
+        run_gp_tool(arcpy.management.DeleteField, [input_features, oid_field])
+    run_gp_tool(arcpy.management.AddField, [input_features, oid_field, "LONG"])
+    run_gp_tool(arcpy.management.CalculateField, [input_features, oid_field, f"!{desc.oidFieldName}!"])
+
+    # Make a temporary copy of the inputs so the Sort tool can write its output to the input_features path, which is
+    # the ultimate desired location
+    temp_inputs = arcpy.CreateUniqueName("TempODInputs", arcpy.env.scratchGDB)  # pylint:disable = no-member
+    LOGGER.debug(f"Making temporary copy of inputs in {temp_inputs} before sorting...")
+    run_gp_tool(arcpy.management.Copy, [input_features, temp_inputs])
+
+    # Spatially sort input features
+    try:
+        LOGGER.debug("Running spatial sort...")
+        # Don't use run_gp_tool() because we need to parse license errors.
+        arcpy.management.Sort(temp_inputs, input_features, [[desc.shapeFieldName, "ASCENDING"]], "PEANO")
+    except arcpy.ExecuteError:  # pylint:disable = no-member
+        msgs = arcpy.GetMessages(2)
+        if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
+            LOGGER.warning("Skipping spatial sorting because the Advanced license is not available.")
+        else:
+            LOGGER.warning(f"Skipping spatial sorting because the tool failed. Messages:\n{msgs}")
+
+    # Clean up. Delete temporary copy of inputs
+    LOGGER.debug(f"Deleting temporary input feature class {temp_inputs}...")
+    run_gp_tool(arcpy.management.Delete, [[temp_inputs]])
+
+
 def precalculate_network_locations(input_features, network_data_source, travel_mode):
     """Precalculate network location fields if possible for faster loading and solving later.
 
@@ -849,7 +896,9 @@ def compute_ods_in_parallel(**kwargs):
     kwargs is expected to be a dictionary with the following keys:
     - origins
     - destinations
-    - output_feature_class
+    - output_od_lines
+    - output_origins
+    - output_destinations
     - network_data_source
     - travel_mode
     - chunk_size
@@ -870,7 +919,9 @@ def compute_ods_in_parallel(**kwargs):
     destinations = kwargs["destinations"]
     network_data_source = kwargs["network_data_source"]
     travel_mode = kwargs["travel_mode"]
-    output_feature_class = kwargs["output_feature_class"]
+    output_od_lines = kwargs["output_od_lines"]
+    output_origins = kwargs["output_origins"]
+    output_destinations = kwargs["output_destinations"]
     chunk_size = kwargs["chunk_size"]
     max_processes = kwargs["max_processes"]
     time_units = kwargs["time_units"]
@@ -978,6 +1029,8 @@ def compute_ods_in_parallel(**kwargs):
     # object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes that are
     # guaranteed to all fail.
     validate_od_settings(**od_inputs)
+    od_inputs["origins"] = output_origins
+    od_inputs["destinations"] = output_destinations
 
     # Set max origins and destinations per chunk
     max_origins = chunk_size
@@ -990,20 +1043,27 @@ def compute_ods_in_parallel(**kwargs):
             tool_limits
         )
 
-    ## TODO: Spatially sort inputs
+    # Copy Origins and Destinations to outputs
+    LOGGER.debug(f"Copying input origins and destinations to outputs...")
+    run_gp_tool(arcpy.management.Copy, [origins, output_origins])
+    run_gp_tool(arcpy.management.Copy, [destinations, output_destinations])
+
+    # Spatially sort inputs
+    spatially_sort_input(output_origins, is_origins=True)
+    spatially_sort_input(output_destinations, is_origins=False)
 
     # Precalculate network location fields for inputs
     if is_service and should_precalc_network_locations:
         LOGGER.warning("Cannot precalculate network location fields when the network data source is a service.")
     if not is_service and should_precalc_network_locations:
-        precalculate_network_locations(origins, network_data_source, travel_mode)
-        precalculate_network_locations(destinations, network_data_source, travel_mode)
+        precalculate_network_locations(output_origins, network_data_source, travel_mode)
+        precalculate_network_locations(output_destinations, network_data_source, travel_mode)
         for barrier_fc in barriers:
             precalculate_network_locations(barrier_fc, network_data_source, travel_mode)
 
     # Construct OID ranges for chunks of origins and destinations
-    origin_ranges = get_oid_ranges_for_input(origins, max_origins)
-    destination_ranges = get_oid_ranges_for_input(destinations, max_destinations)
+    origin_ranges = get_oid_ranges_for_input(output_origins, max_origins)
+    destination_ranges = get_oid_ranges_for_input(output_destinations, max_destinations)
 
     # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
     ranges = itertools.product(origin_ranges, destination_ranges)
@@ -1012,7 +1072,6 @@ def compute_ods_in_parallel(**kwargs):
 
     # Compute OD cost matrix in parallel
     od_line_fcs = []  # Stores catalog paths to the output OD Cost Matrix Lines for each parallel process
-    job_folders_to_delete = []  # Stores intermediate output folders created by each parallel process
     completed_jobs = 0  # Track the number of jobs completed so far to use in logging
     # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
     with futures.ProcessPoolExecutor(max_workers=max_processes) as executor:
@@ -1036,7 +1095,6 @@ def compute_ods_in_parallel(**kwargs):
                 raise
 
             # Parse the results dictionary and store components for post-processing.
-            job_folders_to_delete.append(result["jobFolder"])
             if result["solveSucceeded"]:
                 od_line_fcs.append(result["outputLines"])
             else:
@@ -1046,20 +1104,19 @@ def compute_ods_in_parallel(**kwargs):
 
     # Merge individual OD Lines feature classes into a single feature class
     if od_line_fcs:
-        post_process_od_lines(od_line_fcs, output_feature_class)
+        post_process_od_lines(od_line_fcs, output_od_lines)
     else:
         LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
     # Cleanup
     # Delete the job folders if the job succeeded
-    if DELETE_INTERMEDIATE_OD_OUTPUTS and job_folders_to_delete:
+    if DELETE_INTERMEDIATE_OD_OUTPUTS:
         LOGGER.info("Deleting intermediate outputs...")
-        for folder in job_folders_to_delete:
-            try:
-                shutil.rmtree(folder, ignore_errors=True)
-            except Exception:
-                # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
-                LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {folder}.")
+        try:
+            shutil.rmtree(scratch_folder, ignore_errors=True)
+        except Exception:
+            # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
+            LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {scratch_folder}.")
 
     LOGGER.info("Finished calculating OD Cost Matrices.")
 
@@ -1079,10 +1136,20 @@ def _launch_tool():
     help_string = "The full catalog path to the feature class containing the destinations."
     parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
 
-    # --output-feature-class parameter
+    # --output-od-lines parameter
     help_string = "The catalog path to the output feature class that will contain the combined OD Cost Matrix results."
     parser.add_argument(
-        "-f", "--output-feature-class", action="store", dest="output_feature_class", help=help_string, required=True)
+        "-f", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
+
+    # --output-origins parameter
+    help_string = "The catalog path to the output feature class that will contain the updated origins."
+    parser.add_argument(
+        "-f", "--output-origins", action="store", dest="output_origins", help=help_string, required=True)
+
+    # --output-destinations parameter
+    help_string = "The catalog path to the output feature class that will contain the updated destinations."
+    parser.add_argument(
+        "-f", "--output-destinations", action="store", dest="output_destinations", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
