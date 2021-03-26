@@ -834,7 +834,7 @@ def solve_od_cost_matrix(inputs, chunk):
     return odcm.job_result
 
 
-def post_process_od_lines(od_line_fcs, out_fc):
+def post_process_od_lines(od_line_fcs, out_fc, num_destinations):
     """Merge and post-process the OD Lines calculated in each separate process.
 
     Args:
@@ -848,43 +848,52 @@ def post_process_od_lines(od_line_fcs, out_fc):
     LOGGER.debug(f"Merging OD Cost Matrix results...")
     run_gp_tool(arcpy.management.Merge, [od_line_fcs, out_fc])
 
-    # ## TODO
-    # # Calculating the OD in chunks means our merged output may have more than one destination for each origin,
-    # # but this analysis only wants the closest one. We need to eliminate all rows representing the non-closest.
-    # # Sort the data by OriginOID and Travel_Time and then use Summary Statistics using "First" as the summary
-    # # method as a simple and Basic-license-available way to eliminate all but the closest destination. The
-    # # Delete Identical tool would be a more straightforward way to do this but requires the Advanced license.
-    # out_sorted_lines = os.path.join(out_gdb, arcpy.ValidateTableName(f"ODLines_Sorted_{specialty}", out_gdb))
-    # LOGGER.debug(f"Sorting merged OD Lines results...")
-    # sort_fields = [["OriginOID", "ASCENDING"], ["Total_Time", "ASCENDING"], ["Total_Distance", "ASCENDING"]]
-    # run_gp_tool(arcpy.management.Sort, [out_merged_lines, out_sorted_lines, sort_fields])
-    # out_summarized_lines = os.path.join(out_gdb, arcpy.ValidateTableName(f"ODStats_{specialty}", out_gdb))
-    # LOGGER.debug(f"Removing duplicate results from OD lines with Statistics tool...")
-    # stats_field_names = ["Total_Time", "Total_Distance", "DestinationOID"]
-    # stats_fields = [[fname, "FIRST"] for fname in stats_field_names]
-    # run_gp_tool(arcpy.analysis.Statistics, [out_sorted_lines, out_summarized_lines, stats_fields, "OriginOID"])
+    # If we wanted to find only the k closest destinations for each origin, we have to do additional post-processing.
+    # Calculating the OD in chunks means our merged output may have more than k destinations for each origin because
+    # each individual chunk found the closest k for that chunk. We need to eliminate all extra rows beyond the first k.
+    # Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
+    if num_destinations:
+        LOGGER.debug(f"Sorting merged OD Lines results...")
+        out_sorted_lines = arcpy.CreateUniqueName(f"ODLines_Sorted", arcpy.env.scratchGDB)
+        ## TODO: Use correct sort field
+        sort_fields = [["OriginOID", "ASCENDING"], ["Total_Time", "ASCENDING"]]
+        run_gp_tool(arcpy.management.Sort, [out_fc, out_sorted_lines, sort_fields])
+        desc = arcpy.Describe(out_sorted_lines)
+        # Delete the original output OD lines feature class and re-create it from scratch with the same schema.
+        run_gp_tool(arcpy.management.Delete, [[out_fc]])
+        run_gp_tool(arcpy.management.CreateFeatureclass, [
+            os.path.dirname(out_fc),
+            os.path.basename(out_fc),
+            "POLYLINE",
+            out_sorted_lines,  # template feature class to transfer full schema
+            "SAME_AS_TEMPLATE",
+            "SAME_AS_TEMPLATE",
+            desc.spatialReference
+        ])
+        # Loop through the sorted feature class and insert only the first k into the final output
+        field_names = ["OriginOID", "SHAPE@"] + [f.name for f in desc.fields if f.name != "OriginOID"]
+        with arcpy.da.InsertCursor(out_fc, field_names) as cur:
+            current_origin_id = None
+            count = 0
+            for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):
+                origin_id = row[0]
+                if origin_id != current_origin_id:
+                    # Starting a fresh origin ID
+                    current_origin_id = origin_id
+                    count = 0
+                count += 1
+                if count > num_destinations:
+                    # Skip this row because we have exceeded the number we want to keep for this origin
+                    continue
+                # If we got this far, we want to keep this row.
+                cur.insertRow(row)
 
-    # # Update some fields
-    # # Update field names to remove "FIRST_" prefix from the Summary Stats
-    # for fname in stats_field_names:
-    #     LOGGER.debug(f"Renaming FIRST_{fname} field...")
-    #     run_gp_tool(arcpy.management.AlterField, [out_summarized_lines, f"FIRST_{fname}", fname, fname])
-    # # Delete unneeded FREQUENCY field that the Statistics tool creates
-    # LOGGER.debug(f"Deleting FREQUENCY field...")
-    # run_gp_tool(arcpy.management.DeleteField, [out_summarized_lines, "FREQUENCY"])
-    # # Calculate a field called Specialty with the value of the specialty being calculated
-    # LOGGER.debug(f"Adding Specialty field...")
-    # run_gp_tool(arcpy.management.AddField, [out_summarized_lines, "Specialty", "TEXT"])
-    # LOGGER.debug(f"Calculating Specialty field...")
-    # run_gp_tool(arcpy.management.CalculateField, [out_summarized_lines, "Specialty", f'"{specialty}"'])
+        # Clean up intermediate outputs
+        LOGGER.debug("Deleting intermediate post-processing outputs...")
+        run_gp_tool(arcpy.management.Delete, [[out_sorted_lines]])
 
-    # # Clean up intermediate outputs
-    # LOGGER.debug("Deleting intermediate post-processing outputs...")
-    # run_gp_tool(arcpy.management.Delete, [[out_merged_lines, out_sorted_lines]])
-
-    # LOGGER.info(f"Post-processing complete for specialty {specialty}.")
-    # LOGGER.info(f"Results written to {out_summarized_lines}.")
-    # return out_summarized_lines
+    LOGGER.info(f"Post-processing complete.")
+    LOGGER.info(f"Results written to {out_fc}.")
 
 
 def compute_ods_in_parallel(**kwargs):
@@ -1104,7 +1113,7 @@ def compute_ods_in_parallel(**kwargs):
 
     # Merge individual OD Lines feature classes into a single feature class
     if od_line_fcs:
-        post_process_od_lines(od_line_fcs, output_od_lines)
+        post_process_od_lines(od_line_fcs, output_od_lines, num_destinations)
     else:
         LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 

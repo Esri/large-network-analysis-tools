@@ -102,7 +102,7 @@ class TestODCM(unittest.TestCase):
         # Precalculate network locations
         fc_to_precalculate = os.path.join(self.output_gdb, "Precalculated")
         arcpy.management.Copy(self.destinations, fc_to_precalculate)
-        odcm.precalculate_network_locations(fc_to_precalculate, self.local_nd, self.local_tm)
+        odcm.precalculate_network_locations(fc_to_precalculate, self.local_nd, self.local_tm_time)
         actual_fields = set([f.name for f in arcpy.ListFields(fc_to_precalculate)])
         self.assertTrue(loc_fields.issubset(actual_fields), "Network location fields not added")
         for row in arcpy.da.SearchCursor(fc_to_precalculate, list(loc_fields)):
@@ -264,12 +264,12 @@ class TestODCM(unittest.TestCase):
             "output_destinations": out_destinations,
             "network_data_source": self.local_nd,
             "travel_mode": self.local_tm_time,
-            "chunk_size": 50,
+            "chunk_size": 20,
             "max_processes": 4,
             "time_units": "Minutes",
             "distance_units": "Miles",
-            "cutoff": 15,
-            "num_destinations": 1,
+            "cutoff": 30,
+            "num_destinations": 2,
             "precalculate_network_locations": True,
         }
         odcm.compute_ods_in_parallel(**inputs)
@@ -278,6 +278,9 @@ class TestODCM(unittest.TestCase):
         self.assertTrue(arcpy.Exists(out_od_lines))
         self.assertTrue(arcpy.Exists(out_origins))
         self.assertTrue(arcpy.Exists(out_destinations))
+        # With 2 destinations for each origin, expect 414 rows in the output
+        # Note: 1 origin finds no destinations, and that's why we don't have 416.
+        self.assertEqual(414, int(arcpy.management.GetCount(out_od_lines).getOutput(0)))
 
 
 if __name__ == '__main__':
