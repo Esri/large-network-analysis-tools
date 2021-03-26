@@ -8,3 +8,5 @@ LargeNetworkAnalysisTools.pyt.xml
 /unittests/TestInput
 /unittests/TestOutput
 unittests/portal_credentials.py
+
+LargeNetworkAnalysisTools.SolveLargeODCostMatrix.pyt.xml

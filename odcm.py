@@ -1168,17 +1168,17 @@ def _launch_tool():
     # --output-od-lines parameter
     help_string = "The catalog path to the output feature class that will contain the combined OD Cost Matrix results."
     parser.add_argument(
-        "-f", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
+        "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
 
     # --output-origins parameter
     help_string = "The catalog path to the output feature class that will contain the updated origins."
     parser.add_argument(
-        "-f", "--output-origins", action="store", dest="output_origins", help=help_string, required=True)
+        "-oo", "--output-origins", action="store", dest="output_origins", help=help_string, required=True)
 
     # --output-destinations parameter
     help_string = "The catalog path to the output feature class that will contain the updated destinations."
     parser.add_argument(
-        "-f", "--output-destinations", action="store", dest="output_destinations", help=help_string, required=True)
+        "-od", "--output-destinations", action="store", dest="output_destinations", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."

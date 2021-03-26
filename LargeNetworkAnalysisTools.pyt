@@ -205,8 +205,8 @@ class SolveLargeODCostMatrix(object):
         """Modify the values and properties of parameters before internal
         validation is performed.  This method is called whenever a parameter
         has been changed."""
-        param_network = parameters[9]
-        param_precalculate = parameters[16]
+        param_network = parameters[5]
+        param_precalculate = parameters[14]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         if param_network.altered and param_network.value:
@@ -221,8 +221,8 @@ class SolveLargeODCostMatrix(object):
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
-        param_network = parameters[9]
-        param_max_processes = parameters[14]
+        param_network = parameters[5]
+        param_max_processes = parameters[10]
 
         # If the network data source is arcgis.com, cap max processes
         if param_max_processes.altered and param_max_processes.value and \
