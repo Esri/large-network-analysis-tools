@@ -4,7 +4,7 @@
 The tools and code samples here help you solve large network analysis problems in ArcGIS Pro. We have provided a python script that can solve a large origin destination cost matrix problem by chunking the input data, solving in parallel, and combining the results into a single output.
 
 ## Features
-* The SolverTools.tbx toolbox has a geoprocessing tool called "Solve Origin Destination Cost Matrix" that can be used to solve large origin destination cost matrix problems. You can run this tool as-is out of the box with no changes to the code.
+* The LargeNetworkAnalysisTools.pyt toolbox has a geoprocessing tool called "Solve Large OD Cost Matrix" that can be used to solve large origin destination cost matrix problems. You can run this tool as-is out of the box with no changes to the code.
 * The odcm.py script does all the work. You can modify this script to suit your needs, or you can use it as an example when writing your own script.
 
 ## Instructions
@@ -37,7 +37,7 @@ Find a bug or want to request a new feature?  Please let us know by submitting a
 Esri welcomes contributions from anyone and everyone. Please see our [guidelines for contributing](https://github.com/esri/contributing).
 
 ## Licensing
-Copyright 2020 Esri
+Copyright 2021 Esri
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
