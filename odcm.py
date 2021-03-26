@@ -31,13 +31,16 @@ from distutils.util import strtobool
 
 import arcpy
 
+# Import OD Cost Matrix settings from config file
 from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL
 
 
 arcpy.env.overwriteOutput = True
 
 
-# Module level logger
+# Set logging for the main process.
+# LOGGER logs everything from the main process to stdout using a specific format that the SolveLargeODCostMatrix tool
+# can parse and write to the geoprocessing message feed.
 LOG_LEVEL = logging.INFO  # Set to logging.DEBUG to see verbose debug messages
 LOGGER = logging.getLogger(__name__)  # pylint:disable=invalid-name
 LOGGER.setLevel(LOG_LEVEL)
@@ -47,18 +50,10 @@ console_handler.setLevel(LOG_LEVEL)
 MSG_STR_SPLITTER = " | "
 console_handler.setFormatter(logging.Formatter("%(levelname)s" + MSG_STR_SPLITTER + "%(message)s"))
 LOGGER.addHandler(console_handler)
-# Special prefix and splitter for info-level message that tells us the output table locations when the script completes.
-# Used by the script tool to add output catalog paths to the derived output parameter so they are added to the map.
-MSG_OUTPUT_TABLE_PREFIX = "Output tables: "
-MSG_OUTPUT_TABLE_SPLITTER = ";"
-MSG_OUTPUT_SUMMARY_TABLE_PREFIX = "Output summary table: "
 
+# Set some global variables. Some of these are also referenced in the script tool definition.
 DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
 TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
-TIME_THRESHOLD_FIELD_ALIAS_PREFIX = "Time Threshold: "
-DIST_THRESHOLD_FIELD_ALIAS_PREFIX = "Distance Threshold: "
-PASS_FIELD_ALIAS_PREFIX = "Pass: "
-PASS_FIELD_NAME_PREFIX = "Pass_"
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 DELETE_INTERMEDIATE_OD_OUTPUTS = True  # Set to False for debugging purposes
 
