@@ -189,35 +189,35 @@ class TestODCM(unittest.TestCase):
     #     od = odcm.ODCostMatrix(**od_inputs)
     #     self.assertEqual(1.60934, od._mile_to_dist_units())
 
-    def test_ODCostMatrix_convert_time_cutoff_to_distance(self):
-        '''Test the _convert_time_cutoff_to_distance method of the ODCostMatrix class.'''
-        # We start with a 20-minute cutoff. The method converts this to a reasonable distance in units of miles.
-        od_inputs = deepcopy(self.od_args)
-        od_inputs["travel_mode"] = self.local_tm_time
-        od_inputs["cutoff"] = 20
-        od = odcm.ODCostMatrix(**od_inputs)
-        self.assertAlmostEqual(28, od._convert_time_cutoff_to_distance(), 1)
+    # def test_ODCostMatrix_convert_time_cutoff_to_distance(self):
+    #     '''Test the _convert_time_cutoff_to_distance method of the ODCostMatrix class.'''
+    #     # We start with a 20-minute cutoff. The method converts this to a reasonable distance in units of miles.
+    #     od_inputs = deepcopy(self.od_args)
+    #     od_inputs["travel_mode"] = self.local_tm_time
+    #     od_inputs["cutoff"] = 20
+    #     od = odcm.ODCostMatrix(**od_inputs)
+    #     self.assertAlmostEqual(28, od._convert_time_cutoff_to_distance(), 1)
 
-    def test_ODCostMatrix_select_inputs(self):
-        '''Test the _select_inputs method of the ODCostMatrix class.'''
-        od = odcm.ODCostMatrix(**self.od_args)
-        origin_criteria = [1, 2]  # Encompasses 2 rows in the southwest corner
+    # def test_ODCostMatrix_select_inputs(self):
+    #     '''Test the _select_inputs method of the ODCostMatrix class.'''
+    #     od = odcm.ODCostMatrix(**self.od_args)
+    #     origin_criteria = [1, 2]  # Encompasses 2 rows in the southwest corner
  
-        # Test when a subset of destinations meets the cutoff criteria
-        dest_criteria = [8, 12]  # Encompasses 5 rows. Two are close to the origins.
-        od._select_inputs(origin_criteria, dest_criteria)
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
-        # Only two destinations fall within the distance threshold
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_destinations_layer_obj).getOutput(0)))
+    #     # Test when a subset of destinations meets the cutoff criteria
+    #     dest_criteria = [8, 12]  # Encompasses 5 rows. Two are close to the origins.
+    #     od._select_inputs(origin_criteria, dest_criteria)
+    #     self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
+    #     # Only two destinations fall within the distance threshold
+    #     self.assertEqual(2, int(arcpy.management.GetCount(od.input_destinations_layer_obj).getOutput(0)))
 
-        # Test when none of the destinations are within the threshold
-        dest_criteria = [14, 17]  # Encompasses 4 locations in the far northeast corner
-        od._select_inputs(origin_criteria, dest_criteria)
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
-        self.assertIsNone(
-            od.input_destinations_layer_obj,
-            "Destinations layer should be None since no destinations fall within the straight-line cutoff of origins."
-        )
+    #     # Test when none of the destinations are within the threshold
+    #     dest_criteria = [14, 17]  # Encompasses 4 locations in the far northeast corner
+    #     od._select_inputs(origin_criteria, dest_criteria)
+    #     self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
+    #     self.assertIsNone(
+    #         od.input_destinations_layer_obj,
+    #         "Destinations layer should be None since no destinations fall within the straight-line cutoff of origins."
+    #     )
 
     # def test_ODCostMatrix_solve(self):
     #     '''Test the solve method of the ODCostMatrix class.'''
@@ -231,77 +231,72 @@ class TestODCM(unittest.TestCase):
     #     self.assertIsInstance(od.job_result, dict)
     #     self.assertTrue(od.job_result["solveSucceeded"], "OD solve failed")
     #     self.assertTrue(arcpy.Exists(od.job_result["outputLines"]), "OD line output does not exist.")
-    #     # ODLines output contains only 1 row because the other four origins cannot find a destination within their
-    #     # time cutoff threshold
-    #     self.assertEqual(1, int(arcpy.management.GetCount(od.job_result["outputLines"]).getOutput(0)))
+    #     self.assertEqual(2, int(arcpy.management.GetCount(od.job_result["outputLines"]).getOutput(0)))
 
     # def test_solve_od_cost_matrix(self):
     #     '''Test the solve_od_cost_matrix function.'''
-    #     result = odcm.solve_od_cost_matrix(self.od_args, [[6, 10], [1, 7]])
+    #     result = odcm.solve_od_cost_matrix(self.od_args, [[1, 2], [8, 12]])
     #     # Check results
     #     self.assertIsInstance(result, dict)
-    #     print(result)
     #     self.assertTrue(os.path.exists(result["logFile"]), "Log file does not exist.")
     #     self.assertTrue(result["solveSucceeded"], "OD solve failed")
     #     self.assertTrue(arcpy.Exists(result["outputLines"]), "OD line output does not exist.")
-    #     # For this chunk, all origins find at least one destination, but one is eliminated because it the resulting line
-    #     # exceeds the non-optimized threshold.
-    #     self.assertEqual(4, int(arcpy.management.GetCount(result["outputLines"]).getOutput(0)))
+    #     self.assertEqual(2, int(arcpy.management.GetCount(result["outputLines"]).getOutput(0)))
 
-    # def test_compute_ods_in_parallel(self):
-    #     '''Test the compute_ods_in_parallel function, which actually solves the ODs in parallel.'''
-    #     # Copy origins so we don't overwrite inputs
-    #     origins = os.path.join(self.output_gdb, "Members_compute_ods_in_parallel")
-    #     arcpy.management.Copy(self.origins, origins)
-    #     # Run parallel process
-    #     out_gdb_name = "Output_Compute_ODs_in_Parallel"
-    #     specialties_to_analyze = ["Primary", "Orthopedic"]
-    #     inputs = {
-    #         "origins": origins,
-    #         "geography_field": "County",
-    #         "destinations": self.destinations,
-    #         "specialty_field": "Specialty",
-    #         "specialties_to_analyze": specialties_to_analyze,
-    #         "output_folder": self.output_folder,
-    #         "output_geodatabase_name": out_gdb_name,
-    #         "network_data_source": self.local_nd,
-    #         "travel_mode": self.local_tm,
-    #         "chunk_size": 4,
-    #         "max_processes": 4,
-    #         "time_units": "Minutes",
-    #         "distance_units": "Miles",
-    #         "precalculate_network_locations": True
-    #     }
-    #     odcm.compute_ods_in_parallel(**inputs)
-    #     # Check results
-    #     out_summary_table = os.path.join(self.output_folder, out_gdb_name + ".gdb", "SummarizedCompliance")
-    #     self.assertTrue(arcpy.Exists(out_summary_table))
-    #     summary_table_fields = [f.name for f in arcpy.ListFields(out_summary_table)]
-    #     member_fields = arcpy.ListFields(origins)
-    #     for specialty in specialties_to_analyze:
-    #         # Output table for this specialty should exist
-    #         out_table = os.path.join(self.output_folder, out_gdb_name + ".gdb", f"ODStats_{specialty}")
-    #         self.assertTrue(arcpy.Exists(out_table))
-    #         # The Members table should have a Pass_ field for this specialty
-    #         expected_alias = odcm.PASS_FIELD_ALIAS_PREFIX + specialty
-    #         self.assertTrue(expected_alias in [f.aliasName for f in member_fields])
-    #         # The Pass_ field should be populated with a value of 1 for each member who had an entry in the output OD
-    #         # table for this specialty. Thus, the number of rows in the OD table should match the number of rows in
-    #         # Members that pass for this specialty.
-    #         pass_field = [f.name for f in member_fields if f.aliasName == expected_alias][0]
-    #         nonzero_origins = "Passing Members"
-    #         arcpy.management.MakeFeatureLayer(origins, nonzero_origins, f"{pass_field} = 1")
-    #         member_count = int(arcpy.management.GetCount(nonzero_origins).getOutput(0))
-    #         od_table_count = int(arcpy.management.GetCount(out_table).getOutput(0))
-    #         self.assertEqual(
-    #             od_table_count, member_count,
-    #             "Number of origins that pass for this specialty does not match the count for the OD table."
-    #         )
-    #         # There should be a Perc_ field for each specialty in the summary table
-    #         self.assertIn(
-    #             f"Perc_{specialty}", summary_table_fields,
-    #             f"Missing Perc_ field in summary table for specialty {specialty}"
-    #         )
+    def test_compute_ods_in_parallel(self):
+        '''Test the compute_ods_in_parallel function, which actually solves the ODs in parallel.'''
+        # Copy origins so we don't overwrite inputs
+        origins = os.path.join(self.output_gdb, "Members_compute_ods_in_parallel")
+        arcpy.management.Copy(self.origins, origins)
+        # Run parallel process
+        out_gdb_name = "Output_Compute_ODs_in_Parallel"
+        specialties_to_analyze = ["Primary", "Orthopedic"]
+        inputs = {
+            "origins": origins,
+            "geography_field": "County",
+            "destinations": self.destinations,
+            "specialty_field": "Specialty",
+            "specialties_to_analyze": specialties_to_analyze,
+            "output_folder": self.output_folder,
+            "output_geodatabase_name": out_gdb_name,
+            "network_data_source": self.local_nd,
+            "travel_mode": self.local_tm,
+            "chunk_size": 4,
+            "max_processes": 4,
+            "time_units": "Minutes",
+            "distance_units": "Miles",
+            "precalculate_network_locations": True
+        }
+        odcm.compute_ods_in_parallel(**inputs)
+        # Check results
+        out_summary_table = os.path.join(self.output_folder, out_gdb_name + ".gdb", "SummarizedCompliance")
+        self.assertTrue(arcpy.Exists(out_summary_table))
+        summary_table_fields = [f.name for f in arcpy.ListFields(out_summary_table)]
+        member_fields = arcpy.ListFields(origins)
+        for specialty in specialties_to_analyze:
+            # Output table for this specialty should exist
+            out_table = os.path.join(self.output_folder, out_gdb_name + ".gdb", f"ODStats_{specialty}")
+            self.assertTrue(arcpy.Exists(out_table))
+            # The Members table should have a Pass_ field for this specialty
+            expected_alias = odcm.PASS_FIELD_ALIAS_PREFIX + specialty
+            self.assertTrue(expected_alias in [f.aliasName for f in member_fields])
+            # The Pass_ field should be populated with a value of 1 for each member who had an entry in the output OD
+            # table for this specialty. Thus, the number of rows in the OD table should match the number of rows in
+            # Members that pass for this specialty.
+            pass_field = [f.name for f in member_fields if f.aliasName == expected_alias][0]
+            nonzero_origins = "Passing Members"
+            arcpy.management.MakeFeatureLayer(origins, nonzero_origins, f"{pass_field} = 1")
+            member_count = int(arcpy.management.GetCount(nonzero_origins).getOutput(0))
+            od_table_count = int(arcpy.management.GetCount(out_table).getOutput(0))
+            self.assertEqual(
+                od_table_count, member_count,
+                "Number of origins that pass for this specialty does not match the count for the OD table."
+            )
+            # There should be a Perc_ field for each specialty in the summary table
+            self.assertIn(
+                f"Perc_{specialty}", summary_table_fields,
+                f"Missing Perc_ field in summary table for specialty {specialty}"
+            )
 
 
 if __name__ == '__main__':
