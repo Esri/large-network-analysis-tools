@@ -341,7 +341,6 @@ def get_oid_ranges_for_input(input_fc, max_chunk_size):
     Args:
         input_fc (str, layer): Data that needs to be split into chunks
         max_chunk_size (int): Maximum number of rows that can be in a chunk
-        where (str, optional): Where clause to use to filter data before chunking. Defaults to "".
 
     Returns:
         list: list of ObjectID ranges for the current dataset representing each chunk. For example,
