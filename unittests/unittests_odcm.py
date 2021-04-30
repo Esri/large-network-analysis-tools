@@ -18,20 +18,19 @@ import os
 import datetime
 import unittest
 from copy import deepcopy
-
 import arcpy
+import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
-import odcm  # noqa: E402
-import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal  # noqa: E402
+import odcm  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestODCM(unittest.TestCase):
     '''Test cases for the odcm module.'''
 
     @classmethod
-    def setUpClass(self):
+    def setUpClass(self):  # pylint: disable=bad-classmethod-argument
         self.maxDiff = None
 
         self.input_data_folder = os.path.join(CWD, "TestInput")
@@ -41,10 +40,10 @@ class TestODCM(unittest.TestCase):
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"
         self.local_tm_dist = "Driving Distance"
-        self.portal_nd = portal_credentials.portal_url
-        self.portal_tm = portal_credentials.portal_travel_mode
+        self.portal_nd = portal_credentials.PORTAL_URL
+        self.portal_tm = portal_credentials.PORTAL_TRAVEL_MODE
 
-        arcpy.SignInToPortal(self.portal_nd, portal_credentials.portal_username, portal_credentials.portal_password)
+        arcpy.SignInToPortal(self.portal_nd, portal_credentials.PORTAL_USERNAME, portal_credentials.PORTAL_PASSWORD)
 
         # Create a unique output directory and gdb for this test
         self.output_folder = os.path.join(

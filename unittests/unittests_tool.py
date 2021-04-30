@@ -19,20 +19,19 @@ import sys
 import os
 import datetime
 import unittest
-
 import arcpy
+import portal_credentials
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
-import odcm  # noqa: E402
-import portal_credentials  # noqa: E402
+import odcm  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeODCostMatrixTool(unittest.TestCase):
     '''Test cases for the SolveLargeODCostMatrix script tool.'''
 
     @classmethod
-    def setUpClass(self):
+    def setUpClass(self):  # pylint: disable=bad-classmethod-argument
         self.maxDiff = None
 
         tbx_path = os.path.join(os.path.dirname(CWD), "LargeNetworkAnalysisTools.pyt")
@@ -45,10 +44,10 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"
         self.local_tm_dist = "Driving Distance"
-        self.portal_nd = portal_credentials.portal_url  # Must be arcgis.com for test to work
-        self.portal_tm = portal_credentials.portal_travel_mode
+        self.portal_nd = portal_credentials.PORTAL_URL  # Must be arcgis.com for test to work
+        self.portal_tm = portal_credentials.PORTAL_TRAVEL_MODE
 
-        arcpy.SignInToPortal(self.portal_nd, portal_credentials.portal_username, portal_credentials.portal_password)
+        arcpy.SignInToPortal(self.portal_nd, portal_credentials.PORTAL_USERNAME, portal_credentials.PORTAL_PASSWORD)
 
         # Create a unique output directory and gdb for this test
         self.output_folder = os.path.join(
