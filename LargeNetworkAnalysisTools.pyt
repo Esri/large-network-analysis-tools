@@ -255,10 +255,12 @@ class SolveLargeODCostMatrix(object):
             "--chunk-size", parameters[9].valueAsText,
             "--max-processes", parameters[10].valueAsText,
             "--cutoff", parameters[11].valueAsText,
-            "--num-destinations", parameters[12].valueAsText,
             "--precalculate-network-locations", parameters[14].valueAsText.capitalize(),
             "--barriers"
         ] + get_catalog_path_multivalue(parameters[13])
+        num_destinations = parameters[12].valueAsText
+        if num_destinations:
+            odcm_inputs += ["--num-destinations", num_destinations]
         # We do not want to show the console window when calling the command line tool from within our GP tool.
         # This can be done by setting this hex code.
         create_no_window = 0x08000000
