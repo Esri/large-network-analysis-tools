@@ -14,8 +14,8 @@ The tools and code samples here help you solve large network analysis problems i
 3. Run the code in standalone python, or run the provided geoprocessing tool from within ArcGIS Pro.
 
 ### Solve Large OD Cost Matrix tool inputs
-- **Origins** - The feature class or layer containing the origins
-- **Destinations** - The feature class or layer containing the destinations
+- **Origins** - The feature class or layer containing the origins. Layers are referenced by catalog path, so selection sets and definition queries will be ignored. If you want to subset your data, please copy the subset to a separate feature class before running this tool.
+- **Destinations** - The feature class or layer containing the destinations. Layers are referenced by catalog path, so selection sets and definition queries will be ignored. If you want to subset your data, please copy the subset to a separate feature class before running this tool.
 - **Output OD Lines Feature Class** - Path to the output feature class that will contain the OD Cost Matrix Lines output computed by the tool. The schema of this feature class is described in the [arcpy documentation](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/origindestinationcostmatrix-output-data-types.htm#ESRI_SECTION1_9FF9489173C741DD95472F21B5AD8374).
 - **Output Updated Origins** - Path to the output feature class that will contain the updated origins, which may be spatially sorted and have added fields. The OriginOID field in the Output OD Lines Feature Class refers to the ObjectID of the Output Updated Origins and not the original input origins.
 - **Output Updated Destinations** - Path to the output feature class that will contain the updated destinations, which may be spatially sorted and have added fields. The DestinationOID field in the Output OD Lines Feature Class refers to the ObjectID of the Output Updated Destinations and not the original input destinations.
