@@ -1,9 +1,6 @@
-############################################################################
-## Toolbox name: LargeNetworkAnalysisTools
-############################################################################
-'''Python toolbox that defines tools for solving large network analysis problems.'''
-################################################################################
-'''Copyright 2021 Esri
+"""Python toolbox that defines tools for solving large network analysis problems.
+
+Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -12,9 +9,9 @@
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
-   limitations under the License.'''
-################################################################################
-
+   limitations under the License.
+"""
+# pylint: disable=invalid-name
 import sys
 import os
 import time
@@ -25,6 +22,8 @@ import odcm
 
 
 class Toolbox(object):
+    """Tools for solving large network analysis problems."""
+
     def __init__(self):
         """Define the toolbox."""
         self.label = "Large Network Analysis Tools"
@@ -35,6 +34,8 @@ class Toolbox(object):
 
 
 class SolveLargeODCostMatrix(object):
+    """Sample script tool to solve a large OD Cost Matrix by chunking the input data and solving in parallel."""
+
     def __init__(self):
         """Define the tool."""
         self.label = "Solve Large OD Cost Matrix"
@@ -235,7 +236,7 @@ class SolveLargeODCostMatrix(object):
 
         return
 
-    def execute(self, parameters, messages):
+    def execute(self, parameters, messages):  # pylint: disable=unused-argument
         """The source code of the tool."""
         # Launch the odcm script as a subprocess so it can spawn parallel processes. We have to do this because a tool
         # running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
@@ -353,7 +354,7 @@ def get_travel_mode_json(param):
             parameter's valueAsText value.
     """
     if hasattr(param.value, "_JSON"):
-        return param.value._JSON
+        return param.value._JSON  # pylint: disable=protected-access
     else:
         return param.valueAsText
 
@@ -375,5 +376,5 @@ def parse_std_and_write_to_gp_ui(msg_string):
             arcpy.AddWarning(msg)
         else:
             arcpy.AddMessage(msg)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         arcpy.AddMessage(msg_string)

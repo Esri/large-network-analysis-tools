@@ -8,9 +8,8 @@ You can include any of them in the dictionary in this file, and the tool will
 use them. However, travelMode, timeUnits, distanceUnits, defaultImpedanceCutoff,
 and defaultDestinationCount will be ignored because they are specified in the
 tool dialog.
-"""
-################################################################################
-'''Copyright 2021 Esri
+
+Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -19,9 +18,8 @@ tool dialog.
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
-   limitations under the License.'''
-################################################################################
-
+   limitations under the License.
+"""
 import arcpy
 
 # These properties are set by the tool dialog or can be specified as command line arguments. Do not set the values for

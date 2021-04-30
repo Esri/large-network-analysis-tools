@@ -1,11 +1,8 @@
-############################################################################
-## Toolbox name: LargeNetworkAnalysisTools
-############################################################################
-'''Unit tests for the SolveLargeODCostMatrix script tool. The test cases focus
+"""Unit tests for the SolveLargeODCostMatrix script tool. The test cases focus
 on making sure the tool parameters work correctly. The tool script is tested in
-more detail in unittests_odcm.py.'''
-################################################################################
-'''Copyright 2021 Esri
+more detail in unittests_odcm.py.
+
+Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -14,9 +11,10 @@ more detail in unittests_odcm.py.'''
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
-   limitations under the License.'''
-################################################################################
- 
+   limitations under the License.
+"""
+# pylint: disable=import-error, invalid-name
+
 import sys
 import os
 import datetime
@@ -26,8 +24,8 @@ import arcpy
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
-import odcm
-import portal_credentials
+import odcm  # noqa: E402
+import portal_credentials  # noqa: E402
 
 
 class TestSolveLargeODCostMatrixTool(unittest.TestCase):
@@ -65,7 +63,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         out_od_lines = os.path.join(self.output_gdb, "Time_ODLines")
         out_origins = os.path.join(self.output_gdb, "Time_Origins")
         out_destinations = os.path.join(self.output_gdb, "Time_Destinations")
-        arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
+        arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(  # pylint: disable=no-member
             self.origins,
             self.destinations,
             out_od_lines,
@@ -93,7 +91,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         out_od_lines = os.path.join(self.output_gdb, "Dist_ODLines")
         out_origins = os.path.join(self.output_gdb, "Dist_Origins")
         out_destinations = os.path.join(self.output_gdb, "Dist_Destinations")
-        arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
+        arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(  # pylint: disable=no-member
             self.origins,
             self.destinations,
             out_od_lines,
@@ -122,7 +120,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             out_od_lines = os.path.join(self.output_gdb, "Err_ODLines")
             out_origins = os.path.join(self.output_gdb, "Err_Origins")
             out_destinations = os.path.join(self.output_gdb, "Err_Destinations")
-            arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
+            arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(  # pylint: disable=no-member
                 self.origins,
                 self.destinations,
                 out_od_lines,

@@ -1,9 +1,6 @@
-############################################################################
-## Toolbox name: LargeNetworkAnalysisTools
-############################################################################
-'''Unit tests for the odcm.py module.'''
-################################################################################
-'''Copyright 2021 Esri
+"""Unit tests for the odcm.py module.'
+
+Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -12,8 +9,9 @@
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
-   limitations under the License.'''
-################################################################################
+   limitations under the License.
+"""
+# pylint: disable=import-error, protected-access, invalid-name
 
 import sys
 import os
@@ -25,8 +23,8 @@ import arcpy
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
-import odcm
-import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal
+import odcm  # noqa: E402
+import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal  # noqa: E402
 
 
 class TestODCM(unittest.TestCase):
@@ -105,7 +103,7 @@ class TestODCM(unittest.TestCase):
         odcm.precalculate_network_locations(fc_to_precalculate, self.local_nd, self.local_tm_time)
         actual_fields = set([f.name for f in arcpy.ListFields(fc_to_precalculate)])
         self.assertTrue(loc_fields.issubset(actual_fields), "Network location fields not added")
-        for row in arcpy.da.SearchCursor(fc_to_precalculate, list(loc_fields)):
+        for row in arcpy.da.SearchCursor(fc_to_precalculate, list(loc_fields)):  # pylint: disable=no-member
             for val in row:
                 self.assertIsNotNone(val)
 
@@ -212,7 +210,7 @@ class TestODCM(unittest.TestCase):
         '''Test the _select_inputs method of the ODCostMatrix class.'''
         od = odcm.ODCostMatrix(**self.od_args)
         origin_criteria = [1, 2]  # Encompasses 2 rows in the southwest corner
- 
+
         # Test when a subset of destinations meets the cutoff criteria
         dest_criteria = [8, 12]  # Encompasses 5 rows. Two are close to the origins.
         od._select_inputs(origin_criteria, dest_criteria)

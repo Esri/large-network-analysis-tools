@@ -3,9 +3,8 @@ inputs, solving in parallel, and recombining the results into a single
 feature class.
 
 This is a sample script users can modify to fit their specific needs.
-"""
-################################################################################
-'''Copyright 2021 Esri
+
+Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -14,9 +13,9 @@ This is a sample script users can modify to fit their specific needs.
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
-   limitations under the License.'''
-################################################################################
-
+   limitations under the License.
+"""
+# pylint: disable=logging-fstring-interpolation, too-many-lines
 from concurrent import futures
 import os
 import sys
@@ -84,10 +83,10 @@ def run_gp_tool(tool, tool_args=None, tool_kwargs=None, log_to_use=LOGGER):
     tool_name = repr(tool)
     try:
         tool_name = tool.__esri_toolname__
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         try:
             tool_name = tool.__name__
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             # Probably the tool didn't have an __esri_toolname__ property or __name__. Just don't worry about it.
             pass
     log_to_use.debug(f"Running geoprocessing tool {tool_name}...")
@@ -336,11 +335,11 @@ def convert_distance_units_str_to_enum(distance_units_str):
     raise ValueError(err)
 
 
-def get_oid_ranges_for_input(input, max_chunk_size):
+def get_oid_ranges_for_input(input_fc, max_chunk_size):
     """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
 
     Args:
-        input (str, layer): Data that needs to be split into chunks
+        input_fc (str, layer): Data that needs to be split into chunks
         max_chunk_size (int): Maximum number of rows that can be in a chunk
         where (str, optional): Where clause to use to filter data before chunking. Defaults to "".
 
@@ -354,7 +353,7 @@ def get_oid_ranges_for_input(input, max_chunk_size):
     # Loop through all OIDs of the input and construct tuples of min and max OID for each chunk
     # We do it this way and not by straight-up looking at the numerical values of OIDs to account
     # for definition queries, selection sets, or feature layers with gaps in OIDs
-    for row in arcpy.da.SearchCursor(input, "OID@"):
+    for row in arcpy.da.SearchCursor(input_fc, "OID@"):  # pylint: disable=no-member
         oid = row[0]
         if num_in_range == 0:
             # Starting new range
@@ -470,7 +469,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
                 log_to_use=self.logger
             )
 
-    def _initialize_od_solver(self):
+    def initialize_od_solver(self):
         """Initialize an OD solver object and set properties."""
         # For a local network dataset, we need to checkout the Network Analyst extension license.
         if not self.is_service:
@@ -494,7 +493,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
                 continue
             try:
                 setattr(self.od_solver, prop, OD_PROPS[prop])
-            except Exception as ex:
+            except Exception as ex:  # pylint: disable=broad-except
                 self.logger.warning(f"Failed to set property {prop} from OD config file. Default will be used instead.")
                 self.logger.warning(str(ex))
         # Set properties explicitly specified in the tool UI as arguments
@@ -531,7 +530,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             return
 
         # Initialize the OD solver object
-        self._initialize_od_solver()
+        self.initialize_od_solver()
 
         # Load the origins
         self.logger.debug("Loading origins...")
@@ -786,12 +785,12 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         """
         logger_obj.setLevel(logging.DEBUG)
         if len(logger_obj.handlers) <= 1:
-            fh = logging.FileHandler(self.log_file)
-            fh.setLevel(logging.DEBUG)
-            logger_obj.addHandler(fh)
+            file_handler = logging.FileHandler(self.log_file)
+            file_handler.setLevel(logging.DEBUG)
+            logger_obj.addHandler(file_handler)
             formatter = logging.Formatter("%(process)d | %(message)s")
-            fh.setFormatter(formatter)
-            logger_obj.addHandler(fh)
+            file_handler.setFormatter(formatter)
+            logger_obj.addHandler(file_handler)
 
 
 def validate_od_settings(**od_inputs):
@@ -810,12 +809,12 @@ def validate_od_settings(**od_inputs):
     optimized_cost_field = None
     try:
         odcm = ODCostMatrix(**od_inputs)
-        odcm._initialize_od_solver()
+        odcm.initialize_od_solver()
         # Check which field name in the output OD Lines will store the optimized cost values
         optimized_cost_field = odcm.optimized_field_name
         LOGGER.debug("OD Cost Matrix settings successfully validated.")
     except Exception:
-        LOGGER.error(f"Error initializing OD Cost Matrix analysis.")
+        LOGGER.error("Error initializing OD Cost Matrix analysis.")
         errs = traceback.format_exc().splitlines()
         for err in errs:
             LOGGER.error(err)
@@ -857,10 +856,10 @@ def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
             will be combined into one feature class.
         out_fc (str): Catalog path of the output feature class to be created
     """
-    LOGGER.info(f"Post-processing OD Cost Matrix results...")
+    LOGGER.info("Post-processing OD Cost Matrix results...")
 
     # Merge all the individual OD Lines feature classes
-    LOGGER.debug(f"Merging OD Cost Matrix results...")
+    LOGGER.debug("Merging OD Cost Matrix results...")
     run_gp_tool(arcpy.management.Merge, [od_line_fcs, out_fc])
 
     # If we wanted to find only the k closest destinations for each origin, we have to do additional post-processing.
@@ -868,8 +867,8 @@ def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
     # each individual chunk found the closest k for that chunk. We need to eliminate all extra rows beyond the first k.
     # Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
     if num_destinations:
-        LOGGER.debug(f"Sorting merged OD Lines results...")
-        out_sorted_lines = arcpy.CreateUniqueName(f"ODLines_Sorted", arcpy.env.scratchGDB)
+        LOGGER.debug("Sorting merged OD Lines results...")
+        out_sorted_lines = arcpy.CreateUniqueName("ODLines_Sorted", arcpy.env.scratchGDB)  # pylint: disable=no-member
         sort_fields = [["OriginOID", "ASCENDING"], [sort_field, "ASCENDING"]]
         run_gp_tool(arcpy.management.Sort, [out_fc, out_sorted_lines, sort_fields])
         desc = arcpy.Describe(out_sorted_lines)
@@ -886,10 +885,10 @@ def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
         ])
         # Loop through the sorted feature class and insert only the first k into the final output
         field_names = ["OriginOID", "SHAPE@"] + [f.name for f in desc.fields if f.name != "OriginOID"]
-        with arcpy.da.InsertCursor(out_fc, field_names) as cur:
+        with arcpy.da.InsertCursor(out_fc, field_names) as cur:  # pylint: disable=no-member
             current_origin_id = None
             count = 0
-            for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):
+            for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):  # pylint: disable=no-member
                 origin_id = row[0]
                 if origin_id != current_origin_id:
                     # Starting a fresh origin ID
@@ -906,7 +905,7 @@ def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
         LOGGER.debug("Deleting intermediate post-processing outputs...")
         run_gp_tool(arcpy.management.Delete, [[out_sorted_lines]])
 
-    LOGGER.info(f"Post-processing complete.")
+    LOGGER.info("Post-processing complete.")
     LOGGER.info(f"Results written to {out_fc}.")
 
 
@@ -960,19 +959,19 @@ def compute_ods_in_parallel(**kwargs):
 
     # Validate input numerical values
     if chunk_size < 1:
-        err = f"Chunk size must be greater than 0."
+        err = "Chunk size must be greater than 0."
         LOGGER.error(err)
         raise ValueError(err)
     if max_processes < 1:
-        err = f"Maximum allowed parallel processes must be greater than 0."
+        err = "Maximum allowed parallel processes must be greater than 0."
         LOGGER.error(err)
         raise ValueError(err)
     if cutoff and cutoff <= 0:
-        err = f"Impedance cutoff must be greater than 0."
+        err = "Impedance cutoff must be greater than 0."
         LOGGER.error(err)
         raise ValueError(err)
     if num_destinations and num_destinations < 1:
-        err = f"Number of destinations to find must be greater than 0."
+        err = "Number of destinations to find must be greater than 0."
         LOGGER.error(err)
         raise ValueError(err)
 
@@ -1015,10 +1014,10 @@ def compute_ods_in_parallel(**kwargs):
     if not is_service:
         try:
             arcpy.CheckOutExtension("network")
-        except Exception:
+        except Exception as ex:
             err = "Unable to check out Network Analyst extension license."
             LOGGER.error(err)
-            raise RuntimeError(err)
+            raise RuntimeError(err) from ex
     if is_service:
         tool_limits, is_agol = get_tool_limits_and_is_agol(network_data_source)
         if is_agol and max_processes > MAX_AGOL_PROCESSES:
@@ -1031,7 +1030,7 @@ def compute_ods_in_parallel(**kwargs):
 
     # Create a scratch folder to store intermediate outputs from the OD Cost Matrix processes
     unique_id = uuid.uuid4().hex
-    scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)
+    scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
     LOGGER.info(f"Intermediate outputs will be written to {scratch_folder}.")
     os.mkdir(scratch_folder)
 
@@ -1068,7 +1067,7 @@ def compute_ods_in_parallel(**kwargs):
         )
 
     # Copy Origins and Destinations to outputs
-    LOGGER.debug(f"Copying input origins and destinations to outputs...")
+    LOGGER.debug("Copying input origins and destinations to outputs...")
     run_gp_tool(arcpy.management.Copy, [origins, output_origins])
     run_gp_tool(arcpy.management.Copy, [destinations, output_destinations])
 
@@ -1138,7 +1137,7 @@ def compute_ods_in_parallel(**kwargs):
         LOGGER.info("Deleting intermediate outputs...")
         try:
             shutil.rmtree(scratch_folder, ignore_errors=True)
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
             LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {scratch_folder}.")
 
@@ -1227,7 +1226,7 @@ def _launch_tool():
     # --precalculate-network-locations parameter
     help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."
     parser.add_argument(
-        "-pnl", "--precalculate-network-locations", action="store", type=lambda x:bool(strtobool(x)),
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
 
     # --barriers parameter
@@ -1245,7 +1244,6 @@ def _launch_tool():
 
 
 if __name__ == "__main__":
-    """The script tool calls this script as if it were calling it from the command line.
-    It uses this main function.
-    """
+    # The script tool calls this script as if it were calling it from the command line.
+    # It uses this main function.
     _launch_tool()
