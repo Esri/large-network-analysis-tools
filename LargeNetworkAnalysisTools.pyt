@@ -255,10 +255,12 @@ class SolveLargeODCostMatrix(object):
             "--distance-units", parameters[8].valueAsText,
             "--chunk-size", parameters[9].valueAsText,
             "--max-processes", parameters[10].valueAsText,
-            "--cutoff", parameters[11].valueAsText,
             "--precalculate-network-locations", parameters[14].valueAsText.capitalize(),
             "--barriers"
         ] + get_catalog_path_multivalue(parameters[13])
+        cutoff = parameters[11].valueAsText
+        if cutoff:
+            odcm_inputs += ["--cutoff", cutoff]
         num_destinations = parameters[12].valueAsText
         if num_destinations:
             odcm_inputs += ["--num-destinations", num_destinations]
