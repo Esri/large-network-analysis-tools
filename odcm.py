@@ -740,13 +740,6 @@ class od_cost_matrix_solver():
         self.should_precalc_network_locations = should_precalc_network_locations
         self.barriers = barriers
 
-        if self.cutoff == "":
-            self.cutoff = None
-        if self.num_destinations == "":
-            self.num_destinations = None
-        if not self.barriers:
-            self.barriers = []
-
         self.same_origins_destinations = True if self.origins == self.destinations else False
 
         self.max_origins = self.chunk_size
@@ -781,9 +774,9 @@ class od_cost_matrix_solver():
             arcpy.AddError(err)
             raise ValueError(err)
 
-        # Validate and convert time and distance units
-        self._convert_time_units_str_to_enum()
-        self._convert_distance_units_str_to_enum()
+        # Validate time and distance units
+        helpers.convert_time_units_str_to_enum(self.time_units)
+        helpers.convert_distance_units_str_to_enum(self.distance_units)
 
         # Validate origins and destinations
         if not arcpy.Exists(self.origins):
@@ -840,50 +833,6 @@ class od_cost_matrix_solver():
                 self.should_precalc_network_locations = False
 
         ### TODO: Figure out how to validate OD settings and get optimized cost field
-
-    def _convert_time_units_str_to_enum(self):
-        """Convert a string representation of time units to an arcpy.nax enum.
-
-        Raises:
-            ValueError: If the string cannot be parsed as a valid arcpy.nax.TimeUnits enum value.
-        """
-        if self.time_units.lower() == "minutes":
-            self.time_units = arcpy.nax.TimeUnits.Minutes
-        elif self.time_units.lower() == "seconds":
-            self.time_units = arcpy.nax.TimeUnits.Seconds
-        elif self.time_units.lower() == "hours":
-            self.time_units = arcpy.nax.TimeUnits.Hours
-        elif self.time_units.lower() == "days":
-            self.time_units = arcpy.nax.TimeUnits.Days
-        else:
-            # If we got to this point, the input time units were invalid.
-            err = f"Invalid time units: {self.time_units}"
-            arcpy.AddError(err)
-            raise ValueError(err)
-
-    def _convert_distance_units_str_to_enum(self):
-        """Convert a string representation of distance units to an arcpy.nax.DistanceUnits enum.
-
-        Raises:
-            ValueError: If the string cannot be parsed as a valid arcpy.nax.DistanceUnits enum value.
-        """
-        if self.distance_units.lower() == "miles":
-            self.distance_units = arcpy.nax.DistanceUnits.Miles
-        elif self.distance_units.lower() == "kilometers":
-            self.distance_units = arcpy.nax.DistanceUnits.Kilometers
-        elif self.distance_units.lower() == "meters":
-            self.distance_units = arcpy.nax.DistanceUnits.Meters
-        elif self.distance_units.lower() == "feet":
-            self.distance_units = arcpy.nax.DistanceUnits.Feet
-        elif self.distance_units.lower() == "yards":
-            self.distance_units = arcpy.nax.DistanceUnits.Yards
-        elif self.distance_units.lower() == "nauticalmiles" or self.distance_units.lower() == "nautical miles":
-            self.distance_units = arcpy.nax.DistanceUnits.NauticalMiles
-        else:
-            # If we got to this point, the input distance units were invalid.
-            err = f"Invalid distance units: {self.distance_units}"
-            arcpy.AddError(err)
-            raise ValueError(err)
 
     def _get_tool_limits_and_is_agol(
             self, service_name="asyncODCostMatrix", tool_name="GenerateOriginDestinationCostMatrix"):
@@ -1036,61 +985,189 @@ class od_cost_matrix_solver():
         if self.same_origins_destinations:
             run_gp_tool(arcpy.management.Copy, [self.output_origins, self.output_destinations])
 
-    # Construct OID ranges for chunks of origins and destinations
-    origin_ranges = get_oid_ranges_for_input(output_origins, max_origins)
-    destination_ranges = get_oid_ranges_for_input(output_destinations, max_destinations)
+        # Launch the odcm script as a subprocess so it can spawn parallel processes. We have to do this because a tool
+        # running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
+        cwd = os.path.dirname(os.path.abspath(__file__))
+        odcm_inputs = [
+            os.path.join(sys.exec_prefix, "python.exe"),
+            os.path.join(cwd, "odcm.py"),
+            "--origins", self.output_origins,
+            "--destinations", self.output_destinations,
+            "--output-od-lines", self.output_od_lines,
+            "--network-data-source", helpers.get_catalog_path(self.network_data_source),
+            "--travel-mode", get_travel_mode_json(parameters[6]),
+            "--time-units", self.time_units,
+            "--distance-units", self.distance_units,
+            "--max-origins", str(self.max_origins),
+            "--max-destinations", str(self.max_destinations),
+            "--max-processes", str(self.max_processes),
+            "--barriers"
+        ] + get_catalog_path_multivalue(parameters[13])
+        cutoff = parameters[11].valueAsText
+        if cutoff:
+            odcm_inputs += ["--cutoff", cutoff]
+        num_destinations = parameters[12].valueAsText
+        if num_destinations:
+            odcm_inputs += ["--num-destinations", num_destinations]
+        # We do not want to show the console window when calling the command line tool from within our GP tool.
+        # This can be done by setting this hex code.
+        create_no_window = 0x08000000
+        with subprocess.Popen(
+            odcm_inputs,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=create_no_window
+        ) as process:
+            # The while loop reads the subprocess's stdout in real time and writes the stdout messages to the GP UI.
+            # This is the only way to write the subprocess's status messages in a way that a user running the tool from
+            # the ArcGIS Pro UI can actually see them.
+            # When process.poll() returns anything other than None, the process has completed, and we should stop
+            # checking and move on.
+            while process.poll() is None:
+                output = process.stdout.readline()
+                if output:
+                    msg_string = output.strip().decode()
+                    parse_std_and_write_to_gp_ui(msg_string)
+                time.sleep(.5)
 
-    # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
-    ranges = itertools.product(origin_ranges, destination_ranges)
-    # Calculate the total number of jobs to use in logging
-    total_jobs = len(origin_ranges) * len(destination_ranges)
+            # Once the process is finished, check if any additional errors were returned. Messages that came after the
+            # last process.poll() above will still be in the queue here. This is especially important for detecting
+            # messages from raised exceptions, especially those with tracebacks.
+            output, _ = process.communicate()
+            if output:
+                out_msgs = output.decode().splitlines()
+                for msg in out_msgs:
+                    parse_std_and_write_to_gp_ui(msg)
 
-    # Compute OD cost matrix in parallel
-    od_line_fcs = []  # Stores catalog paths to the output OD Cost Matrix Lines for each parallel process
-    completed_jobs = 0  # Track the number of jobs completed so far to use in logging
-    # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
-    with futures.ProcessPoolExecutor(max_workers=max_processes) as executor:
-        # Each parallel process calls the solve_od_cost_matrix() function with the od_inputs dictionary for the given
-        # origin and destination OID ranges.
-        jobs = {executor.submit(solve_od_cost_matrix, od_inputs, range): range for range in ranges}
-        # As each job is completed, add some logging information and store the results to post-process later
-        for future in futures.as_completed(jobs):
-            completed_jobs += 1
-            LOGGER.info(
-                f"Finished OD Cost Matrix calculation {completed_jobs} of {total_jobs}.")
-            try:
-                # The OD cost matrix job returns a results dictionary. Retrieve it.
-                result = future.result()
-            except Exception:
-                # If we couldn't retrieve the result, some terrible error happened. Log it.
-                LOGGER.error("Failed to get OD Cost Matrix result from parallel processing.")
-                errs = traceback.format_exc().splitlines()
-                for err in errs:
-                    LOGGER.error(err)
-                raise
+            # In case something truly horrendous happened and none of the logging caught our errors, at least fail the
+            # tool when the subprocess returns an error code. That way the tool at least doesn't happily succeed but not
+            # actually do anything.
+            return_code = process.returncode
+            if return_code != 0:
+                arcpy.AddError("OD Cost Matrix script failed.")
 
-            # Parse the results dictionary and store components for post-processing.
-            if result["solveSucceeded"]:
-                od_line_fcs.append(result["outputLines"])
-            else:
-                LOGGER.warning(f"Solve failed for job id {result['jobId']}")
-                msgs = result["solveMessages"]
-                LOGGER.warning(msgs)
 
-    # Merge individual OD Lines feature classes into a single feature class
-    if od_line_fcs:
-        post_process_od_lines(od_line_fcs, output_od_lines, num_destinations, optimized_cost_field)
-    else:
-        LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
-    # Cleanup
-    # Delete the job folders if the job succeeded
-    if DELETE_INTERMEDIATE_OD_OUTPUTS:
-        LOGGER.info("Deleting intermediate outputs...")
-        try:
-            shutil.rmtree(scratch_folder, ignore_errors=True)
-        except Exception:  # pylint: disable=broad-except
-            # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
-            LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {scratch_folder}.")
+def solve_large_od_cost_matrix(  # pylint: disable=too-many-locals, too-many-arguments
+        origins, destinations, network_data_source, travel_mode, output_od_lines, output_origins,
+        output_destinations, chunk_size, max_processes, time_units, distance_units, cutoff=None, num_destinations=None,
+        should_precalc_network_locations=True, barriers=None
+):
+    # Instantiate an od_cost_matrix_solver class
+    od_solver = od_cost_matrix_solver(
+        origins, destinations, network_data_source, travel_mode, output_od_lines, output_origins,
+        output_destinations, chunk_size, max_processes, time_units, distance_units, cutoff, num_destinations,
+        should_precalc_network_locations, barriers
+    )
 
-    LOGGER.info("Finished calculating OD Cost Matrices.")
+    try:
+        od_solver.validate_inputs()
+        arcpy.AddMessage("Inputs successfully validated.")
+    except Exception:
+        ## TODO: Double check this
+        arcpy.AddError("Invalid inputs.")
+        raise arcpy.ExecuteError("Invalid inputs.")
+
+
+def _launch_tool():
+    """Read arguments from the command line (or passed in via subprocess) and run the tool."""
+    # Create the parser
+    parser = argparse.ArgumentParser(description=globals().get("__doc__", ""), fromfile_prefix_chars='@')
+
+    # Define Arguments supported by the command line utility
+
+    # --origins parameter
+    help_string = "The full catalog path to the feature class containing the origins."
+    parser.add_argument("-o", "--origins", action="store", dest="origins", help=help_string, required=True)
+
+    # --destinations parameter
+    help_string = "The full catalog path to the feature class containing the destinations."
+    parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
+
+    # --output-od-lines parameter
+    help_string = "The catalog path to the output feature class that will contain the combined OD Cost Matrix results."
+    parser.add_argument(
+        "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
+
+    # --output-origins parameter
+    help_string = "The catalog path to the output feature class that will contain the updated origins."
+    parser.add_argument(
+        "-oo", "--output-origins", action="store", dest="output_origins", help=help_string, required=True)
+
+    # --output-destinations parameter
+    help_string = "The catalog path to the output feature class that will contain the updated destinations."
+    parser.add_argument(
+        "-od", "--output-destinations", action="store", dest="output_destinations", help=help_string, required=True)
+
+    # --network-data-source parameter
+    help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
+    parser.add_argument(
+        "-n", "--network-data-source", action="store", dest="network_data_source", help=help_string, required=True)
+
+    # --travel-mode parameter
+    help_string = (
+        "A JSON string representation of a travel mode from the network data source that will be used for the analysis."
+    )
+    parser.add_argument("-tm", "--travel-mode", action="store", dest="travel_mode", help=help_string, required=True)
+
+    # --time-units parameter
+    help_string = "String name of the time units for the analysis. These units will be used in the output."
+    parser.add_argument("-tu", "--time-units", action="store", dest="time_units", help=help_string, required=True)
+
+    # --distance-units parameter
+    help_string = "String name of the distance units for the analysis. These units will be used in the output."
+    parser.add_argument(
+        "-du", "--distance-units", action="store", dest="distance_units", help=help_string, required=True)
+
+    # --chunk-size parameter
+    help_string = (
+        "Maximum number of origins and destinations that can be in one chunk for parallel processing of OD Cost Matrix "
+        "solves. For example, 1000 means that a chunk consists of no more than 1000 origins and 1000 destinations."
+    )
+    parser.add_argument(
+        "-ch", "--chunk-size", action="store", dest="chunk_size", type=int, help=help_string, required=True)
+
+    # --max-processes parameter
+    help_string = "Maximum number parallel processes to use for the OD Cost Matrix solves."
+    parser.add_argument(
+        "-mp", "--max-processes", action="store", dest="max_processes", type=int, help=help_string, required=True)
+
+    # --cutoff parameter
+    help_string = (
+        "Impedance cutoff to limit the OD cost matrix search distance. Should be specified in the same units as the "
+        "time-units parameter if the travel mode's impedance is in units of time or in the same units as the "
+        "distance-units parameter if the travel mode's impedance is in units of distance. Otherwise, specify this in "
+        "the units of the travel mode's impedance attribute."
+    )
+    parser.add_argument(
+        "-co", "--cutoff", action="store", dest="cutoff", type=float, help=help_string, required=False)
+
+    # --num-destinations parameter
+    help_string = "The number of destinations to find for each origin. Set to None to find all destinations."
+    parser.add_argument(
+        "-nd", "--num-destinations", action="store", dest="num_destinations", type=int, help=help_string,
+        required=False)
+
+    # --precalculate-network-locations parameter
+    help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."
+    parser.add_argument(
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
+        dest="precalculate_network_locations", help=help_string, required=True)
+
+    # --barriers parameter
+    help_string = "A list of catalog paths to the feature classes containing barriers to use in the OD Cost Matrix."
+    parser.add_argument(
+        "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
+
+    # Get arguments as dictionary.
+    args = vars(parser.parse_args())
+
+    # Call the main execution
+    start_time = time.time()
+    compute_ods_in_parallel(**args)
+    LOGGER.info(f"Completed in {round((time.time() - start_time) / 60, 2)} minutes")
+
+
+if __name__ == "__main__":
+    # The script tool calls this script as if it were calling it from the command line.
+    # It uses this main function.
+    _launch_tool()

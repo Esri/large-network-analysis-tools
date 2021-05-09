@@ -238,84 +238,26 @@ class SolveLargeODCostMatrix(object):
 
     def execute(self, parameters, messages):  # pylint: disable=unused-argument
         """The source code of the tool."""
-        # Launch the odcm script as a subprocess so it can spawn parallel processes. We have to do this because a tool
-        # running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
-        cwd = os.path.dirname(os.path.abspath(__file__))
-        odcm_inputs = [
-            os.path.join(sys.exec_prefix, "python.exe"),
-            os.path.join(cwd, "odcm.py"),
-            "--origins", get_catalog_path(parameters[0]),
-            "--destinations", get_catalog_path(parameters[1]),
-            "--output-od-lines", parameters[2].valueAsText,
-            "--output-origins", parameters[3].valueAsText,
-            "--output-destinations", parameters[4].valueAsText,
-            "--network-data-source", get_catalog_path(parameters[5]),
-            "--travel-mode", get_travel_mode_json(parameters[6]),
-            "--time-units", parameters[7].valueAsText,
-            "--distance-units", parameters[8].valueAsText,
-            "--chunk-size", parameters[9].valueAsText,
-            "--max-processes", parameters[10].valueAsText,
-            "--precalculate-network-locations", parameters[14].valueAsText.capitalize(),
-            "--barriers"
-        ] + get_catalog_path_multivalue(parameters[13])
-        cutoff = parameters[11].valueAsText
-        if cutoff:
-            odcm_inputs += ["--cutoff", cutoff]
-        num_destinations = parameters[12].valueAsText
-        if num_destinations:
-            odcm_inputs += ["--num-destinations", num_destinations]
-        # We do not want to show the console window when calling the command line tool from within our GP tool.
-        # This can be done by setting this hex code.
-        create_no_window = 0x08000000
-        with subprocess.Popen(
-            odcm_inputs,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=create_no_window
-        ) as process:
-            # The while loop reads the subprocess's stdout in real time and writes the stdout messages to the GP UI.
-            # This is the only way to write the subprocess's status messages in a way that a user running the tool from
-            # the ArcGIS Pro UI can actually see them.
-            # When process.poll() returns anything other than None, the process has completed, and we should stop
-            # checking and move on.
-            while process.poll() is None:
-                output = process.stdout.readline()
-                if output:
-                    msg_string = output.strip().decode()
-                    parse_std_and_write_to_gp_ui(msg_string)
-                time.sleep(.5)
-
-            # Once the process is finished, check if any additional errors were returned. Messages that came after the
-            # last process.poll() above will still be in the queue here. This is especially important for detecting
-            # messages from raised exceptions, especially those with tracebacks.
-            output, _ = process.communicate()
-            if output:
-                out_msgs = output.decode().splitlines()
-                for msg in out_msgs:
-                    parse_std_and_write_to_gp_ui(msg)
-
-            # In case something truly horrendous happened and none of the logging caught our errors, at least fail the
-            # tool when the subprocess returns an error code. That way the tool at least doesn't happily succeed but not
-            # actually do anything.
-            return_code = process.returncode
-            if return_code != 0:
-                arcpy.AddError("OD Cost Matrix script failed.")
+        odcm.solve_large_od_cost_matrix(
+            parameters[0].value,  # origins
+            parameters[1].value,  # destinations
+            parameters[5].value,  # network
+            parameters[6].value,  # travel mode
+            parameters[2].valueAsText,  # output OD lines
+            parameters[3].valueAsText,  # output origins
+            parameters[4].valueAsText,  # output destinations
+            parameters[9].value,  # chunk size
+            parameters[10].value,  # max processes
+            parameters[7].valueAsText,  # time units
+            parameters[8].valueAsText,  # distance units
+            parameters[11].valueAsText,  # cutoff
+            parameters[12].valueAsText,  # number of destinations to find
+            parameters[14].value,  # Should precalculate network locations
+            parameters[13].value  # barriers
+        )
 
         return
 
-
-def get_catalog_path(param):
-    """Get the catalog path for the designated input if possible. Ensures we can pass map layers to the subprocess.
-
-    Args:
-        param (arcpy.Parameter): Parameter from which to retrieve the catalog path.
-
-    Returns:
-        string: Catalog path to the data
-    """
-    if hasattr(param.value, "dataSource"):
-        return param.value.dataSource
-    else:
-        return param.valueAsText
 
 
 def get_catalog_path_multivalue(param):

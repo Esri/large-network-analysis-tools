@@ -33,6 +33,7 @@ import arcpy
 # Import OD Cost Matrix settings from config file
 from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL
 
+import helpers
 
 arcpy.env.overwriteOutput = True
 
@@ -213,7 +214,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.logger = cls_logger
 
         # Set up other instance attributes
-        self.is_service = is_nds_service(self.network_data_source)
+        self.is_service = helpers.is_nds_service(self.network_data_source)
         self.od_solver = None
         self.time_attribute = ""
         self.distance_attribute = ""
@@ -715,7 +716,8 @@ def compute_ods_in_parallel(**kwargs):
     - output_od_lines
     - network_data_source
     - travel_mode
-    - chunk_size
+    - max_origins
+    - max_destinations
     - max_processes
     - time_units
     - distance_units
@@ -723,6 +725,7 @@ def compute_ods_in_parallel(**kwargs):
     - num_destinations (optional)
     - precalculate_network_locations
     - barriers (optional)
+    - scratch_folder
 
     Raises:
         ValueError: If chunk_size, max_processes, cutoff, or num_destinations < 0
@@ -734,97 +737,19 @@ def compute_ods_in_parallel(**kwargs):
     network_data_source = kwargs["network_data_source"]
     travel_mode = kwargs["travel_mode"]
     output_od_lines = kwargs["output_od_lines"]
-    output_origins = kwargs["output_origins"]
-    output_destinations = kwargs["output_destinations"]
-    chunk_size = kwargs["chunk_size"]
+    scratch_folder = kwargs["scratch_folder"]
+    max_origins = kwargs["max_origins"]
+    max_destinations = kwargs["max_destinations"]
     max_processes = kwargs["max_processes"]
-    time_units = kwargs["time_units"]
-    distance_units = kwargs["distance_units"]
+    time_units = helpers.convert_time_units_str_to_enum(kwargs["time_units"])
+    distance_units = helpers.convert_distance_units_str_to_enum(kwargs["distance_units"])
     cutoff = kwargs.get("cutoff", None)
     if cutoff == "":
         cutoff = None
     num_destinations = kwargs.get("num_destinations", None)
     if num_destinations == "":
         num_destinations = None
-    should_precalc_network_locations = kwargs["precalculate_network_locations"]
     barriers = kwargs.get("barriers", [])
-
-    # Validate input numerical values
-    if chunk_size < 1:
-        err = "Chunk size must be greater than 0."
-        LOGGER.error(err)
-        raise ValueError(err)
-    if max_processes < 1:
-        err = "Maximum allowed parallel processes must be greater than 0."
-        LOGGER.error(err)
-        raise ValueError(err)
-    if cutoff and cutoff <= 0:
-        err = "Impedance cutoff must be greater than 0."
-        LOGGER.error(err)
-        raise ValueError(err)
-    if num_destinations and num_destinations < 1:
-        err = "Number of destinations to find must be greater than 0."
-        LOGGER.error(err)
-        raise ValueError(err)
-
-    # Validate and convert time and distance units
-    time_units = convert_time_units_str_to_enum(time_units)
-    distance_units = convert_distance_units_str_to_enum(distance_units)
-
-    # Validate origins and destinations
-    if not arcpy.Exists(origins):
-        err = f"Input Origins dataset {origins} does not exist."
-        LOGGER.error(err)
-        raise ValueError(err)
-    if int(arcpy.management.GetCount(origins).getOutput(0)) <= 0:
-        err = f"Input Origins dataset {origins} has no rows."
-        LOGGER.error(err)
-        raise ValueError(err)
-    if not arcpy.Exists(destinations):
-        err = f"Input Destinations dataset {destinations} does not exist."
-        LOGGER.error(err)
-        raise ValueError(err)
-    if int(arcpy.management.GetCount(destinations).getOutput(0)) <= 0:
-        err = f"Input Destinations dataset {destinations} has no rows."
-        LOGGER.error(err)
-        raise ValueError(err)
-
-    # Validate barriers
-    for barrier_fc in barriers:
-        if not arcpy.Exists(barrier_fc):
-            err = f"Input Barriers dataset {barrier_fc} does not exist."
-            LOGGER.error(err)
-            raise ValueError(err)
-
-    # Validate network
-    is_service = is_nds_service(network_data_source)
-    tool_limits = None
-    if not is_service and not arcpy.Exists(network_data_source):
-        err = f"Input network dataset {network_data_source} does not exist."
-        LOGGER.error(err)
-        raise ValueError(err)
-    if not is_service:
-        try:
-            arcpy.CheckOutExtension("network")
-        except Exception as ex:
-            err = "Unable to check out Network Analyst extension license."
-            LOGGER.error(err)
-            raise RuntimeError(err) from ex
-    if is_service:
-        tool_limits, is_agol = get_tool_limits_and_is_agol(network_data_source)
-        if is_agol and max_processes > MAX_AGOL_PROCESSES:
-            LOGGER.warning((
-                f"The specified maximum number of parallel processes, {max_processes}, exceeds the limit of "
-                f"{MAX_AGOL_PROCESSES} allowed when using as the network data source the ArcGIS Online services or a "
-                "hybrid portal whose network analysis services fall back to the ArcGIS Online services. The maximum "
-                f"number of parallel processes has been reduced to {MAX_AGOL_PROCESSES}."))
-            max_processes = MAX_AGOL_PROCESSES
-
-    # Create a scratch folder to store intermediate outputs from the OD Cost Matrix processes
-    unique_id = uuid.uuid4().hex
-    scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
-    LOGGER.info(f"Intermediate outputs will be written to {scratch_folder}.")
-    os.mkdir(scratch_folder)
 
     # Initialize the dictionary of inputs to send to each OD solve
     od_inputs = {}
@@ -844,41 +769,10 @@ def compute_ods_in_parallel(**kwargs):
     # guaranteed to all fail. While we're doing this, check and store the field name that will represent the optimized
     # costs in the output OD Lines table. We'll use this in post processing.
     optimized_cost_field = validate_od_settings(**od_inputs)
-    od_inputs["origins"] = output_origins
-    od_inputs["destinations"] = output_destinations
-
-    # Set max origins and destinations per chunk
-    max_origins = chunk_size
-    max_destinations = chunk_size
-    if is_service:
-        # We will use the user's specified limits unless they exceed the tool limits of the portal
-        max_origins, max_destinations = update_max_inputs_for_service(
-            max_origins,
-            max_destinations,
-            tool_limits
-        )
-
-    # Copy Origins and Destinations to outputs
-    LOGGER.debug("Copying input origins and destinations to outputs...")
-    run_gp_tool(arcpy.management.Copy, [origins, output_origins])
-    run_gp_tool(arcpy.management.Copy, [destinations, output_destinations])
-
-    # Spatially sort inputs
-    spatially_sort_input(output_origins, is_origins=True)
-    spatially_sort_input(output_destinations, is_origins=False)
-
-    # Precalculate network location fields for inputs
-    if is_service and should_precalc_network_locations:
-        LOGGER.warning("Cannot precalculate network location fields when the network data source is a service.")
-    if not is_service and should_precalc_network_locations:
-        precalculate_network_locations(output_origins, network_data_source, travel_mode)
-        precalculate_network_locations(output_destinations, network_data_source, travel_mode)
-        for barrier_fc in barriers:
-            precalculate_network_locations(barrier_fc, network_data_source, travel_mode)
 
     # Construct OID ranges for chunks of origins and destinations
-    origin_ranges = get_oid_ranges_for_input(output_origins, max_origins)
-    destination_ranges = get_oid_ranges_for_input(output_destinations, max_destinations)
+    origin_ranges = get_oid_ranges_for_input(origins, max_origins)
+    destination_ranges = get_oid_ranges_for_input(destinations, max_destinations)
 
     # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
     ranges = itertools.product(origin_ranges, destination_ranges)
