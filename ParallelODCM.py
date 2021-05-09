@@ -33,7 +33,6 @@ import arcpy
 # Import OD Cost Matrix settings from config file
 from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL
 
-import helpers
 
 arcpy.env.overwriteOutput = True
 
@@ -128,13 +127,6 @@ def run_gp_tool(tool, tool_args=None, tool_kwargs=None, log_to_use=LOGGER):
 
     log_to_use.debug(f"Finished running geoprocessing tool {tool_name}.")
     return result
-
-
-
-
-
-
-
 
 
 
@@ -711,330 +703,178 @@ def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
     LOGGER.info(f"Results written to {out_fc}.")
 
 
-class od_cost_matrix_solver():
+def compute_ods_in_parallel(**kwargs):
     """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
     Preprocess and validate inputs, compute OD cost matrices in parallel, and combine and post-process the results.
     This method does all the work.
 
+    kwargs is expected to be a dictionary with the following keys:
+    - origins
+    - destinations
+    - output_od_lines
+    - network_data_source
+    - travel_mode
+    - chunk_size
+    - max_processes
+    - time_units
+    - distance_units
+    - cutoff (optional)
+    - num_destinations (optional)
+    - precalculate_network_locations
+    - barriers (optional)
+
+    Raises:
+        ValueError: If chunk_size, max_processes, cutoff, or num_destinations < 0
+        ValueError: If origins, destinations, barriers, or network_data_source doesn't exist
+        ValueError: If origins or destinations has no rows
     """
+    origins = kwargs["origins"]
+    destinations = kwargs["destinations"]
+    network_data_source = kwargs["network_data_source"]
+    travel_mode = kwargs["travel_mode"]
+    output_od_lines = kwargs["output_od_lines"]
+    output_origins = kwargs["output_origins"]
+    output_destinations = kwargs["output_destinations"]
+    chunk_size = kwargs["chunk_size"]
+    max_processes = kwargs["max_processes"]
+    time_units = kwargs["time_units"]
+    distance_units = kwargs["distance_units"]
+    cutoff = kwargs.get("cutoff", None)
+    if cutoff == "":
+        cutoff = None
+    num_destinations = kwargs.get("num_destinations", None)
+    if num_destinations == "":
+        num_destinations = None
+    should_precalc_network_locations = kwargs["precalculate_network_locations"]
+    barriers = kwargs.get("barriers", [])
 
-    def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, destinations, network_data_source, travel_mode, output_od_lines, output_origins,
-        output_destinations, chunk_size, max_processes, time_units, distance_units, cutoff=None, num_destinations=None,
-        should_precalc_network_locations=True, barriers=None
-    ):
-        self.origins = origins
-        self.destinations = destinations
-        self.network_data_source = network_data_source
-        self.travel_mode = travel_mode
-        self.output_od_lines = output_od_lines
-        self.output_origins = output_origins
-        self.output_destinations = output_destinations
-        self.chunk_size = chunk_size
-        self.max_processes = max_processes
-        self.time_units = time_units
-        self.distance_units = distance_units
-        self.cutoff = cutoff
-        self.num_destinations = num_destinations
-        self.should_precalc_network_locations = should_precalc_network_locations
-        self.barriers = barriers
+    # Validate input numerical values
+    if chunk_size < 1:
+        err = "Chunk size must be greater than 0."
+        LOGGER.error(err)
+        raise ValueError(err)
+    if max_processes < 1:
+        err = "Maximum allowed parallel processes must be greater than 0."
+        LOGGER.error(err)
+        raise ValueError(err)
+    if cutoff and cutoff <= 0:
+        err = "Impedance cutoff must be greater than 0."
+        LOGGER.error(err)
+        raise ValueError(err)
+    if num_destinations and num_destinations < 1:
+        err = "Number of destinations to find must be greater than 0."
+        LOGGER.error(err)
+        raise ValueError(err)
 
-        if self.cutoff == "":
-            self.cutoff = None
-        if self.num_destinations == "":
-            self.num_destinations = None
-        if not self.barriers:
-            self.barriers = []
+    # Validate and convert time and distance units
+    time_units = convert_time_units_str_to_enum(time_units)
+    distance_units = convert_distance_units_str_to_enum(distance_units)
 
-        self.same_origins_destinations = True if self.origins == self.destinations else False
+    # Validate origins and destinations
+    if not arcpy.Exists(origins):
+        err = f"Input Origins dataset {origins} does not exist."
+        LOGGER.error(err)
+        raise ValueError(err)
+    if int(arcpy.management.GetCount(origins).getOutput(0)) <= 0:
+        err = f"Input Origins dataset {origins} has no rows."
+        LOGGER.error(err)
+        raise ValueError(err)
+    if not arcpy.Exists(destinations):
+        err = f"Input Destinations dataset {destinations} does not exist."
+        LOGGER.error(err)
+        raise ValueError(err)
+    if int(arcpy.management.GetCount(destinations).getOutput(0)) <= 0:
+        err = f"Input Destinations dataset {destinations} has no rows."
+        LOGGER.error(err)
+        raise ValueError(err)
 
-        self.max_origins = self.chunk_size
-        self.max_destinations = self.chunk_size
-
-        self.is_service = helpers.is_nds_service(self.network_data_source)
-        self.service_limits = None
-        self.is_agol = False
-
-        # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
-        unique_id = uuid.uuid4().hex
-        self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
-
-    def validate_inputs(self):
-        """Validate the OD Cost Matrix inputs."""
-
-        # Validate input numerical values
-        if self.chunk_size < 1:
-            err = "Chunk size must be greater than 0."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if self.max_processes < 1:
-            err = "Maximum allowed parallel processes must be greater than 0."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if self.cutoff and self.cutoff <= 0:
-            err = "Impedance cutoff must be greater than 0."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if self.num_destinations and self.num_destinations < 1:
-            err = "Number of destinations to find must be greater than 0."
-            arcpy.AddError(err)
-            raise ValueError(err)
-
-        # Validate and convert time and distance units
-        self._convert_time_units_str_to_enum()
-        self._convert_distance_units_str_to_enum()
-
-        # Validate origins and destinations
-        if not arcpy.Exists(self.origins):
-            err = f"Input Origins dataset {self.origins} does not exist."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if int(arcpy.management.GetCount(self.origins).getOutput(0)) <= 0:
-            err = f"Input Origins dataset {self.origins} has no rows."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if not arcpy.Exists(self.destinations):
-            err = f"Input Destinations dataset {self.destinations} does not exist."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if int(arcpy.management.GetCount(self.destinations).getOutput(0)) <= 0:
-            err = f"Input Destinations dataset {self.destinations} has no rows."
-            arcpy.AddError(err)
+    # Validate barriers
+    for barrier_fc in barriers:
+        if not arcpy.Exists(barrier_fc):
+            err = f"Input Barriers dataset {barrier_fc} does not exist."
+            LOGGER.error(err)
             raise ValueError(err)
 
-        # Validate barriers
-        for barrier_fc in self.barriers:
-            if not arcpy.Exists(barrier_fc):
-                err = f"Input Barriers dataset {barrier_fc} does not exist."
-                arcpy.AddError(err)
-                raise ValueError(err)
-
-        # Validate network
-        if not self.is_service and not arcpy.Exists(self.network_data_source):
-            err = f"Input network dataset {self.network_data_source} does not exist."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if not self.is_service:
-            try:
-                arcpy.CheckOutExtension("network")
-            except Exception as ex:
-                err = "Unable to check out Network Analyst extension license."
-                arcpy.AddError(err)
-                raise RuntimeError(err) from ex
-
-        # For a services solve, get tool limits and validate max processes and chunk size
-        if self.is_service:
-            self._get_tool_limits_and_is_agol()
-            if self.is_agol and self.max_processes > MAX_AGOL_PROCESSES:
-                arcpy.AddWarning((
-                    f"The specified maximum number of parallel processes, {self.max_processes}, exceeds the limit of "
-                    f"{MAX_AGOL_PROCESSES} allowed when using as the network data source the ArcGIS Online services or "
-                    "a hybrid portal whose network analysis services fall back to the ArcGIS Online services. The "
-                    f"maximum number of parallel processes has been reduced to {MAX_AGOL_PROCESSES}."))
-                self.max_processes = MAX_AGOL_PROCESSES
-            self._update_max_inputs_for_service()
-            if self.should_precalc_network_locations:
-                arcpy.AddWarning(
-                    "Cannot precalculate network location fields when the network data source is a service.")
-                self.should_precalc_network_locations = False
-
-        ### TODO: Figure out how to validate OD settings and get optimized cost field
-
-    def _convert_time_units_str_to_enum(self):
-        """Convert a string representation of time units to an arcpy.nax enum.
-
-        Raises:
-            ValueError: If the string cannot be parsed as a valid arcpy.nax.TimeUnits enum value.
-        """
-        if self.time_units.lower() == "minutes":
-            self.time_units = arcpy.nax.TimeUnits.Minutes
-        elif self.time_units.lower() == "seconds":
-            self.time_units = arcpy.nax.TimeUnits.Seconds
-        elif self.time_units.lower() == "hours":
-            self.time_units = arcpy.nax.TimeUnits.Hours
-        elif self.time_units.lower() == "days":
-            self.time_units = arcpy.nax.TimeUnits.Days
-        else:
-            # If we got to this point, the input time units were invalid.
-            err = f"Invalid time units: {self.time_units}"
-            arcpy.AddError(err)
-            raise ValueError(err)
-
-    def _convert_distance_units_str_to_enum(self):
-        """Convert a string representation of distance units to an arcpy.nax.DistanceUnits enum.
-
-        Raises:
-            ValueError: If the string cannot be parsed as a valid arcpy.nax.DistanceUnits enum value.
-        """
-        if self.distance_units.lower() == "miles":
-            self.distance_units = arcpy.nax.DistanceUnits.Miles
-        elif self.distance_units.lower() == "kilometers":
-            self.distance_units = arcpy.nax.DistanceUnits.Kilometers
-        elif self.distance_units.lower() == "meters":
-            self.distance_units = arcpy.nax.DistanceUnits.Meters
-        elif self.distance_units.lower() == "feet":
-            self.distance_units = arcpy.nax.DistanceUnits.Feet
-        elif self.distance_units.lower() == "yards":
-            self.distance_units = arcpy.nax.DistanceUnits.Yards
-        elif self.distance_units.lower() == "nauticalmiles" or self.distance_units.lower() == "nautical miles":
-            self.distance_units = arcpy.nax.DistanceUnits.NauticalMiles
-        else:
-            # If we got to this point, the input distance units were invalid.
-            err = f"Invalid distance units: {self.distance_units}"
-            arcpy.AddError(err)
-            raise ValueError(err)
-
-    def _get_tool_limits_and_is_agol(
-            self, service_name="asyncODCostMatrix", tool_name="GenerateOriginDestinationCostMatrix"):
-        """Retrieve a dictionary of various limits supported by a portal tool and whether the portal uses AGOL services.
-
-        Assumes that we have already determined that the network data source is a service.
-
-        Args:
-            service_name (str, optional): Name of the service. Defaults to "asyncODCostMatrix".
-            tool_name (str, optional): Tool name for the designated service. Defaults to
-                "GenerateOriginDestinationCostMatrix".
-        """
-        LOGGER.debug("Getting tool limits from the portal...")
-        if not self.network_data_source.endswith("/"):
-            self.network_data_source = self.network_data_source + "/"
+    # Validate network
+    is_service = is_nds_service(network_data_source)
+    tool_limits = None
+    if not is_service and not arcpy.Exists(network_data_source):
+        err = f"Input network dataset {network_data_source} does not exist."
+        LOGGER.error(err)
+        raise ValueError(err)
+    if not is_service:
         try:
-            tool_info = arcpy.nax.GetWebToolInfo(service_name, tool_name, self.network_data_source)
-            # serviceLimits returns the maximum origins and destinations allowed by the service, among other things
-            self.service_limits = tool_info["serviceLimits"]
-            # isPortal returns True for Enterprise portals and False for AGOL or hybrid portals that fall back to using
-            # the AGOL services
-            self.is_agol = not tool_info["isPortal"]
-        except Exception:
-            arcpy.AddError("Error getting tool limits from the portal.")
-            errs = traceback.format_exc().splitlines()
-            for err in errs:
-                arcpy.AddError(err)
-            raise
+            arcpy.CheckOutExtension("network")
+        except Exception as ex:
+            err = "Unable to check out Network Analyst extension license."
+            LOGGER.error(err)
+            raise RuntimeError(err) from ex
+    if is_service:
+        tool_limits, is_agol = get_tool_limits_and_is_agol(network_data_source)
+        if is_agol and max_processes > MAX_AGOL_PROCESSES:
+            LOGGER.warning((
+                f"The specified maximum number of parallel processes, {max_processes}, exceeds the limit of "
+                f"{MAX_AGOL_PROCESSES} allowed when using as the network data source the ArcGIS Online services or a "
+                "hybrid portal whose network analysis services fall back to the ArcGIS Online services. The maximum "
+                f"number of parallel processes has been reduced to {MAX_AGOL_PROCESSES}."))
+            max_processes = MAX_AGOL_PROCESSES
 
-    def _update_max_inputs_for_service(self):
-        """Check the user's specified max origins and destinations and reduce max to portal limits if required."""
-        lim_max_origins = int(self.service_limits["maximumOrigins"])
-        if lim_max_origins < self.max_origins:
-            self.max_origins = lim_max_origins
-            arcpy.AddMessage(
-                f"Max origins per chunk has been updated to {self.max_origins} to accommodate service limits.")
-        lim_max_destinations = int(self.service_limits["maximumDestinations"])
-        if lim_max_destinations < self.max_destinations:
-            self.max_destinations = lim_max_destinations
-            arcpy.AddMessage(
-                f"Max destinations per chunk has been updated to {self.max_destinations} to accommodate service limits."
-            )
+    # Create a scratch folder to store intermediate outputs from the OD Cost Matrix processes
+    unique_id = uuid.uuid4().hex
+    scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
+    LOGGER.info(f"Intermediate outputs will be written to {scratch_folder}.")
+    os.mkdir(scratch_folder)
 
-    def _spatially_sort_input(self, input_features, is_origins):
-        """Spatially sort the input feature class.
+    # Initialize the dictionary of inputs to send to each OD solve
+    od_inputs = {}
+    od_inputs["origins"] = origins
+    od_inputs["destinations"] = destinations
+    od_inputs["network_data_source"] = network_data_source
+    od_inputs["travel_mode"] = travel_mode
+    od_inputs["output_folder"] = scratch_folder
+    od_inputs["time_units"] = time_units
+    od_inputs["distance_units"] = distance_units
+    od_inputs["cutoff"] = cutoff
+    od_inputs["num_destinations"] = num_destinations
+    od_inputs["barriers"] = barriers
 
-        Also adds a field to the input feature class to preserve the original OID values. This field is called
-        "OriginOID" for origins and "DestinationOID" for destinations.
+    # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the solver
+    # object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes that are
+    # guaranteed to all fail. While we're doing this, check and store the field name that will represent the optimized
+    # costs in the output OD Lines table. We'll use this in post processing.
+    optimized_cost_field = validate_od_settings(**od_inputs)
+    od_inputs["origins"] = output_origins
+    od_inputs["destinations"] = output_destinations
 
-        Args:
-            input_features (str): Catalog path to the feature class to sort
-            is_origins (bool): True if the feature class represents origins; False otherwise.
-        """
-        LOGGER.info(f"Spatially sorting input dataset {input_features}...")
-
-        # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
-        # Note that if the original input was a shapefile, these IDs will likely be wrong because copying the original
-        # input to the output geodatabase will have altered the original ObjectIDs.
-        # Consequently, don't use shapefiles as inputs.
-        LOGGER.debug("Transferring original OID values to new field...")
-        oid_field = "OriginOID" if is_origins else "DestinationOID"
-        desc = arcpy.Describe(input_features)
-        if oid_field in [f.name for f in desc.fields]:
-            run_gp_tool(arcpy.management.DeleteField, [input_features, oid_field])
-        run_gp_tool(arcpy.management.AddField, [input_features, oid_field, "LONG"])
-        run_gp_tool(arcpy.management.CalculateField, [input_features, oid_field, f"!{desc.oidFieldName}!"])
-
-        # Make a temporary copy of the inputs so the Sort tool can write its output to the input_features path, which is
-        # the ultimate desired location
-        temp_inputs = arcpy.CreateUniqueName("TempODInputs", arcpy.env.scratchGDB)  # pylint:disable = no-member
-        LOGGER.debug(f"Making temporary copy of inputs in {temp_inputs} before sorting...")
-        run_gp_tool(arcpy.management.Copy, [input_features, temp_inputs])
-
-        # Spatially sort input features
-        try:
-            LOGGER.debug("Running spatial sort...")
-            # Don't use run_gp_tool() because we need to parse license errors.
-            arcpy.management.Sort(temp_inputs, input_features, [[desc.shapeFieldName, "ASCENDING"]], "PEANO")
-        except arcpy.ExecuteError:  # pylint:disable = no-member
-            msgs = arcpy.GetMessages(2)
-            if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
-                LOGGER.warning("Skipping spatial sorting because the Advanced license is not available.")
-            else:
-                LOGGER.warning(f"Skipping spatial sorting because the tool failed. Messages:\n{msgs}")
-
-        # Clean up. Delete temporary copy of inputs
-        LOGGER.debug(f"Deleting temporary input feature class {temp_inputs}...")
-        run_gp_tool(arcpy.management.Delete, [[temp_inputs]])
-
-    def _precalculate_network_locations(self, input_features):
-        """Precalculate network location fields if possible for faster loading and solving later.
-
-        Cannot be used if the network data source is a service. Uses the searchTolerance, searchToleranceUnits, and
-        searchQuery properties set in the OD config file.
-
-        Args:
-            input_features (feature class catalog path): Feature class to calculate network locations for
-            network_data_source (network dataset catalog path): Network dataset to use to calculate locations
-            travel_mode (travel mode): Travel mode name, object, or json representation to use when calculating locations.
-        """
-        if self.is_service:
-            arcpy.AddMessage(
-                "Skipping precalculating network location fields because the network data source is a service.")
-            return
-
-        LOGGER.info(f"Precalculating network location fields for {input_features}...")
-
-        # Get location settings from config file if present
-        search_tolerance = None
-        if "searchTolerance" in OD_PROPS and "searchToleranceUnits" in OD_PROPS:
-            search_tolerance = f"{OD_PROPS['searchTolerance']} {OD_PROPS['searchToleranceUnits'].name}"
-        search_query = None
-        if "searchQuery" in OD_PROPS:
-            search_query = OD_PROPS["searchQuery"]
-
-        # Calculate network location fields if network data source is local
-        run_gp_tool(
-            arcpy.na.CalculateLocations,
-            [input_features, self.network_data_source],
-            {"search_tolerance": search_tolerance, "search_query": search_query, "travel_mode": self.travel_mode}
+    # Set max origins and destinations per chunk
+    max_origins = chunk_size
+    max_destinations = chunk_size
+    if is_service:
+        # We will use the user's specified limits unless they exceed the tool limits of the portal
+        max_origins, max_destinations = update_max_inputs_for_service(
+            max_origins,
+            max_destinations,
+            tool_limits
         )
 
-    def execute_solve(self):
+    # Copy Origins and Destinations to outputs
+    LOGGER.debug("Copying input origins and destinations to outputs...")
+    run_gp_tool(arcpy.management.Copy, [origins, output_origins])
+    run_gp_tool(arcpy.management.Copy, [destinations, output_destinations])
 
-        arcpy.AddMessage(f"Intermediate outputs will be written to {self.scratch_folder}.")
-        os.mkdir(self.scratch_folder)
+    # Spatially sort inputs
+    spatially_sort_input(output_origins, is_origins=True)
+    spatially_sort_input(output_destinations, is_origins=False)
 
-        #### TODO: Figure out how to do logging
-        # Copy Origins and Destinations to outputs
-        LOGGER.debug("Copying input origins and destinations to outputs...")
-        run_gp_tool(arcpy.management.Copy, [self.origins, self.output_origins])
-        if not self.same_origins_destinations:
-            run_gp_tool(arcpy.management.Copy, [self.destinations, self.output_destinations])
-
-        # Spatially sort inputs
-        self._spatially_sort_input(self.output_origins, is_origins=True)
-        if not self.same_origins_destinations:
-            self._spatially_sort_input(self.output_destinations, is_origins=False)
-
-        # Precalculate network location fields for inputs
-        if not self.is_service and self.should_precalc_network_locations:
-            self._precalculate_network_locations(self.output_origins)
-            if not self.same_origins_destinations:
-                self._precalculate_network_locations(self.output_destinations)
-            for barrier_fc in self.barriers:
-                self._precalculate_network_locations(barrier_fc)
-
-        # If Origins and Destinations were the same, copy the output origins to the output destinations. This saves us
-        # from having to spatially sort and precalculate network locations on the same feature class twice.
-        if self.same_origins_destinations:
-            run_gp_tool(arcpy.management.Copy, [self.output_origins, self.output_destinations])
+    # Precalculate network location fields for inputs
+    if is_service and should_precalc_network_locations:
+        LOGGER.warning("Cannot precalculate network location fields when the network data source is a service.")
+    if not is_service and should_precalc_network_locations:
+        precalculate_network_locations(output_origins, network_data_source, travel_mode)
+        precalculate_network_locations(output_destinations, network_data_source, travel_mode)
+        for barrier_fc in barriers:
+            precalculate_network_locations(barrier_fc, network_data_source, travel_mode)
 
     # Construct OID ranges for chunks of origins and destinations
     origin_ranges = get_oid_ranges_for_input(output_origins, max_origins)
@@ -1094,3 +934,108 @@ class od_cost_matrix_solver():
             LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {scratch_folder}.")
 
     LOGGER.info("Finished calculating OD Cost Matrices.")
+
+
+def _launch_tool():
+    """Read arguments from the command line (or passed in via subprocess) and run the tool."""
+    # Create the parser
+    parser = argparse.ArgumentParser(description=globals().get("__doc__", ""), fromfile_prefix_chars='@')
+
+    # Define Arguments supported by the command line utility
+
+    # --origins parameter
+    help_string = "The full catalog path to the feature class containing the origins."
+    parser.add_argument("-o", "--origins", action="store", dest="origins", help=help_string, required=True)
+
+    # --destinations parameter
+    help_string = "The full catalog path to the feature class containing the destinations."
+    parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
+
+    # --output-od-lines parameter
+    help_string = "The catalog path to the output feature class that will contain the combined OD Cost Matrix results."
+    parser.add_argument(
+        "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
+
+    # --output-origins parameter
+    help_string = "The catalog path to the output feature class that will contain the updated origins."
+    parser.add_argument(
+        "-oo", "--output-origins", action="store", dest="output_origins", help=help_string, required=True)
+
+    # --output-destinations parameter
+    help_string = "The catalog path to the output feature class that will contain the updated destinations."
+    parser.add_argument(
+        "-od", "--output-destinations", action="store", dest="output_destinations", help=help_string, required=True)
+
+    # --network-data-source parameter
+    help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
+    parser.add_argument(
+        "-n", "--network-data-source", action="store", dest="network_data_source", help=help_string, required=True)
+
+    # --travel-mode parameter
+    help_string = (
+        "A JSON string representation of a travel mode from the network data source that will be used for the analysis."
+    )
+    parser.add_argument("-tm", "--travel-mode", action="store", dest="travel_mode", help=help_string, required=True)
+
+    # --time-units parameter
+    help_string = "String name of the time units for the analysis. These units will be used in the output."
+    parser.add_argument("-tu", "--time-units", action="store", dest="time_units", help=help_string, required=True)
+
+    # --distance-units parameter
+    help_string = "String name of the distance units for the analysis. These units will be used in the output."
+    parser.add_argument(
+        "-du", "--distance-units", action="store", dest="distance_units", help=help_string, required=True)
+
+    # --chunk-size parameter
+    help_string = (
+        "Maximum number of origins and destinations that can be in one chunk for parallel processing of OD Cost Matrix "
+        "solves. For example, 1000 means that a chunk consists of no more than 1000 origins and 1000 destinations."
+    )
+    parser.add_argument(
+        "-ch", "--chunk-size", action="store", dest="chunk_size", type=int, help=help_string, required=True)
+
+    # --max-processes parameter
+    help_string = "Maximum number parallel processes to use for the OD Cost Matrix solves."
+    parser.add_argument(
+        "-mp", "--max-processes", action="store", dest="max_processes", type=int, help=help_string, required=True)
+
+    # --cutoff parameter
+    help_string = (
+        "Impedance cutoff to limit the OD cost matrix search distance. Should be specified in the same units as the "
+        "time-units parameter if the travel mode's impedance is in units of time or in the same units as the "
+        "distance-units parameter if the travel mode's impedance is in units of distance. Otherwise, specify this in "
+        "the units of the travel mode's impedance attribute."
+    )
+    parser.add_argument(
+        "-co", "--cutoff", action="store", dest="cutoff", type=float, help=help_string, required=False)
+
+    # --num-destinations parameter
+    help_string = "The number of destinations to find for each origin. Set to None to find all destinations."
+    parser.add_argument(
+        "-nd", "--num-destinations", action="store", dest="num_destinations", type=int, help=help_string,
+        required=False)
+
+    # --precalculate-network-locations parameter
+    help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."
+    parser.add_argument(
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
+        dest="precalculate_network_locations", help=help_string, required=True)
+
+    # --barriers parameter
+    help_string = "A list of catalog paths to the feature classes containing barriers to use in the OD Cost Matrix."
+    parser.add_argument(
+        "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
+
+    # Get arguments as dictionary.
+    args = vars(parser.parse_args())
+
+    # Call the main execution
+    start_time = time.time()
+    compute_ods_in_parallel(**args)
+    LOGGER.info(f"Completed in {round((time.time() - start_time) / 60, 2)} minutes")
+
+
+if __name__ == "__main__":
+    # The script tool calls this script as if it were calling it from the command line.
+    # It uses this main function.
+    _launch_tool()
