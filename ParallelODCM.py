@@ -4,6 +4,11 @@ feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
+This script is intended to be called as a subprocess from the odcm.py script
+so that it can launch parallel processes with concurrent.futures. It must be
+called as a subprocess because the main script tool process, when running
+within ArcGIS Pro, cannot launch parallel subprocesses on its own.
+
 Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -707,8 +712,8 @@ def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
 def compute_ods_in_parallel(**kwargs):
     """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
-    Preprocess and validate inputs, compute OD cost matrices in parallel, and combine and post-process the results.
-    This method does all the work.
+    Compute OD cost matrices in parallel and combine and post-process the results.
+    This function assumes that the inputs have already been pre-processed and validated.
 
     kwargs is expected to be a dictionary with the following keys:
     - origins
@@ -725,7 +730,6 @@ def compute_ods_in_parallel(**kwargs):
     - num_destinations (optional)
     - precalculate_network_locations
     - barriers (optional)
-    - scratch_folder
 
     Raises:
         ValueError: If chunk_size, max_processes, cutoff, or num_destinations < 0
@@ -737,7 +741,6 @@ def compute_ods_in_parallel(**kwargs):
     network_data_source = kwargs["network_data_source"]
     travel_mode = kwargs["travel_mode"]
     output_od_lines = kwargs["output_od_lines"]
-    scratch_folder = kwargs["scratch_folder"]
     max_origins = kwargs["max_origins"]
     max_destinations = kwargs["max_destinations"]
     max_processes = kwargs["max_processes"]
@@ -750,6 +753,12 @@ def compute_ods_in_parallel(**kwargs):
     if num_destinations == "":
         num_destinations = None
     barriers = kwargs.get("barriers", [])
+
+    # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
+    unique_id = uuid.uuid4().hex
+    scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
+    LOGGER.info(f"Intermediate outputs will be written to {scratch_folder}.")
+    os.mkdir(scratch_folder)
 
     # Initialize the dictionary of inputs to send to each OD solve
     od_inputs = {}
@@ -850,16 +859,6 @@ def _launch_tool():
     parser.add_argument(
         "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
 
-    # --output-origins parameter
-    help_string = "The catalog path to the output feature class that will contain the updated origins."
-    parser.add_argument(
-        "-oo", "--output-origins", action="store", dest="output_origins", help=help_string, required=True)
-
-    # --output-destinations parameter
-    help_string = "The catalog path to the output feature class that will contain the updated destinations."
-    parser.add_argument(
-        "-od", "--output-destinations", action="store", dest="output_destinations", help=help_string, required=True)
-
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
     parser.add_argument(
@@ -908,12 +907,6 @@ def _launch_tool():
     parser.add_argument(
         "-nd", "--num-destinations", action="store", dest="num_destinations", type=int, help=help_string,
         required=False)
-
-    # --precalculate-network-locations parameter
-    help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."
-    parser.add_argument(
-        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
-        dest="precalculate_network_locations", help=help_string, required=True)
 
     # --barriers parameter
     help_string = "A list of catalog paths to the feature classes containing barriers to use in the OD Cost Matrix."

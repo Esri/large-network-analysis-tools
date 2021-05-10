@@ -253,11 +253,10 @@ class SolveLargeODCostMatrix(object):
             parameters[11].valueAsText,  # cutoff
             parameters[12].valueAsText,  # number of destinations to find
             parameters[14].value,  # Should precalculate network locations
-            parameters[13].value  # barriers
+            get_catalog_path_multivalue(parameters[13])  # barriers
         )
 
         return
-
 
 
 def get_catalog_path_multivalue(param):
@@ -287,20 +286,6 @@ def get_catalog_path_multivalue(param):
     return catalog_paths
 
 
-def get_travel_mode_json(param):
-    """Get the JSON representation of a travel mode if possible.
-
-    Args:
-        param (arcpy.Parameter): travel mode parameter
-
-    Returns:
-        string: JSON string representation of a travel mode. If this cannot be determined, it just returns the
-            parameter's valueAsText value.
-    """
-    if hasattr(param.value, "_JSON"):
-        return param.value._JSON  # pylint: disable=protected-access
-    else:
-        return param.valueAsText
 
 
 def parse_std_and_write_to_gp_ui(msg_string):

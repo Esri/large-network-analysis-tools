@@ -15,24 +15,7 @@ Copyright 2021 Esri
 """
 import arcpy
 
-
-def get_catalog_path(data):
-    """Get the catalog path for the designated input if possible.
-
-    Ensures we can pass map layers to the subprocess. This works if the input is a layer object. It will not work if the
-    input is a layer name, so do not use it for that.
-
-    Args:
-        data (layer or str): Layer from which to retrieve the catalog path.
-
-    Returns:
-        string: Catalog path to the data
-    """
-    if hasattr(data, "dataSource"):
-        return data.dataSource
-    else:
-        # Assume it is already the catalog path. Will not work if it's a layer name.
-        return data
+from ParallelODCM import MSG_STR_SPLITTER
 
 
 def is_nds_service(network_data_source):
@@ -45,6 +28,33 @@ def is_nds_service(network_data_source):
         bool: True if the network data source is a service URL. False otherwise.
     """
     return True if network_data_source.startswith("http") else False
+
+
+def get_travel_mode_string(travel_mode):
+    """Get a string representation of a travel mode if possible.
+
+    Args:
+        travel_mode (arcpy.nax.TravelMode, str): Travel mode to convert to a string
+
+    Raises:
+        ValueError: The travel mode is invalid
+
+    Returns:
+        str: JSON string representation of the travel mode or the travel mode's name
+    """
+    if isinstance(travel_mode, str):
+        # The travel mode is already a string. It's either a string name or a JSON string representation of the travel
+        # mode. Just return it as is.
+        return travel_mode
+    if isinstance(travel_mode, arcpy.nax.TravelMode):
+        if hasattr(travel_mode, "_JSON"):
+            return travel_mode._JSON  # pylint: disable=protected-access
+        else:
+            return travel_mode.name
+    # If we got to this point, the travel mode is invalid.
+    err = f"Invalid travel mode: {travel_mode}"
+    arcpy.AddError(err)
+    raise ValueError(err)
 
 
 def convert_time_units_str_to_enum(time_units):
@@ -91,3 +101,24 @@ def convert_distance_units_str_to_enum(distance_units):
         err = f"Invalid distance units: {distance_units}"
         arcpy.AddError(err)
         raise ValueError(err)
+
+
+def parse_std_and_write_to_gp_ui(msg_string):
+    """Parse a message string returned from the subprocess's stdout and write it to the GP UI according to type.
+
+    Logged messages in the ParallelODCM module start with a level indicator that allows us to parse them and write them
+    as errors, warnings, or info messages.  Example: "ERROR | Something terrible happened" is an error message.
+
+    Args:
+        msg_string (str): Message string (already decoded) returned from ParallelODCM.py subprocess stdout
+    """
+    try:
+        level, msg = msg_string.split(MSG_STR_SPLITTER)
+        if level in ["ERROR", "CRITICAL"]:
+            arcpy.AddError(msg)
+        elif level == "WARNING":
+            arcpy.AddWarning(msg)
+        else:
+            arcpy.AddMessage(msg)
+    except Exception:  # pylint: disable=broad-except
+        arcpy.AddMessage(msg_string)
