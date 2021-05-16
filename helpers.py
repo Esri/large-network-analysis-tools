@@ -15,7 +15,11 @@ Copyright 2021 Esri
 """
 import arcpy
 
-from ParallelODCM import MSG_STR_SPLITTER
+# Set some shared global variables that can be referenced from the other scripts
+MSG_STR_SPLITTER = " | "
+DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
+TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
+MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 
 
 def is_nds_service(network_data_source):
@@ -27,34 +31,7 @@ def is_nds_service(network_data_source):
     Returns:
         bool: True if the network data source is a service URL. False otherwise.
     """
-    return True if network_data_source.startswith("http") else False
-
-
-def get_travel_mode_string(travel_mode):
-    """Get a string representation of a travel mode if possible.
-
-    Args:
-        travel_mode (arcpy.nax.TravelMode, str): Travel mode to convert to a string
-
-    Raises:
-        ValueError: The travel mode is invalid
-
-    Returns:
-        str: JSON string representation of the travel mode or the travel mode's name
-    """
-    if isinstance(travel_mode, str):
-        # The travel mode is already a string. It's either a string name or a JSON string representation of the travel
-        # mode. Just return it as is.
-        return travel_mode
-    if isinstance(travel_mode, arcpy.nax.TravelMode):
-        if hasattr(travel_mode, "_JSON"):
-            return travel_mode._JSON  # pylint: disable=protected-access
-        else:
-            return travel_mode.name
-    # If we got to this point, the travel mode is invalid.
-    err = f"Invalid travel mode: {travel_mode}"
-    arcpy.AddError(err)
-    raise ValueError(err)
+    return bool(network_data_source.startswith("http"))
 
 
 def convert_time_units_str_to_enum(time_units):
@@ -65,17 +42,16 @@ def convert_time_units_str_to_enum(time_units):
     """
     if time_units.lower() == "minutes":
         return arcpy.nax.TimeUnits.Minutes
-    elif time_units.lower() == "seconds":
+    if time_units.lower() == "seconds":
         return arcpy.nax.TimeUnits.Seconds
-    elif time_units.lower() == "hours":
+    if time_units.lower() == "hours":
         return arcpy.nax.TimeUnits.Hours
-    elif time_units.lower() == "days":
+    if time_units.lower() == "days":
         return arcpy.nax.TimeUnits.Days
-    else:
-        # If we got to this point, the input time units were invalid.
-        err = f"Invalid time units: {time_units}"
-        arcpy.AddError(err)
-        raise ValueError(err)
+    # If we got to this point, the input time units were invalid.
+    err = f"Invalid time units: {time_units}"
+    arcpy.AddError(err)
+    raise ValueError(err)
 
 
 def convert_distance_units_str_to_enum(distance_units):
@@ -86,21 +62,20 @@ def convert_distance_units_str_to_enum(distance_units):
     """
     if distance_units.lower() == "miles":
         return arcpy.nax.DistanceUnits.Miles
-    elif distance_units.lower() == "kilometers":
+    if distance_units.lower() == "kilometers":
         return arcpy.nax.DistanceUnits.Kilometers
-    elif distance_units.lower() == "meters":
+    if distance_units.lower() == "meters":
         return arcpy.nax.DistanceUnits.Meters
-    elif distance_units.lower() == "feet":
+    if distance_units.lower() == "feet":
         return arcpy.nax.DistanceUnits.Feet
-    elif distance_units.lower() == "yards":
+    if distance_units.lower() == "yards":
         return arcpy.nax.DistanceUnits.Yards
-    elif distance_units.lower() == "nauticalmiles" or distance_units.lower() == "nautical miles":
+    if distance_units.lower() == "nauticalmiles" or distance_units.lower() == "nautical miles":
         return arcpy.nax.DistanceUnits.NauticalMiles
-    else:
-        # If we got to this point, the input distance units were invalid.
-        err = f"Invalid distance units: {distance_units}"
-        arcpy.AddError(err)
-        raise ValueError(err)
+    # If we got to this point, the input distance units were invalid.
+    err = f"Invalid distance units: {distance_units}"
+    arcpy.AddError(err)
+    raise ValueError(err)
 
 
 def parse_std_and_write_to_gp_ui(msg_string):
