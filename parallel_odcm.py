@@ -4,10 +4,12 @@ feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
-This script is intended to be called as a subprocess from the odcm.py script
+This script is intended to be called as a subprocess from the solve_large_odcm.py script
 so that it can launch parallel processes with concurrent.futures. It must be
 called as a subprocess because the main script tool process, when running
 within ArcGIS Pro, cannot launch parallel subprocesses on its own.
+
+This script should not be called directly from the command line.
 
 Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +33,6 @@ import itertools
 import time
 import traceback
 import argparse
-from distutils.util import strtobool
 
 import arcpy
 
@@ -42,7 +43,6 @@ import helpers
 
 arcpy.env.overwriteOutput = True
 
-
 # Set logging for the main process.
 # LOGGER logs everything from the main process to stdout using a specific format that the SolveLargeODCostMatrix tool
 # can parse and write to the geoprocessing message feed.
@@ -52,14 +52,9 @@ LOGGER.setLevel(LOG_LEVEL)
 console_handler = logging.StreamHandler(stream=sys.stdout)
 console_handler.setLevel(LOG_LEVEL)
 # Used by script tool to split message text from message level to add correct message type to GP window
-MSG_STR_SPLITTER = " | "
-console_handler.setFormatter(logging.Formatter("%(levelname)s" + MSG_STR_SPLITTER + "%(message)s"))
+console_handler.setFormatter(logging.Formatter("%(levelname)s" + helpers.MSG_STR_SPLITTER + "%(message)s"))
 LOGGER.addHandler(console_handler)
 
-# Set some global variables. Some of these are also referenced in the script tool definition.
-DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
-TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
-MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 DELETE_INTERMEDIATE_OD_OUTPUTS = True  # Set to False for debugging purposes
 
 
@@ -133,45 +128,6 @@ def run_gp_tool(tool, tool_args=None, tool_kwargs=None, log_to_use=LOGGER):
 
     log_to_use.debug(f"Finished running geoprocessing tool {tool_name}.")
     return result
-
-
-
-def get_oid_ranges_for_input(input_fc, max_chunk_size):
-    """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
-
-    Args:
-        input_fc (str, layer): Data that needs to be split into chunks
-        max_chunk_size (int): Maximum number of rows that can be in a chunk
-
-    Returns:
-        list: list of ObjectID ranges for the current dataset representing each chunk. For example,
-            [[1, 1000], [1001, 2000], [2001, 2478]] represents three chunks of no more than 1000 rows.
-    """
-    ranges = []
-    num_in_range = 0
-    current_range = [0, 0]
-    # Loop through all OIDs of the input and construct tuples of min and max OID for each chunk
-    # We do it this way and not by straight-up looking at the numerical values of OIDs to account
-    # for definition queries, selection sets, or feature layers with gaps in OIDs
-    for row in arcpy.da.SearchCursor(input_fc, "OID@"):  # pylint: disable=no-member
-        oid = row[0]
-        if num_in_range == 0:
-            # Starting new range
-            current_range[0] = oid
-        # Increase the count of items in this range and set the top end of the range to the current oid
-        num_in_range += 1
-        current_range[1] = oid
-        if num_in_range == max_chunk_size:
-            # Finishing up a chunk
-            ranges.append(current_range)
-            # Reset range trackers
-            num_in_range = 0
-            current_range = [0, 0]
-    # After looping, close out the last range if we still have one open
-    if current_range != [0, 0]:
-        ranges.append(current_range)
-
-    return ranges
 
 
 class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
@@ -593,40 +549,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             logger_obj.addHandler(file_handler)
 
 
-def validate_od_settings(**od_inputs):
-    """Validate OD cost matrix settings before spinning up a bunch of parallel processes doomed to failure.
-
-    Also check which field name in the output OD Lines will store the optimized cost values. This depends on the travel
-    mode being used by the analysis, and we capture it here to use in later steps.
-
-    Returns:
-        str: The name of the field in the output OD Lines table containing the optimized costs for the analysis
-    """
-    # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties
-    # This allows us to detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
-    LOGGER.debug("Validating OD Cost Matrix settings...")
-    odcm = None
-    optimized_cost_field = None
-    try:
-        odcm = ODCostMatrix(**od_inputs)
-        odcm.initialize_od_solver()
-        # Check which field name in the output OD Lines will store the optimized cost values
-        optimized_cost_field = odcm.optimized_field_name
-        LOGGER.debug("OD Cost Matrix settings successfully validated.")
-    except Exception:
-        LOGGER.error("Error initializing OD Cost Matrix analysis.")
-        errs = traceback.format_exc().splitlines()
-        for err in errs:
-            LOGGER.error(err)
-        raise
-    finally:
-        if odcm:
-            LOGGER.debug("Deleting temporary test OD Cost Matrix job folder...")
-            shutil.rmtree(odcm.job_result["jobFolder"], ignore_errors=True)
-
-    return optimized_cost_field
-
-
 def solve_od_cost_matrix(inputs, chunk):
     """Solve an OD Cost Matrix analysis for the given inputs for the given chunk of ObjectIDs.
 
@@ -648,199 +570,283 @@ def solve_od_cost_matrix(inputs, chunk):
     return odcm.job_result
 
 
-def post_process_od_lines(od_line_fcs, out_fc, num_destinations, sort_field):
-    """Merge and post-process the OD Lines calculated in each separate process.
+class ParallelODCalculator():
+    """Solves a large OD Cost Matrix by chunking the problem, solving in parallel, and combining results."""
 
-    Args:
-        od_line_fcs (list(str)): List of catalog paths to the OD lines outputs from each OD Cost Matrix result. These
-            will be combined into one feature class.
-        out_fc (str): Catalog path of the output feature class to be created
-    """
-    LOGGER.info("Post-processing OD Cost Matrix results...")
+    def __init__(  # pylint: disable=too-many-locals, too-many-arguments
+        self, origins, destinations, network_data_source, travel_mode, output_od_lines, max_origins, max_destinations,
+        max_processes, time_units, distance_units, cutoff=None, num_destinations=None, barriers=None
+    ):
+        """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
-    # Merge all the individual OD Lines feature classes
-    LOGGER.debug("Merging OD Cost Matrix results...")
-    run_gp_tool(arcpy.management.Merge, [od_line_fcs, out_fc])
+        Compute OD cost matrices in parallel and combine and post-process the results.
+        This class assumes that the inputs have already been pre-processed and validated.
 
-    # If we wanted to find only the k closest destinations for each origin, we have to do additional post-processing.
-    # Calculating the OD in chunks means our merged output may have more than k destinations for each origin because
-    # each individual chunk found the closest k for that chunk. We need to eliminate all extra rows beyond the first k.
-    # Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
-    if num_destinations:
-        LOGGER.debug("Sorting merged OD Lines results...")
-        out_sorted_lines = arcpy.CreateUniqueName("ODLines_Sorted", arcpy.env.scratchGDB)  # pylint: disable=no-member
-        sort_fields = [["OriginOID", "ASCENDING"], [sort_field, "ASCENDING"]]
-        run_gp_tool(arcpy.management.Sort, [out_fc, out_sorted_lines, sort_fields])
-        desc = arcpy.Describe(out_sorted_lines)
-        # Delete the original output OD lines feature class and re-create it from scratch with the same schema.
-        run_gp_tool(arcpy.management.Delete, [[out_fc]])
-        run_gp_tool(arcpy.management.CreateFeatureclass, [
-            os.path.dirname(out_fc),
-            os.path.basename(out_fc),
-            "POLYLINE",
-            out_sorted_lines,  # template feature class to transfer full schema
-            "SAME_AS_TEMPLATE",
-            "SAME_AS_TEMPLATE",
-            desc.spatialReference
-        ])
-        # Loop through the sorted feature class and insert only the first k into the final output
-        field_names = ["OriginOID", "SHAPE@"] + [f.name for f in desc.fields if f.name != "OriginOID"]
-        with arcpy.da.InsertCursor(out_fc, field_names) as cur:  # pylint: disable=no-member
-            current_origin_id = None
-            count = 0
-            for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):  # pylint: disable=no-member
-                origin_id = row[0]
-                if origin_id != current_origin_id:
-                    # Starting a fresh origin ID
-                    current_origin_id = origin_id
-                    count = 0
-                count += 1
-                if count > num_destinations:
-                    # Skip this row because we have exceeded the number we want to keep for this origin
-                    continue
-                # If we got this far, we want to keep this row.
-                cur.insertRow(row)
+        Args:
+            origins (str): Catalog path to origins
+            destinations (str): Catalog path to destinations
+            network_data_source (str): Network data source catalog path or URL
+            travel_mode (str): String-based representation of a travel mode (name or JSON)
+            output_od_lines (str): Catalog path to the output OD Lines feature class to be created
+            max_origins (int): Maximum origins allowed in a chunk
+            max_destinations (int): Maximum destinations allowed in a chunk
+            max_processes (int): Maximum number of parallel processes allowed
+            time_units (str): String representation of time units
+            distance_units (str): String representation of distance units
+            cutoff (float, optional): Impedance cutoff to limit the OD Cost Matrix solve. Interpreted in the time_units
+                if the travel mode is time-based. Interpreted in the distance-units if the travel mode is distance-
+                based. Interpreted in the impedance units if the travel mode is neither time- nor distance-based.
+                Defaults to None. When None, do not use a cutoff.
+            num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
+                which means to find all destinations.
+            barriers (list(str), optional): List of catalog paths to point, line, and polygon barriers to use.
+                Defaults to None.
+        """
+        time_units = helpers.convert_time_units_str_to_enum(time_units)
+        distance_units = helpers.convert_distance_units_str_to_enum(distance_units)
+        if cutoff == "":
+            cutoff = None
+        if not barriers:
+            barriers = []
+        if num_destinations == "":
+            num_destinations = None
+        self.num_destinations = num_destinations
+        self.max_processes = max_processes
 
-        # Clean up intermediate outputs
-        LOGGER.debug("Deleting intermediate post-processing outputs...")
-        run_gp_tool(arcpy.management.Delete, [[out_sorted_lines]])
+        # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
+        unique_id = uuid.uuid4().hex
+        self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
 
-    LOGGER.info("Post-processing complete.")
-    LOGGER.info(f"Results written to {out_fc}.")
+        # Initialize the dictionary of inputs to send to each OD solve
+        self.od_inputs = {
+            "origins": origins,
+            "destinations": destinations,
+            "network_data_source": network_data_source,
+            "travel_mode": travel_mode,
+            "output_folder": self.scratch_folder,
+            "time_units": time_units,
+            "distance_units": distance_units,
+            "cutoff": cutoff,
+            "num_destinations": self.num_destinations,
+            "barriers": barriers
+        }
 
+        # Final combined output feature class
+        self.output_od_lines = output_od_lines
+        # List of intermediate output feature classes created by each process
+        self.od_line_fcs = []
 
-def compute_ods_in_parallel(**kwargs):
-    """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
+        # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the
+        # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
+        # the optimized that are guaranteed to all fail. While we're doing this, check and store the field name that
+        # will represent costs in the output OD Lines table. We'll use this in post processing.
+        self.optimized_cost_field = self._validate_od_settings()
 
-    Compute OD cost matrices in parallel and combine and post-process the results.
-    This function assumes that the inputs have already been pre-processed and validated.
+        # Construct OID ranges for chunks of origins and destinations
+        origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
+        destination_ranges = self._get_oid_ranges_for_input(destinations, max_destinations)
 
-    kwargs is expected to be a dictionary with the following keys:
-    - origins
-    - destinations
-    - output_od_lines
-    - network_data_source
-    - travel_mode
-    - max_origins
-    - max_destinations
-    - max_processes
-    - time_units
-    - distance_units
-    - cutoff (optional)
-    - num_destinations (optional)
-    - precalculate_network_locations
-    - barriers (optional)
+        # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
+        self.ranges = itertools.product(origin_ranges, destination_ranges)
+        # Calculate the total number of jobs to use in logging
+        self.total_jobs = len(origin_ranges) * len(destination_ranges)
 
-    Raises:
-        ValueError: If chunk_size, max_processes, cutoff, or num_destinations < 0
-        ValueError: If origins, destinations, barriers, or network_data_source doesn't exist
-        ValueError: If origins or destinations has no rows
-    """
-    origins = kwargs["origins"]
-    destinations = kwargs["destinations"]
-    network_data_source = kwargs["network_data_source"]
-    travel_mode = kwargs["travel_mode"]
-    output_od_lines = kwargs["output_od_lines"]
-    max_origins = kwargs["max_origins"]
-    max_destinations = kwargs["max_destinations"]
-    max_processes = kwargs["max_processes"]
-    time_units = helpers.convert_time_units_str_to_enum(kwargs["time_units"])
-    distance_units = helpers.convert_distance_units_str_to_enum(kwargs["distance_units"])
-    cutoff = kwargs.get("cutoff", None)
-    if cutoff == "":
-        cutoff = None
-    num_destinations = kwargs.get("num_destinations", None)
-    if num_destinations == "":
-        num_destinations = None
-    barriers = kwargs.get("barriers", [])
+    def _validate_od_settings(self):
+        """Validate OD cost matrix settings before spinning up a bunch of parallel processes doomed to failure.
 
-    # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
-    unique_id = uuid.uuid4().hex
-    scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
-    LOGGER.info(f"Intermediate outputs will be written to {scratch_folder}.")
-    os.mkdir(scratch_folder)
+        Also check which field name in the output OD Lines will store the optimized cost values. This depends on the
+        travel mode being used by the analysis, and we capture it here to use in later steps.
 
-    # Initialize the dictionary of inputs to send to each OD solve
-    od_inputs = {}
-    od_inputs["origins"] = origins
-    od_inputs["destinations"] = destinations
-    od_inputs["network_data_source"] = network_data_source
-    od_inputs["travel_mode"] = travel_mode
-    od_inputs["output_folder"] = scratch_folder
-    od_inputs["time_units"] = time_units
-    od_inputs["distance_units"] = distance_units
-    od_inputs["cutoff"] = cutoff
-    od_inputs["num_destinations"] = num_destinations
-    od_inputs["barriers"] = barriers
-
-    # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the solver
-    # object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes that are
-    # guaranteed to all fail. While we're doing this, check and store the field name that will represent the optimized
-    # costs in the output OD Lines table. We'll use this in post processing.
-    optimized_cost_field = validate_od_settings(**od_inputs)
-
-    # Construct OID ranges for chunks of origins and destinations
-    origin_ranges = get_oid_ranges_for_input(origins, max_origins)
-    destination_ranges = get_oid_ranges_for_input(destinations, max_destinations)
-
-    # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
-    ranges = itertools.product(origin_ranges, destination_ranges)
-    # Calculate the total number of jobs to use in logging
-    total_jobs = len(origin_ranges) * len(destination_ranges)
-
-    # Compute OD cost matrix in parallel
-    od_line_fcs = []  # Stores catalog paths to the output OD Cost Matrix Lines for each parallel process
-    completed_jobs = 0  # Track the number of jobs completed so far to use in logging
-    # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
-    with futures.ProcessPoolExecutor(max_workers=max_processes) as executor:
-        # Each parallel process calls the solve_od_cost_matrix() function with the od_inputs dictionary for the given
-        # origin and destination OID ranges.
-        jobs = {executor.submit(solve_od_cost_matrix, od_inputs, range): range for range in ranges}
-        # As each job is completed, add some logging information and store the results to post-process later
-        for future in futures.as_completed(jobs):
-            completed_jobs += 1
-            LOGGER.info(
-                f"Finished OD Cost Matrix calculation {completed_jobs} of {total_jobs}.")
-            try:
-                # The OD cost matrix job returns a results dictionary. Retrieve it.
-                result = future.result()
-            except Exception:
-                # If we couldn't retrieve the result, some terrible error happened. Log it.
-                LOGGER.error("Failed to get OD Cost Matrix result from parallel processing.")
-                errs = traceback.format_exc().splitlines()
-                for err in errs:
-                    LOGGER.error(err)
-                raise
-
-            # Parse the results dictionary and store components for post-processing.
-            if result["solveSucceeded"]:
-                od_line_fcs.append(result["outputLines"])
-            else:
-                LOGGER.warning(f"Solve failed for job id {result['jobId']}")
-                msgs = result["solveMessages"]
-                LOGGER.warning(msgs)
-
-    # Merge individual OD Lines feature classes into a single feature class
-    if od_line_fcs:
-        post_process_od_lines(od_line_fcs, output_od_lines, num_destinations, optimized_cost_field)
-    else:
-        LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
-
-    # Cleanup
-    # Delete the job folders if the job succeeded
-    if DELETE_INTERMEDIATE_OD_OUTPUTS:
-        LOGGER.info("Deleting intermediate outputs...")
+        Returns:
+            str: The name of the field in the output OD Lines table containing the optimized costs for the analysis
+        """
+        # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties. This allows us to
+        # detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
+        LOGGER.debug("Validating OD Cost Matrix settings...")
+        optimized_cost_field = None
+        odcm = None
         try:
-            shutil.rmtree(scratch_folder, ignore_errors=True)
-        except Exception:  # pylint: disable=broad-except
-            # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
-            LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {scratch_folder}.")
+            odcm = ODCostMatrix(**self.od_inputs)
+            odcm.initialize_od_solver()
+            # Check which field name in the output OD Lines will store the optimized cost values
+            optimized_cost_field = odcm.optimized_field_name
+            LOGGER.debug("OD Cost Matrix settings successfully validated.")
+        except Exception:
+            LOGGER.error("Error initializing OD Cost Matrix analysis.")
+            errs = traceback.format_exc().splitlines()
+            for err in errs:
+                LOGGER.error(err)
+            raise
+        finally:
+            if odcm:
+                LOGGER.debug("Deleting temporary test OD Cost Matrix job folder...")
+                shutil.rmtree(odcm.job_result["jobFolder"], ignore_errors=True)
+                del odcm
 
-    LOGGER.info("Finished calculating OD Cost Matrices.")
+        return optimized_cost_field
+
+    @staticmethod
+    def _get_oid_ranges_for_input(input_fc, max_chunk_size):
+        """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
+
+        Args:
+            input_fc (str, layer): Data that needs to be split into chunks
+            max_chunk_size (int): Maximum number of rows that can be in a chunk
+
+        Returns:
+            list: list of ObjectID ranges for the current dataset representing each chunk. For example,
+                [[1, 1000], [1001, 2000], [2001, 2478]] represents three chunks of no more than 1000 rows.
+        """
+        ranges = []
+        num_in_range = 0
+        current_range = [0, 0]
+        # Loop through all OIDs of the input and construct tuples of min and max OID for each chunk
+        # We do it this way and not by straight-up looking at the numerical values of OIDs to account
+        # for definition queries, selection sets, or feature layers with gaps in OIDs
+        for row in arcpy.da.SearchCursor(input_fc, "OID@"):  # pylint: disable=no-member
+            oid = row[0]
+            if num_in_range == 0:
+                # Starting new range
+                current_range[0] = oid
+            # Increase the count of items in this range and set the top end of the range to the current oid
+            num_in_range += 1
+            current_range[1] = oid
+            if num_in_range == max_chunk_size:
+                # Finishing up a chunk
+                ranges.append(current_range)
+                # Reset range trackers
+                num_in_range = 0
+                current_range = [0, 0]
+        # After looping, close out the last range if we still have one open
+        if current_range != [0, 0]:
+            ranges.append(current_range)
+
+        return ranges
+
+    def solve_od_in_parallel(self):
+        """Solve the OD Cost Matrix in chunks and post-process the results."""
+        # Make scratch folder
+        LOGGER.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
+        os.mkdir(self.scratch_folder)
+
+        # Compute OD cost matrix in parallel
+        completed_jobs = 0  # Track the number of jobs completed so far to use in logging
+        # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
+        with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
+            # Each parallel process calls the solve_od_cost_matrix() function with the od_inputs dictionary for the
+            # given origin and destination OID ranges.
+            jobs = {executor.submit(solve_od_cost_matrix, self.od_inputs, range): range for range in self.ranges}
+            # As each job is completed, add some logging information and store the results to post-process later
+            for future in futures.as_completed(jobs):
+                completed_jobs += 1
+                LOGGER.info(
+                    f"Finished OD Cost Matrix calculation {completed_jobs} of {self.total_jobs}.")
+                try:
+                    # The OD cost matrix job returns a results dictionary. Retrieve it.
+                    result = future.result()
+                except Exception:
+                    # If we couldn't retrieve the result, some terrible error happened. Log it.
+                    LOGGER.error("Failed to get OD Cost Matrix result from parallel processing.")
+                    errs = traceback.format_exc().splitlines()
+                    for err in errs:
+                        LOGGER.error(err)
+                    raise
+
+                # Parse the results dictionary and store components for post-processing.
+                if result["solveSucceeded"]:
+                    self.od_line_fcs.append(result["outputLines"])
+                else:
+                    LOGGER.warning(f"Solve failed for job id {result['jobId']}")
+                    msgs = result["solveMessages"]
+                    LOGGER.warning(msgs)
+
+        # Merge individual OD Lines feature classes into a single feature class
+        if self.od_line_fcs:
+            self._post_process_od_lines()
+        else:
+            LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
+
+        # Cleanup
+        # Delete the job folders if the job succeeded
+        if DELETE_INTERMEDIATE_OD_OUTPUTS:
+            LOGGER.info("Deleting intermediate outputs...")
+            try:
+                shutil.rmtree(self.scratch_folder, ignore_errors=True)
+            except Exception:  # pylint: disable=broad-except
+                # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
+                LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {self.scratch_folder}.")
+
+        LOGGER.info("Finished calculating OD Cost Matrices.")
+
+    def _post_process_od_lines(self):
+        """Merge and post-process the OD Lines calculated in each separate process.
+
+        Args:
+            out_fc (str): Catalog path of the output feature class to be created
+        """
+        LOGGER.info("Post-processing OD Cost Matrix results...")
+
+        # Merge all the individual OD Lines feature classes
+        LOGGER.debug("Merging OD Cost Matrix results...")
+        run_gp_tool(arcpy.management.Merge, [self.od_line_fcs, self.output_od_lines])
+
+        # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
+        # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
+        # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
+        # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
+        if self.num_destinations:
+            LOGGER.debug("Sorting merged OD Lines results...")
+            out_sorted_lines = arcpy.CreateUniqueName(
+                "ODLines_Sorted", arcpy.env.scratchGDB)  # pylint: disable=no-member
+            sort_fields = [["OriginOID", "ASCENDING"], [self.optimized_cost_field, "ASCENDING"]]
+            run_gp_tool(arcpy.management.Sort, [self.output_od_lines, out_sorted_lines, sort_fields])
+            desc = arcpy.Describe(out_sorted_lines)
+            # Delete the original output OD lines feature class and re-create it from scratch with the same schema.
+            run_gp_tool(arcpy.management.Delete, [[self.output_od_lines]])
+            run_gp_tool(arcpy.management.CreateFeatureclass, [
+                os.path.dirname(self.output_od_lines),
+                os.path.basename(self.output_od_lines),
+                "POLYLINE",
+                out_sorted_lines,  # template feature class to transfer full schema
+                "SAME_AS_TEMPLATE",
+                "SAME_AS_TEMPLATE",
+                desc.spatialReference
+            ])
+            # Loop through the sorted feature class and insert only the first k into the final output
+            field_names = ["OriginOID", "SHAPE@"] + [f.name for f in desc.fields if f.name != "OriginOID"]
+            with arcpy.da.InsertCursor(self.output_od_lines, field_names) as cur:  # pylint: disable=no-member
+                current_origin_id = None
+                count = 0
+                for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):  # pylint: disable=no-member
+                    origin_id = row[0]
+                    if origin_id != current_origin_id:
+                        # Starting a fresh origin ID
+                        current_origin_id = origin_id
+                        count = 0
+                    count += 1
+                    if count > self.num_destinations:
+                        # Skip this row because we have exceeded the number we want to keep for this origin
+                        continue
+                    # If we got this far, we want to keep this row.
+                    cur.insertRow(row)
+
+            # Clean up intermediate outputs
+            LOGGER.debug("Deleting intermediate post-processing outputs...")
+            run_gp_tool(arcpy.management.Delete, [[out_sorted_lines]])
+
+        LOGGER.info("Post-processing complete.")
+        LOGGER.info(f"Results written to {self.output_od_lines}.")
 
 
-def _launch_tool():
-    """Read arguments from the command line (or passed in via subprocess) and run the tool."""
+def launch_parallel_od():
+    """Read arguments passed in via subprocess and run the parallel OD Cost Matrix.
+
+    This script is intended to be called via subprocess via the solve_large_odcm.py module, which does essential
+    preprocessing and validation. Users should not call this script directly from the command line
+
+    We must launch this script via subprocess in order to support parallel processing from an ArcGIS Pro script tool,
+    which cannot do parallel processing directly.
+    """
     # Create the parser
     parser = argparse.ArgumentParser(description=globals().get("__doc__", ""), fromfile_prefix_chars='@')
 
@@ -916,13 +922,14 @@ def _launch_tool():
     # Get arguments as dictionary.
     args = vars(parser.parse_args())
 
-    # Call the main execution
+    # Initialize a parallel OD Cost Matrix calculator class
+    od_calculator = ParallelODCalculator(**args)
+    # Solve the OD Cost Matrix in parallel chunks
     start_time = time.time()
-    compute_ods_in_parallel(**args)
-    LOGGER.info(f"Completed in {round((time.time() - start_time) / 60, 2)} minutes")
+    od_calculator.solve_od_in_parallel()
+    LOGGER.info(f"Parallel OD Cost Matrix calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
 
 
 if __name__ == "__main__":
-    # The script tool calls this script as if it were calling it from the command line.
-    # It uses this main function.
-    _launch_tool()
+    # This script should always be launched via subprocess as if it were being called from the command line.
+    launch_parallel_od()
