@@ -110,18 +110,14 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
             err = "Maximum allowed parallel processes must be greater than 0."
             arcpy.AddError(err)
             raise ValueError(err)
-        if self.cutoff and self.cutoff <= 0:
+        if self.cutoff not in ["", None] and self.cutoff <= 0:
             err = "Impedance cutoff must be greater than 0."
             arcpy.AddError(err)
             raise ValueError(err)
-        if self.num_destinations and self.num_destinations < 1:
+        if self.num_destinations not in ["", None] and self.num_destinations < 1:
             err = "Number of destinations to find must be greater than 0."
             arcpy.AddError(err)
             raise ValueError(err)
-
-        # Validate time and distance units
-        helpers.convert_time_units_str_to_enum(self.time_units)
-        helpers.convert_distance_units_str_to_enum(self.distance_units)
 
         # Validate origins, destinations, and barriers
         self._validate_input_feature_class(self.origins)
@@ -189,30 +185,33 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
     def _validate_od_settings(self):
         """Validate OD cost matrix settings by spinning up a dummy OD Cost Matrix object.
 
+        Raises:
+            ValueError: If the travel mode doesn't have a name
+
         Returns:
             str: JSON string representation of the travel mode
         """
-        # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties
         arcpy.AddMessage("Validating OD Cost Matrix settings...")
+        # Validate time and distance units
+        time_units = helpers.convert_time_units_str_to_enum(self.time_units)
+        distance_units = helpers.convert_distance_units_str_to_enum(self.distance_units)
+        # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties
         try:
             odcm = arcpy.nax.OriginDestinationCostMatrix(self.network_data_source)
-            odcm.travel_mode = self.travel_mode
-            odcm.time_units = self.time_units
-            odcm.distance_units = self.distance_units
-            odcm.cutoff = self.cutoff
-            odcm.num_destinations = self.num_destinations
+            odcm.travelMode = self.travel_mode
+            odcm.timeUnits = time_units
+            odcm.distanceUnits = distance_units
+            odcm.defaultImpedanceCutoff = self.cutoff
+            odcm.defaultDestinationCount = self.num_destinations
         except Exception:
             arcpy.AddError("Invalid OD Cost Matrix settings.")
             errs = traceback.format_exc().splitlines()
             for err in errs:
                 arcpy.AddError(err)
             raise
-        finally:
-            if odcm:
-                shutil.rmtree(odcm.job_result["jobFolder"], ignore_errors=True)
 
-        # Return the JSON string representation of the travel mode
-        return odcm.travel_mode._JSON  # pylint: disable=protected-access
+        # Return a JSON string representation of the travel mode to pass to the subprocess
+        return odcm.travelMode._JSON
 
     def _get_tool_limits_and_is_agol(
             self, service_name="asyncODCostMatrix", tool_name="GenerateOriginDestinationCostMatrix"):
@@ -372,7 +371,7 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
         cwd = os.path.dirname(os.path.abspath(__file__))
         odcm_inputs = [
             os.path.join(sys.exec_prefix, "python.exe"),
-            os.path.join(cwd, "odcm.py"),
+            os.path.join(cwd, "parallel_odcm.py"),
             "--origins", self.output_origins,
             "--destinations", self.output_destinations,
             "--output-od-lines", self.output_od_lines,
@@ -383,12 +382,14 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
             "--max-origins", str(self.max_origins),
             "--max-destinations", str(self.max_destinations),
             "--max-processes", str(self.max_processes),
-            "--barriers"
-        ] + self.barriers
+        ]
+        if self.barriers:
+            odcm_inputs += ["--barriers"]
+            odcm_inputs += self.barriers
         if self.cutoff:
-            odcm_inputs += ["--cutoff", self.cutoff]
+            odcm_inputs += ["--cutoff", str(self.cutoff)]
         if self.num_destinations:
-            odcm_inputs += ["--num-destinations", self.num_destinations]
+            odcm_inputs += ["--num-destinations", str(self.num_destinations)]
         # We do not want to show the console window when calling the command line tool from within our GP tool.
         # This can be done by setting this hex code.
         create_no_window = 0x08000000
