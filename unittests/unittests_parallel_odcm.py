@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(CWD))
 import parallel_odcm  # noqa: E402, pylint: disable=wrong-import-position
 
 
-class TestODCM(unittest.TestCase):
+class TestParallelODCM(unittest.TestCase):
     """Test cases for the odcm module."""
 
     @classmethod
@@ -43,7 +43,7 @@ class TestODCM(unittest.TestCase):
 
         # Create a unique output directory and gdb for this test
         self.output_folder = os.path.join(
-            CWD, "TestOutput", "Output_ODCM_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
+            CWD, "TestOutput", "Output_ParallelODCM_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
         os.makedirs(self.output_folder)
         self.output_gdb = os.path.join(self.output_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
