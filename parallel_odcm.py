@@ -22,7 +22,7 @@ Copyright 2021 Esri
    See the License for the specific language governing permissions and
    limitations under the License.
 """
-# pylint: disable=logging-fstring-interpolation, too-many-lines
+# pylint: disable=logging-fstring-interpolation
 from concurrent import futures
 import os
 import sys
