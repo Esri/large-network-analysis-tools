@@ -239,6 +239,7 @@ class SolveLargeODCostMatrix(object):
 
     def execute(self, parameters, messages):
         """The source code of the tool."""
+        # Initialize the solver class
         od_solver = ODCostMatrixSolver(
             parameters[0].value,  # origins
             parameters[1].value,  # destinations
@@ -256,7 +257,7 @@ class SolveLargeODCostMatrix(object):
             parameters[14].value,  # Should precalculate network locations
             get_catalog_path_multivalue(parameters[13])  # barriers
         )
-
+        # Solve the OD Cost Matrix analysis
         od_solver.solve_large_od_cost_matrix()
 
         return
