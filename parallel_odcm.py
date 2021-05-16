@@ -263,7 +263,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Determine if the travel mode has impedance units that are time-based, distance-based, or other.
         self._determine_if_travel_mode_time_based()
 
-    def solve(self, origins_criteria, destinations_criteria):
+    def solve(self, origins_criteria, destinations_criteria):  # pylint: disable=too-many-locals, too-many-statements
         """Create and solve an OD Cost Matrix analysis for the designated chunk of origins and destinations.
 
         Args:
@@ -616,6 +616,8 @@ class ParallelODCalculator():
         # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
         unique_id = uuid.uuid4().hex
         self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
+        LOGGER.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
+        os.mkdir(self.scratch_folder)
 
         # Initialize the dictionary of inputs to send to each OD solve
         self.od_inputs = {
@@ -636,12 +638,6 @@ class ParallelODCalculator():
         # List of intermediate output feature classes created by each process
         self.od_line_fcs = []
 
-        # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the
-        # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
-        # the optimized that are guaranteed to all fail. While we're doing this, check and store the field name that
-        # will represent costs in the output OD Lines table. We'll use this in post processing.
-        self.optimized_cost_field = self._validate_od_settings()
-
         # Construct OID ranges for chunks of origins and destinations
         origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
         destination_ranges = self._get_oid_ranges_for_input(destinations, max_destinations)
@@ -650,6 +646,8 @@ class ParallelODCalculator():
         self.ranges = itertools.product(origin_ranges, destination_ranges)
         # Calculate the total number of jobs to use in logging
         self.total_jobs = len(origin_ranges) * len(destination_ranges)
+
+        self.optimized_cost_field = None
 
     def _validate_od_settings(self):
         """Validate OD cost matrix settings before spinning up a bunch of parallel processes doomed to failure.
@@ -725,9 +723,11 @@ class ParallelODCalculator():
 
     def solve_od_in_parallel(self):
         """Solve the OD Cost Matrix in chunks and post-process the results."""
-        # Make scratch folder
-        LOGGER.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
-        os.mkdir(self.scratch_folder)
+        # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the
+        # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
+        # the optimized that are guaranteed to all fail. While we're doing this, check and store the field name that
+        # will represent costs in the output OD Lines table. We'll use this in post processing.
+        self.optimized_cost_field = self._validate_od_settings()
 
         # Compute OD cost matrix in parallel
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
@@ -872,7 +872,8 @@ def launch_parallel_od():
 
     # --travel-mode parameter
     help_string = (
-        "A JSON string representation of a travel mode from the network data source that will be used for the analysis."
+        "The name or JSON string representation of the travel mode from the network data source that will be used for "
+        "the analysis."
     )
     parser.add_argument("-tm", "--travel-mode", action="store", dest="travel_mode", help=help_string, required=True)
 
@@ -885,13 +886,21 @@ def launch_parallel_od():
     parser.add_argument(
         "-du", "--distance-units", action="store", dest="distance_units", help=help_string, required=True)
 
-    # --chunk-size parameter
+    # --max-origins parameter
     help_string = (
-        "Maximum number of origins and destinations that can be in one chunk for parallel processing of OD Cost Matrix "
-        "solves. For example, 1000 means that a chunk consists of no more than 1000 origins and 1000 destinations."
+        "Maximum number of origins that can be in one chunk for parallel processing of OD Cost Matrix solves. "
+        "For example, 1000 means that a chunk consists of no more than 1000 origins and max-destination destinations."
     )
     parser.add_argument(
-        "-ch", "--chunk-size", action="store", dest="chunk_size", type=int, help=help_string, required=True)
+        "-mo", "--max-origins", action="store", dest="max_origins", type=int, help=help_string, required=True)
+
+    # --max-destinations parameter
+    help_string = (
+        "Maximum number of destinations that can be in one chunk for parallel processing of OD Cost Matrix solves. "
+        "For example, 1000 means that a chunk consists of no more than max-origin origins and 1000 destinations."
+    )
+    parser.add_argument(
+        "-md", "--max-destinations", action="store", dest="max_destinations", type=int, help=help_string, required=True)
 
     # --max-processes parameter
     help_string = "Maximum number parallel processes to use for the OD Cost Matrix solves."
