@@ -1,5 +1,7 @@
 """Python toolbox that defines tools for solving large network analysis problems.
 
+This is a sample script users can modify to fit their specific needs.
+
 Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -11,14 +13,13 @@ Copyright 2021 Esri
    See the License for the specific language governing permissions and
    limitations under the License.
 """
-# pylint: disable=invalid-name
-import sys
-import os
-import time
-import subprocess
+# Disable a bunch of linter errors caused by the standard python toolbox class definitions that we cannot change
+# pylint: disable=invalid-name, useless-object-inheritance, too-few-public-methods, no-self-use, too-many-locals
+# pylint: disable=useless-return, unused-argument
 import arcpy
 
-import odcm
+import helpers
+from solve_large_odcm import ODCostMatrixSolver
 
 
 class Toolbox(object):
@@ -111,7 +112,7 @@ class SolveLargeODCostMatrix(object):
             parameterType="Required",
             direction="Input"
         )
-        param_time_units.filter.list = odcm.TIME_UNITS
+        param_time_units.filter.list = helpers.TIME_UNITS
         param_time_units.value = "Minutes"
 
         param_distance_units = arcpy.Parameter(
@@ -121,7 +122,7 @@ class SolveLargeODCostMatrix(object):
             parameterType="Required",
             direction="Input"
         )
-        param_distance_units.filter.list = odcm.DISTANCE_UNITS
+        param_distance_units.filter.list = helpers.DISTANCE_UNITS
         param_distance_units.value = "Miles"
 
         param_chunk_size = arcpy.Parameter(
@@ -211,7 +212,7 @@ class SolveLargeODCostMatrix(object):
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         if param_network.altered and param_network.value:
-            if odcm.is_nds_service(param_network.valueAsText):
+            if helpers.is_nds_service(param_network.valueAsText):
                 param_precalculate.value = False
                 param_precalculate.enabled = False
             else:
@@ -228,17 +229,17 @@ class SolveLargeODCostMatrix(object):
         # If the network data source is arcgis.com, cap max processes
         if param_max_processes.altered and param_max_processes.value and \
                 param_network.altered and param_network.value:
-            if "arcgis.com" in param_network.valueAsText and param_max_processes.value > odcm.MAX_AGOL_PROCESSES:
+            if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
                 param_max_processes.setErrorMessage((
-                    f"The maximum number of parallel processes cannot exceed {odcm.MAX_AGOL_PROCESSES} when the "
+                    f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
                     "ArcGIS Online services are used as the network data source."
                 ))
 
         return
 
-    def execute(self, parameters, messages):  # pylint: disable=unused-argument
+    def execute(self, parameters, messages):
         """The source code of the tool."""
-        odcm.solve_large_od_cost_matrix(
+        od_solver = ODCostMatrixSolver(
             parameters[0].value,  # origins
             parameters[1].value,  # destinations
             parameters[5].value,  # network
@@ -255,6 +256,8 @@ class SolveLargeODCostMatrix(object):
             parameters[14].value,  # Should precalculate network locations
             get_catalog_path_multivalue(parameters[13])  # barriers
         )
+
+        od_solver.solve_large_od_cost_matrix()
 
         return
 
@@ -284,26 +287,3 @@ def get_catalog_path_multivalue(param):
         else:
             catalog_paths.append(string_values[idx])
     return catalog_paths
-
-
-
-
-def parse_std_and_write_to_gp_ui(msg_string):
-    """Parse a message string returned from the subprocess's stdout and write it to the GP UI according to type.
-
-    Logged messages in the odcm module start with a level indicator that allows us to parse them and write them as
-    errors, warnings, or info messages.  Example: "ERROR | Something terrible happened" is an error message.
-
-    Args:
-        msg_string (str): Message string (already decoded) returned from odcm.py subprocess stdout
-    """
-    try:
-        level, msg = msg_string.split(odcm.MSG_STR_SPLITTER)
-        if level in ["ERROR", "CRITICAL"]:
-            arcpy.AddError(msg)
-        elif level == "WARNING":
-            arcpy.AddWarning(msg)
-        else:
-            arcpy.AddMessage(msg)
-    except Exception:  # pylint: disable=broad-except
-        arcpy.AddMessage(msg_string)
