@@ -243,7 +243,7 @@ class SolveLargeODCostMatrix(object):
         od_solver = ODCostMatrixSolver(
             parameters[0].value,  # origins
             parameters[1].value,  # destinations
-            parameters[5].value,  # network
+            get_catalog_path(parameters[5]),  # network
             parameters[6].value,  # travel mode
             parameters[2].valueAsText,  # output OD lines
             parameters[3].valueAsText,  # output origins
@@ -257,17 +257,37 @@ class SolveLargeODCostMatrix(object):
             parameters[14].value,  # Should precalculate network locations
             get_catalog_path_multivalue(parameters[13])  # barriers
         )
+
         # Solve the OD Cost Matrix analysis
         od_solver.solve_large_od_cost_matrix()
 
         return
 
 
+def get_catalog_path(param):
+    """Get the catalog path for a single value parameter if possible.
+
+    Args:
+        param (arcpy.Parameter): Parameter from which to retrieve the catalog path.
+
+    Returns:
+        list(str): List of catalog paths to the data
+    """
+    param_value = param.value
+    if not param_value:
+        return ""
+    # If the value is a layer object, get its data source (catalog path)
+    if hasattr(param_value, "dataSource"):
+        return param_value.dataSource
+    # Otherwise, it's probably already a string catalog path. Just return its text value.
+    return param.valueAsText
+
+
 def get_catalog_path_multivalue(param):
     """Get a list of catalog paths for a multivalue feature layer parameter if possible.
 
     Args:
-        param (arcpy.Parameter): Parameter from which to retrieve the catalog path.
+        param (arcpy.Parameter): Parameter from which to retrieve the catalog paths.
 
     Returns:
         list(str): List of catalog paths to the data
