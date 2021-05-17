@@ -72,7 +72,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "distance_units": "Miles",
             "cutoff": 2,
             "num_destinations": 1,
-            "should_precalc_network_locations": True,
+            "precalculate_network_locations": True,
             "barriers": [self.barriers]
         }
 
@@ -192,7 +192,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "distance_units": "Miles",
             "cutoff": 2,
             "num_destinations": 2,
-            "should_precalc_network_locations": True,
+            "precalculate_network_locations": True,
             "barriers": ""
         }
         od_solver = solve_large_odcm.ODCostMatrixSolver(**od_args)
