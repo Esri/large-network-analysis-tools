@@ -172,12 +172,14 @@ class TestParallelODCM(unittest.TestCase):
         """Test the _validate_od_settings function."""
         # Test that with good inputs, we return the correct optimized field name
         od_calculator = parallel_odcm.ParallelODCalculator(**self.parallel_od_class_args)
-        self.assertEqual("Total_Distance", od_calculator.optimized_cost_field)
+        optimized_cost_field = od_calculator._validate_od_settings()
+        self.assertEqual("Total_Distance", optimized_cost_field)
         # Test completely invalid travel mode
         od_inputs = deepcopy(self.parallel_od_class_args)
         od_inputs["travel_mode"] = "InvalidTM"
+        od_calculator = parallel_odcm.ParallelODCalculator(**od_inputs)
         with self.assertRaises(RuntimeError):
-            parallel_odcm.ParallelODCalculator(**od_inputs)
+            od_calculator._validate_od_settings()
 
     def test_ParallelODCalculator_solve_od_in_parallel(self):
         """Test the solve_od_in_parallel function, which actually solves the ODs in parallel."""
