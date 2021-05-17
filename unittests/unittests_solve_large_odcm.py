@@ -16,10 +16,10 @@ Copyright 2021 Esri
 import sys
 import os
 import datetime
+import subprocess
 import unittest
 from copy import deepcopy
 import arcpy
-from arcpy.arcobjects.arcobjects import Value
 import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal
 
 CWD = os.path.dirname(os.path.abspath(__file__))
@@ -200,6 +200,30 @@ class TestSolveLargeODCM(unittest.TestCase):
         self.assertTrue(arcpy.Exists(od_args["output_od_lines"]))
         self.assertTrue(arcpy.Exists(od_args["output_origins"]))
         self.assertTrue(arcpy.Exists(od_args["output_destinations"]))
+
+    def test_cli(self):
+        """Test the command line interface of solve_large_odcm."""
+        odcm_inputs = [
+            os.path.join(sys.exec_prefix, "python.exe"),
+            os.path.join(os.path.dirname(CWD), "solve_large_odcm.py"),
+            "--origins", self.origins,
+            "--destinations", self.destinations,
+            "--output-od-lines", os.path.join(self.output_gdb, "OutODLinesCLI"),
+            "--output-origins", os.path.join(self.output_gdb, "OutOriginsCLI"),
+            "--output-destinations", os.path.join(self.output_gdb, "OutDestinationsCLI"),
+            "--network-data-source", self.local_nd,
+            "--travel-mode", self.local_tm_time,
+            "--time-units", "Minutes",
+            "--distance-units", "Miles",
+            "--chunk-size", "50",
+            "--max-processes", "4",
+            "--cutoff", "10",
+            "--num-destinations", "1",
+            "--precalculate-network-locations", "true",
+            "--barriers", self.barriers
+        ]
+        result = subprocess.run(odcm_inputs)
+        self.assertEqual(result.returncode, 0)
 
 
 if __name__ == '__main__':
