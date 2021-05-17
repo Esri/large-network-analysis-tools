@@ -1,6 +1,5 @@
 """Unit tests for the SolveLargeODCostMatrix script tool. The test cases focus
-on making sure the tool parameters work correctly. The tool script is tested in
-more detail in unittests_odcm.py.
+on making sure the tool parameters work correctly.
 
 Copyright 2021 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,11 +23,11 @@ import portal_credentials
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
-import odcm  # noqa: E402, pylint: disable=wrong-import-position
+import helpers  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeODCostMatrixTool(unittest.TestCase):
-    '''Test cases for the SolveLargeODCostMatrix script tool.'''
+    """Test cases for the SolveLargeODCostMatrix script tool."""
 
     @classmethod
     def setUpClass(self):  # pylint: disable=bad-classmethod-argument
@@ -42,8 +41,9 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         self.origins = os.path.join(sf_gdb, "Analysis", "TractCentroids")
         self.destinations = os.path.join(sf_gdb, "Analysis", "Hospitals")
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
-        self.local_tm_time = "Driving Time"
-        self.local_tm_dist = "Driving Distance"
+        tms = arcpy.nax.GetTravelModes(self.local_nd)
+        self.local_tm_time = tms["Driving Time"]
+        self.local_tm_dist = tms["Driving Distance"]
         self.portal_nd = portal_credentials.PORTAL_URL  # Must be arcgis.com for test to work
         self.portal_tm = portal_credentials.PORTAL_TRAVEL_MODE
 
@@ -57,7 +57,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
 
     def test_run_tool_time_units(self):
-        '''Test that the tool runs with a time-based travel mode.'''
+        """Test that the tool runs with a time-based travel mode."""
         # Run tool
         out_od_lines = os.path.join(self.output_gdb, "Time_ODLines")
         out_origins = os.path.join(self.output_gdb, "Time_Origins")
@@ -85,7 +85,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         self.assertTrue(arcpy.Exists(out_destinations))
 
     def test_run_tool_distance_units(self):
-        '''Test that the tool runs with a distance-based travel mode. Also use barriers.'''
+        """Test that the tool runs with a distance-based travel mode. Also use barriers."""
         # Run tool
         out_od_lines = os.path.join(self.output_gdb, "Dist_ODLines")
         out_origins = os.path.join(self.output_gdb, "Dist_Origins")
@@ -113,7 +113,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         self.assertTrue(arcpy.Exists(out_destinations))
 
     def test_agol_max_processes(self):
-        '''Test for correct error when max processes exceeds the limit for AGOL.'''
+        """Test for correct error when max processes exceeds the limit for AGOL."""
         with self.assertRaises(arcpy.ExecuteError) as ex:
             # Run tool
             out_od_lines = os.path.join(self.output_gdb, "Err_ODLines")
@@ -139,7 +139,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         expected_messages = [
             "Failed to execute. Parameters are not valid.",
             (
-                f"The maximum number of parallel processes cannot exceed {odcm.MAX_AGOL_PROCESSES} when the "
+                f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
                 "ArcGIS Online services are used as the network data source."
             ),
             "Failed to execute (SolveLargeODCostMatrix)."
