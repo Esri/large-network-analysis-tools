@@ -19,7 +19,6 @@ Copyright 2021 Esri
 """
 import os
 import sys
-import shutil
 import time
 import traceback
 import argparse
@@ -47,7 +46,7 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, origins, destinations, network_data_source, travel_mode, output_od_lines, output_origins,
         output_destinations, chunk_size, max_processes, time_units, distance_units, cutoff=None, num_destinations=None,
-        should_precalc_network_locations=True, barriers=None
+        precalculate_network_locations=True, barriers=None
     ):
         """Initialize the ODCostMatrixSolver class.
 
@@ -69,7 +68,7 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
                 Defaults to None. When None, do not use a cutoff.
             num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
                 which means to find all destinations.
-            should_precalc_network_locations (bool, optional): Whether to precalculate network location fields for all
+            precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
                 inputs. Defaults to True. Should be false if the network_data_source is a service.
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                  to use. Defaults to None.
@@ -87,7 +86,7 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
         self.distance_units = distance_units
         self.cutoff = cutoff
         self.num_destinations = num_destinations
-        self.should_precalc_network_locations = should_precalc_network_locations
+        self.should_precalc_network_locations = precalculate_network_locations
         self.barriers = barriers if barriers else []
 
         self.same_origins_destinations = bool(self.origins == self.destinations)
@@ -366,8 +365,8 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
 
     def _execute_solve(self):
         """Solve the OD Cost Matrix analysis."""
-        # Launch the odcm script as a subprocess so it can spawn parallel processes. We have to do this because a tool
-        # running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
+        # Launch the parallel_odcm script as a subprocess so it can spawn parallel processes. We have to do this because
+        # a tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
         cwd = os.path.dirname(os.path.abspath(__file__))
         odcm_inputs = [
             os.path.join(sys.exec_prefix, "python.exe"),
@@ -479,7 +478,8 @@ def _run_from_command_line():
 
     # --travel-mode parameter
     help_string = (
-        "A JSON string representation of a travel mode from the network data source that will be used for the analysis."
+        "A JSON string representation or string name of a travel mode from the network data source that will be used "
+        "for the analysis."
     )
     parser.add_argument("-tm", "--travel-mode", action="store", dest="travel_mode", help=help_string, required=True)
 
