@@ -210,7 +210,7 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
             raise
 
         # Return a JSON string representation of the travel mode to pass to the subprocess
-        return odcm.travelMode._JSON
+        return odcm.travelMode._JSON  # pylint: disable=protected-access
 
     def _get_tool_limits_and_is_agol(
             self, service_name="asyncODCostMatrix", tool_name="GenerateOriginDestinationCostMatrix"):
