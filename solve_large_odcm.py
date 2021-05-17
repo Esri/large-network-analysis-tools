@@ -332,9 +332,17 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
         """Preprocess the input feature classes to prepare them for use in the OD Cost Matrix."""
         # Copy Origins and Destinations to outputs
         arcpy.AddMessage("Copying input origins and destinations to outputs...")
-        arcpy.management.Copy(self.origins, self.output_origins)
+        arcpy.conversion.FeatureClassToFeatureClass(
+            self.origins,
+            os.path.dirname(self.output_origins),
+            os.path.basename(self.output_origins)
+        )
         if not self.same_origins_destinations:
-            arcpy.management.Copy(self.destinations, self.output_destinations)
+            arcpy.conversion.FeatureClassToFeatureClass(
+                self.destinations,
+                os.path.dirname(self.output_destinations),
+                os.path.basename(self.output_destinations)
+            )
 
         # Spatially sort inputs
         tracked_origin_oid = "OriginOID"
