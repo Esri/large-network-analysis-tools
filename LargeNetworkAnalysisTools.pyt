@@ -252,8 +252,8 @@ class SolveLargeODCostMatrix(object):
             parameters[10].value,  # max processes
             parameters[7].valueAsText,  # time units
             parameters[8].valueAsText,  # distance units
-            parameters[11].valueAsText,  # cutoff
-            parameters[12].valueAsText,  # number of destinations to find
+            parameters[11].value,  # cutoff
+            parameters[12].value,  # number of destinations to find
             parameters[14].value,  # Should precalculate network locations
             get_catalog_path_multivalue(parameters[13])  # barriers
         )
