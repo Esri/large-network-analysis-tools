@@ -290,10 +290,20 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the origins
         self.logger.debug("Loading origins...")
+        origin_oid_field = "Orig_Origin_OID"
+        self.od_solver.addFields(
+            arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
+            [[origin_oid_field, "LONG"]]
+        )
         origins_field_mappings = self.od_solver.fieldMappings(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
             True  # Use network location fields
         )
+        for fname in origins_field_mappings:
+            if fname == origin_oid_field:
+                origins_field_mappings[fname].mappedFieldName = self.origins_oid_field_name
+            else:
+                origins_field_mappings[fname].mappedFieldName = fname
         self.od_solver.load(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
             self.input_origins_layer_obj,
@@ -303,10 +313,20 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the destinations
         self.logger.debug("Loading destinations...")
+        dest_oid_field = "Orig_Dest_OID"
+        self.od_solver.addFields(
+            arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
+            [[dest_oid_field, "LONG"]]
+        )
         destinations_field_mappings = self.od_solver.fieldMappings(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
             True  # Use network location fields
         )
+        for fname in destinations_field_mappings:
+            if fname == dest_oid_field:
+                destinations_field_mappings[fname].mappedFieldName = self.destinations_oid_field_name
+            else:
+                destinations_field_mappings[fname].mappedFieldName = fname
         self.od_solver.load(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
             self.input_destinations_layer_obj,
@@ -375,6 +395,47 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, output_od_lines)
         self.job_result["outputLines"] = output_od_lines
 
+        # For services solve, export Origins and Destinations and properly populate OriginOID and DestinationOID fields
+        # in the output Lines. Services do not preserve the original input OIDs, instead resetting from 1, unlike solves
+        # using a local network dataset, so this extra post-processing step is necessary.
+        if self.is_service:
+            output_origins = os.path.join(self.od_workspace, "output_od_origins")
+            self.logger.debug(f"Exporting OD cost matrix Origins output to {output_origins}...")
+            solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Origins, output_origins)
+            output_destinations = os.path.join(self.od_workspace, "output_od_destinations")
+            self.logger.debug(f"Exporting OD cost matrix Destinations output to {output_destinations}...")
+            solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Destinations, output_destinations)
+            self.logger.debug("Updating values for OriginOID and DestinationOID fields...")
+            lines_layer_name = "Out_Lines"
+            origins_layer_name = "Out_Origins"
+            destinations_layer_name = "Out_Destinations"
+            run_gp_tool(arcpy.management.MakeFeatureLayer, [output_od_lines, lines_layer_name], log_to_use=self.logger)
+            run_gp_tool(arcpy.management.MakeFeatureLayer, [output_origins, origins_layer_name], log_to_use=self.logger)
+            run_gp_tool(arcpy.management.MakeFeatureLayer,
+                        [output_destinations, destinations_layer_name], log_to_use=self.logger)
+            # Update OriginOID values
+            run_gp_tool(
+                arcpy.management.AddJoin,
+                [lines_layer_name, "OriginOID", origins_layer_name, "ObjectID", "KEEP_ALL"]
+            )
+            run_gp_tool(
+                arcpy.management.CalculateField,
+                [lines_layer_name, f"{os.path.basename(output_od_lines)}.OriginOID",
+                 f"!{os.path.basename(output_origins)}.{origin_oid_field}!", "PYTHON3"]
+            )
+            run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
+            # Update DestinationOID values
+            run_gp_tool(
+                arcpy.management.AddJoin,
+                [lines_layer_name, "DestinationOID", destinations_layer_name, "ObjectID", "KEEP_ALL"]
+            )
+            run_gp_tool(
+                arcpy.management.CalculateField,
+                [lines_layer_name, f"{os.path.basename(output_od_lines)}.DestinationOID",
+                 f"!{os.path.basename(output_destinations)}.{dest_oid_field}!", "PYTHON3"]
+            )
+            run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
+
         self.logger.debug("Finished calculating OD cost matrix.")
 
     def _hour_to_time_units(self):
@@ -426,7 +487,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         raise ValueError(err)
 
     def _convert_time_cutoff_to_distance(self):
-        """Convert a time-based cutoff to distance units
+        """Convert a time-based cutoff to distance units.
 
         For a time-based travel mode, the cutoff is expected to be in the user's specified time units. Convert this
         to a safe straight-line distance cutoff in the user's specified distance units to use when pre-selecting
