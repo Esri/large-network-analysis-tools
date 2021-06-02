@@ -1,0 +1,3 @@
+The unit tests use data and from the SanFrancisco.gdb geodatabase from the ArcGIS Pro Network Analyst tutorial data. Download the data from https://links.esri.com/NetworkAnalyst/TutorialData/Pro. Extract the zip file and put SanFrancisco.gdb here in a folder called "TestInput".
+
+The tests also require valid values for a test portal with network analysis services in the portal_credentials.py file.
