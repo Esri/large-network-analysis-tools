@@ -121,12 +121,15 @@ class TestSolveLargeODCM(unittest.TestCase):
 
     def test_update_max_inputs_for_service(self):
         """Test the update_max_inputs_for_service function."""
+        max_origins = 1500
+        max_destinations = 700
+
         inputs = deepcopy(self.od_args)
         inputs["network_data_source"] = self.portal_nd
         inputs["travel_mode"] = self.portal_tm
         od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
-        od_solver.max_origins = 1500
-        od_solver.max_destinations = 700
+        od_solver.max_origins = max_origins
+        od_solver.max_destinations = max_destinations
         tool_limits = {
             'forceHierarchyBeyondDistance': 50.0,
             'forceHierarchyBeyondDistanceUnits':
@@ -142,7 +145,27 @@ class TestSolveLargeODCM(unittest.TestCase):
         od_solver.service_limits = tool_limits
         od_solver._update_max_inputs_for_service()
         self.assertEqual(tool_limits["maximumOrigins"], od_solver.max_origins)
-        self.assertEqual(700, od_solver.max_destinations)
+        self.assertEqual(max_destinations, od_solver.max_destinations)
+
+        # Test when there are no limits
+        tool_limits = {
+            'forceHierarchyBeyondDistance': 50.0,
+            'forceHierarchyBeyondDistanceUnits':
+            'Miles',
+            'maximumDestinations': None,
+            'maximumFeaturesAffectedByLineBarriers': 500.0,
+            'maximumFeaturesAffectedByPointBarriers': 250.0,
+            'maximumFeaturesAffectedByPolygonBarriers': 2000.0,
+            'maximumGeodesicDistanceUnitsWhenWalking': 'Miles',
+            'maximumGeodesicDistanceWhenWalking': 27.0,
+            'maximumOrigins': None
+        }
+        od_solver.max_origins = max_origins
+        od_solver.max_destinations = max_destinations
+        od_solver.service_limits = tool_limits
+        od_solver._update_max_inputs_for_service()
+        self.assertEqual(max_origins, od_solver.max_origins)
+        self.assertEqual(max_destinations, od_solver.max_destinations)
 
     def test_spatially_sort_input(self):
         """Test the spatially_sort_input function."""
