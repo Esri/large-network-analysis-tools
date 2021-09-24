@@ -211,7 +211,7 @@ class SolveLargeODCostMatrix(object):
         param_precalculate = parameters[14]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
-        if param_network.altered and param_network.value:
+        if not param_network.hasBeenValidated and param_network.altered and param_network.value:
             if helpers.is_nds_service(param_network.valueAsText):
                 param_precalculate.value = False
                 param_precalculate.enabled = False
@@ -227,8 +227,8 @@ class SolveLargeODCostMatrix(object):
         param_max_processes = parameters[10]
 
         # If the network data source is arcgis.com, cap max processes
-        if param_max_processes.altered and param_max_processes.value and \
-                param_network.altered and param_network.value:
+        if param_max_processes.altered and param_max_processes.valueAsText and \
+                param_network.altered and param_network.valueAsText:
             if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
                 param_max_processes.setErrorMessage((
                     f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
