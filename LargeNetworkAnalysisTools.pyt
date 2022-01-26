@@ -64,30 +64,6 @@ class SolveLargeODCostMatrix(object):
             direction="Input"
         )
 
-        param_out_od_lines = arcpy.Parameter(
-            displayName="Output OD Lines Feature Class",
-            name="Output_OD_Lines_Feature_Class",
-            datatype="DEFeatureClass",
-            parameterType="Required",
-            direction="Output"
-        )
-
-        param_out_origins = arcpy.Parameter(
-            displayName="Output Updated Origins",
-            name="Output_Updated_Origins",
-            datatype="DEFeatureClass",
-            parameterType="Required",
-            direction="Output"
-        )
-
-        param_out_destinations = arcpy.Parameter(
-            displayName="Output Updated Destinations",
-            name="Output_Updated_Destinations",
-            datatype="DEFeatureClass",
-            parameterType="Required",
-            direction="Output"
-        )
-
         param_network = arcpy.Parameter(
             displayName="Network Data Source",
             name="Network_Data_Source",
@@ -143,6 +119,48 @@ class SolveLargeODCostMatrix(object):
         )
         param_max_processes.value = 4
 
+        param_out_origins = arcpy.Parameter(
+            displayName="Output Updated Origins",
+            name="Output_Updated_Origins",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_out_destinations = arcpy.Parameter(
+            displayName="Output Updated Destinations",
+            name="Output_Updated_Destinations",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_output_format = arcpy.Parameter(
+            displayName="Output OD Cost Matrix Format",
+            name="Output_Format",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_output_format.filter.list = helpers.OUTPUT_FORMATS
+        param_output_format.value = helpers.OUTPUT_FORMATS[0]
+
+        param_out_od_lines = arcpy.Parameter(
+            displayName="Output OD Lines Feature Class",
+            name="Output_OD_Lines_Feature_Class",
+            datatype="DEFeatureClass",
+            parameterType="Optional",
+            direction="Output"
+        )
+
+        param_out_folder = arcpy.Parameter(
+            displayName="Output Folder",
+            name="Output_Folder",
+            datatype="DEFolder",
+            parameterType="Optional",
+            direction="Output"
+        )
+
         param_cutoff = arcpy.Parameter(
             displayName="Cutoff",
             name="Cutoff",
@@ -180,21 +198,23 @@ class SolveLargeODCostMatrix(object):
         param_precalculate_network_locations.value = True
 
         params = [
-            param_origins,
-            param_destinations,
-            param_out_od_lines,
-            param_out_origins,
-            param_out_destinations,
-            param_network,
-            param_travel_mode,
-            param_time_units,
-            param_distance_units,
-            param_chunk_size,
-            param_max_processes,
-            param_cutoff,
-            param_num_dests,
-            param_barriers,
-            param_precalculate_network_locations
+            param_origins,  # 0
+            param_destinations,  # 1
+            param_network,  # 2
+            param_travel_mode,  # 3
+            param_time_units,  # 4
+            param_distance_units,  # 5
+            param_chunk_size,  # 6
+            param_max_processes,  # 7
+            param_out_origins,  # 8
+            param_out_destinations,  # 9
+            param_output_format,  # 10
+            param_out_od_lines,  # 11
+            param_out_folder,  # 12
+            param_cutoff,  # 13
+            param_num_dests,  # 14
+            param_barriers,  # 15
+            param_precalculate_network_locations  # 16
         ]
 
         return params
@@ -207,11 +227,28 @@ class SolveLargeODCostMatrix(object):
         """Modify the values and properties of parameters before internal
         validation is performed.  This method is called whenever a parameter
         has been changed."""
-        param_network = parameters[5]
-        param_precalculate = parameters[14]
+        param_network = parameters[2]
+        param_output_format = parameters[10]
+        param_out_od_lines = parameters[11]
+        param_out_folder = parameters[12]
+        param_precalculate = parameters[16]
+
+        # Make appropriate OD Cost Matrix output parameter visible based on chosen output format
+        if not param_output_format.hasBeenValidated and param_output_format.altered and param_output_format.valueAsText:
+            try:
+                output_format = helpers.convert_output_format_str_to_enum(param_output_format.valueAsText)
+                if output_format is helpers.OutputFormat.featureclass:
+                    param_out_od_lines.enabled = True
+                    param_out_folder.enabled = False
+                else:  # For CSV and Arrow
+                    param_out_od_lines.enabled = False
+                    param_out_folder.enabled = True
+            except ValueError:
+                # The output format is invalid. Just do nothing.
+                pass
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
-        if not param_network.hasBeenValidated and param_network.altered and param_network.value:
+        if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
             if helpers.is_nds_service(param_network.valueAsText):
                 param_precalculate.value = False
                 param_precalculate.enabled = False
@@ -223,8 +260,10 @@ class SolveLargeODCostMatrix(object):
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
-        param_network = parameters[5]
-        param_max_processes = parameters[10]
+        param_network = parameters[2]
+        param_max_processes = parameters[7]
+        param_out_od_lines = parameters[11]
+        param_out_folder = parameters[12]
 
         # If the network data source is arcgis.com, cap max processes
         if param_max_processes.altered and param_max_processes.valueAsText and \
@@ -235,6 +274,18 @@ class SolveLargeODCostMatrix(object):
                     "ArcGIS Online services are used as the network data source."
                 ))
 
+        # Make the appropriate output parameter required based on the user's choice of output format. Just require
+        # whichever output parameter is enabled. Enablement is controlled in updateParameters() based on the user's
+        # choice in the output format parameter.
+        # The 735 error code doesn't display an actual error but displays the little red star to indicate that the
+        # parameter is required.
+        for param in [param_out_od_lines, param_out_folder]:
+            if param.enabled:
+                if not param.valueAsText:
+                    param.setIDMessage("Error", 735, param.displayName)
+            else:
+                param.clearMessage()
+
         return
 
     def execute(self, parameters, messages):
@@ -243,19 +294,19 @@ class SolveLargeODCostMatrix(object):
         od_solver = ODCostMatrixSolver(
             parameters[0].value,  # origins
             parameters[1].value,  # destinations
-            get_catalog_path(parameters[5]),  # network
-            parameters[6].value,  # travel mode
-            parameters[2].valueAsText,  # output OD lines
-            parameters[3].valueAsText,  # output origins
-            parameters[4].valueAsText,  # output destinations
-            parameters[9].value,  # chunk size
-            parameters[10].value,  # max processes
-            parameters[7].valueAsText,  # time units
-            parameters[8].valueAsText,  # distance units
-            parameters[11].value,  # cutoff
-            parameters[12].value,  # number of destinations to find
-            parameters[14].value,  # Should precalculate network locations
-            get_catalog_path_multivalue(parameters[13])  # barriers
+            get_catalog_path(parameters[2]),  # network
+            parameters[3].value,  # travel mode
+            parameters[11].valueAsText,  # output OD lines
+            parameters[8].valueAsText,  # output origins
+            parameters[9].valueAsText,  # output destinations
+            parameters[6].value,  # chunk size
+            parameters[7].value,  # max processes
+            parameters[4].valueAsText,  # time units
+            parameters[5].valueAsText,  # distance units
+            parameters[13].value,  # cutoff
+            parameters[14].value,  # number of destinations to find
+            parameters[16].value,  # Should precalculate network locations
+            get_catalog_path_multivalue(parameters[15])  # barriers
         )
 
         # Solve the OD Cost Matrix analysis
