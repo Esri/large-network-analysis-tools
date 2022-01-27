@@ -192,6 +192,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.input_origins_layer_obj = None
         self.input_destinations_layer_obj = None
 
+        # Define fields to include in the output for CSV and Arrow modes
+        self.output_fields = ["OriginOID", "DestinationOID", "DestinationRank", "Total_Time", "Total_Distance"]
+
         # Create a network dataset layer
         self.nds_layer_name = "NetworkDatasetLayer"
         if not self.is_service:
@@ -471,7 +474,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             writer = csv.writer(f)
             writer.writerow(["OriginOID", "DestinationOID"])
             for row in self.solve_result.searchCursor(
-                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, ["OriginOID", "DestinationOID"]  # TODO: Fields
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
+                self.output_fields
             ):
                 writer.writerow(row)
         self.job_result["outputLines"] = out_csv_file
@@ -483,7 +487,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.logger.debug(f"Saving OD cost matrix Lines output to Apache Arrow as {out_arrow_file}.")
         self.solve_result.toArrowTable(
             arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
-            ["OriginOID", "DestinationOID"],  ## TODO: What fields?
+            self.output_fields,
             out_arrow_file
         )
         self.job_result["outputLines"] = out_arrow_file
@@ -634,11 +638,12 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         impedance = travel_mode.impedance
         time_attribute = travel_mode.timeAttributeName
         distance_attribute = travel_mode.distanceAttributeName
-        self.is_travel_mode_time_based = True if time_attribute == impedance else False
-        self.is_travel_mode_dist_based = True if distance_attribute == impedance else False
+        self.is_travel_mode_time_based = time_attribute == impedance
+        self.is_travel_mode_dist_based = distance_attribute == impedance
         # Determine which of the OD Lines output table fields contains the optimized cost values
         if not self.is_travel_mode_time_based and not self.is_travel_mode_dist_based:
             self.optimized_field_name = "Total_Other"
+            self.output_fields.append(self.optimized_field_name)
         elif self.is_travel_mode_time_based:
             self.optimized_field_name = "Total_Time"
         else:
