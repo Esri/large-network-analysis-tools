@@ -33,6 +33,7 @@ import itertools
 import time
 import traceback
 import argparse
+import csv
 
 import arcpy
 
@@ -147,7 +148,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         - distance_units
         - cutoff
         - num_destinations
-        - output_folder
+        - scratch_folder
         - barriers
         """
         self.origins = kwargs["origins"]
@@ -466,13 +467,14 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     def _export_to_csv(self, out_csv_file):
         """Save the OD Lines result to a CSV file."""
         self.logger.debug(f"Saving OD cost matrix Lines output to CSV as {out_csv_file}.")
-        with open(out_csv_file, "w") as f:
+        with open(out_csv_file, "w", newline='') as f:
             writer = csv.writer(f)
             writer.writerow(["OriginOID", "DestinationOID"])
             for row in self.solve_result.searchCursor(
                 arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, ["OriginOID", "DestinationOID"]  # TODO: Fields
             ):
                 writer.writerow(row)
+        self.job_result["outputLines"] = out_csv_file
 
         ## TODO: Deal with services
 
@@ -484,6 +486,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             ["OriginOID", "DestinationOID"],  ## TODO: What fields?
             out_arrow_file
         )
+        self.job_result["outputLines"] = out_arrow_file
 
     def _hour_to_time_units(self):
         """Convert 1 hour to the user's specified time units.
@@ -880,6 +883,7 @@ class ParallelODCalculator():
 
         # Merge individual OD Lines feature classes into a single feature class
         if self.od_line_files:
+            self.od_line_files = sorted(self.od_line_files)
             if self.output_format is helpers.OutputFormat.featureclass:
                 self._post_process_od_lines()
         else:
