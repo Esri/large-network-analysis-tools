@@ -77,7 +77,8 @@ class TestParallelODCM(unittest.TestCase):
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
             "travel_mode": self.local_tm_dist,
-            "output_od_lines": os.path.join(self.output_gdb, "TestOutput"),
+            "output_format": "Feature class",
+            "output_od_location": os.path.join(self.output_gdb, "TestOutput"),
             "max_origins": 1000,
             "max_destinations": 1000,
             "max_processes": 4,
@@ -254,7 +255,8 @@ class TestParallelODCM(unittest.TestCase):
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
             "travel_mode": self.local_tm_time,
-            "output_od_lines": out_od_lines,
+            "output_format": "Feature class",
+            "output_od_location": out_od_lines,
             "max_origins": 20,
             "max_destinations": 20,
             "max_processes": 4,
@@ -264,6 +266,7 @@ class TestParallelODCM(unittest.TestCase):
             "num_destinations": 2,
             "barriers": []
         }
+
         # Run parallel process. This calculates the OD and also post-processes the results
         od_calculator = parallel_odcm.ParallelODCalculator(**inputs)
         od_calculator.solve_od_in_parallel()
