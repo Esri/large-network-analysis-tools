@@ -753,10 +753,8 @@ class ParallelODCalculator():
             "barriers": barriers
         }
 
-        # Final combined output feature class
-        self.output_od_lines = output_od_lines
-        # List of intermediate output feature classes created by each process
-        self.od_line_fcs = []
+        # List of intermediate output OD Line files created by each process
+        self.od_line_files = []
 
         # Construct OID ranges for chunks of origins and destinations
         origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
@@ -874,15 +872,16 @@ class ParallelODCalculator():
 
                 # Parse the results dictionary and store components for post-processing.
                 if result["solveSucceeded"]:
-                    self.od_line_fcs.append(result["outputLines"])
+                    self.od_line_files.append(result["outputLines"])
                 else:
                     LOGGER.warning(f"Solve failed for job id {result['jobId']}")
                     msgs = result["solveMessages"]
                     LOGGER.warning(msgs)
 
         # Merge individual OD Lines feature classes into a single feature class
-        if self.od_line_fcs:
-            self._post_process_od_lines()
+        if self.od_line_files:
+            if self.output_format is helpers.OutputFormat.featureclass:
+                self._post_process_od_lines()
         else:
             LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
@@ -908,7 +907,7 @@ class ParallelODCalculator():
 
         # Merge all the individual OD Lines feature classes
         LOGGER.debug("Merging OD Cost Matrix results...")
-        run_gp_tool(arcpy.management.Merge, [self.od_line_fcs, self.output_od_lines])
+        run_gp_tool(arcpy.management.Merge, [self.od_line_files, self.output_od_location])
 
         # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
         # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
@@ -919,13 +918,13 @@ class ParallelODCalculator():
             out_sorted_lines = arcpy.CreateUniqueName(
                 "ODLines_Sorted", arcpy.env.scratchGDB)  # pylint: disable=no-member
             sort_fields = [["OriginOID", "ASCENDING"], [self.optimized_cost_field, "ASCENDING"]]
-            run_gp_tool(arcpy.management.Sort, [self.output_od_lines, out_sorted_lines, sort_fields])
+            run_gp_tool(arcpy.management.Sort, [self.output_od_location, out_sorted_lines, sort_fields])
             desc = arcpy.Describe(out_sorted_lines)
             # Delete the original output OD lines feature class and re-create it from scratch with the same schema.
-            run_gp_tool(arcpy.management.Delete, [[self.output_od_lines]])
+            run_gp_tool(arcpy.management.Delete, [[self.output_od_location]])
             run_gp_tool(arcpy.management.CreateFeatureclass, [
-                os.path.dirname(self.output_od_lines),
-                os.path.basename(self.output_od_lines),
+                os.path.dirname(self.output_od_location),
+                os.path.basename(self.output_od_location),
                 "POLYLINE",
                 out_sorted_lines,  # template feature class to transfer full schema
                 "SAME_AS_TEMPLATE",
@@ -934,7 +933,7 @@ class ParallelODCalculator():
             ])
             # Loop through the sorted feature class and insert only the first k into the final output
             field_names = ["OriginOID", "SHAPE@"] + [f.name for f in desc.fields if f.name != "OriginOID"]
-            with arcpy.da.InsertCursor(self.output_od_lines, field_names) as cur:  # pylint: disable=no-member
+            with arcpy.da.InsertCursor(self.output_od_location, field_names) as cur:  # pylint: disable=no-member
                 current_origin_id = None
                 count = 0
                 for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):  # pylint: disable=no-member
@@ -955,7 +954,7 @@ class ParallelODCalculator():
             run_gp_tool(arcpy.management.Delete, [[out_sorted_lines]])
 
         LOGGER.info("Post-processing complete.")
-        LOGGER.info(f"Results written to {self.output_od_lines}.")
+        LOGGER.info(f"Results written to {self.output_od_location}.")
 
 
 def launch_parallel_od():
