@@ -218,6 +218,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.destinations_oid_field_name = desc_destinations.oidFieldName
         self.origins_fields = desc_origins.fields
         self.destinations_fields = desc_destinations.fields
+        self.orig_origin_oid_field = "Orig_Origin_OID"
+        self.orig_dest_oid_field = "Orig_Dest_OID"
 
     def _make_nds_layer(self):
         """Create a network dataset layer if one does not already exist."""
@@ -290,17 +292,16 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the origins
         self.logger.debug("Loading origins...")
-        origin_oid_field = "Orig_Origin_OID"
         self.od_solver.addFields(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
-            [[origin_oid_field, "LONG"]]
+            [[self.orig_origin_oid_field, "LONG"]]
         )
         origins_field_mappings = self.od_solver.fieldMappings(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
             True  # Use network location fields
         )
         for fname in origins_field_mappings:
-            if fname == origin_oid_field:
+            if fname == self.orig_origin_oid_field:
                 origins_field_mappings[fname].mappedFieldName = self.origins_oid_field_name
             else:
                 origins_field_mappings[fname].mappedFieldName = fname
@@ -313,17 +314,16 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the destinations
         self.logger.debug("Loading destinations...")
-        dest_oid_field = "Orig_Dest_OID"
         self.od_solver.addFields(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
-            [[dest_oid_field, "LONG"]]
+            [[self.orig_dest_oid_field, "LONG"]]
         )
         destinations_field_mappings = self.od_solver.fieldMappings(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
             True  # Use network location fields
         )
         for fname in destinations_field_mappings:
-            if fname == dest_oid_field:
+            if fname == self.orig_dest_oid_field:
                 destinations_field_mappings[fname].mappedFieldName = self.destinations_oid_field_name
             else:
                 destinations_field_mappings[fname].mappedFieldName = fname
@@ -452,7 +452,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             run_gp_tool(
                 arcpy.management.CalculateField,
                 [lines_layer_name, f"{os.path.basename(output_od_lines)}.OriginOID",
-                 f"!{os.path.basename(output_origins)}.{origin_oid_field}!", "PYTHON3"]
+                 f"!{os.path.basename(output_origins)}.{self.orig_origin_oid_field}!", "PYTHON3"]
             )
             run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
             # Update DestinationOID values
@@ -463,7 +463,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             run_gp_tool(
                 arcpy.management.CalculateField,
                 [lines_layer_name, f"{os.path.basename(output_od_lines)}.DestinationOID",
-                 f"!{os.path.basename(output_destinations)}.{dest_oid_field}!", "PYTHON3"]
+                 f"!{os.path.basename(output_destinations)}.{self.orig_dest_oid_field}!", "PYTHON3"]
             )
             run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
 
@@ -890,7 +890,7 @@ class ParallelODCalculator():
         if self.od_line_files:
             self.od_line_files = sorted(self.od_line_files)
             if self.output_format is helpers.OutputFormat.featureclass:
-                self._post_process_od_lines()
+                self._post_process_od_line_fcs()
         else:
             LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
@@ -906,7 +906,7 @@ class ParallelODCalculator():
 
         LOGGER.info("Finished calculating OD Cost Matrices.")
 
-    def _post_process_od_lines(self):
+    def _post_process_od_line_fcs(self):
         """Merge and post-process the OD Lines calculated in each separate process.
 
         Args:
@@ -915,7 +915,7 @@ class ParallelODCalculator():
         LOGGER.info("Post-processing OD Cost Matrix results...")
 
         # Merge all the individual OD Lines feature classes
-        LOGGER.debug("Merging OD Cost Matrix results...")
+        LOGGER.debug("Merging OD Cost Matrix feature class results...")
         run_gp_tool(arcpy.management.Merge, [self.od_line_files, self.output_od_location])
 
         # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
