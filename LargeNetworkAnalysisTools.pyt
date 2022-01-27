@@ -2,7 +2,7 @@
 
 This is a sample script users can modify to fit their specific needs.
 
-Copyright 2021 Esri
+Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -296,13 +296,15 @@ class SolveLargeODCostMatrix(object):
             parameters[1].value,  # destinations
             get_catalog_path(parameters[2]),  # network
             parameters[3].value,  # travel mode
-            parameters[11].valueAsText,  # output OD lines
             parameters[8].valueAsText,  # output origins
             parameters[9].valueAsText,  # output destinations
             parameters[6].value,  # chunk size
             parameters[7].value,  # max processes
             parameters[4].valueAsText,  # time units
             parameters[5].valueAsText,  # distance units
+            parameters[10].valueAsText,  # output format
+            parameters[11].valueAsText,  # output OD lines
+            parameters[12].valueAsText,  # output data folder
             parameters[13].value,  # cutoff
             parameters[14].value,  # number of destinations to find
             parameters[16].value,  # Should precalculate network locations
