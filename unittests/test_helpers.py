@@ -68,6 +68,19 @@ class TestHelpers(unittest.TestCase):
             helpers.convert_distance_units_str_to_enum(bad_unit)
         self.assertEqual(f"Invalid distance units: {bad_unit}", str(ex.exception))
 
+    def test_convert_output_format_str_to_enum(self):
+        """Test the convert_output_format_str_to_enum function."""
+        # Test all valid formats
+        valid_formats = helpers.OUTPUT_FORMATS
+        for fm in valid_formats:
+            enum_format = helpers.convert_output_format_str_to_enum(fm)
+            self.assertIsInstance(enum_format, helpers.OutputFormat)
+        # Test for correct error with an invalid format type
+        bad_format = "BadFormat"
+        with self.assertRaises(ValueError) as ex:
+            helpers.convert_output_format_str_to_enum(bad_format)
+        self.assertEqual(f"Invalid output format: {bad_format}", str(ex.exception))
+
     def test_parse_std_and_write_to_gp_ui(self):
         """Test the parse_std_and_write_to_gp_ui function."""
         # There is nothing much to test here except that nothing terrible happens.
@@ -83,6 +96,7 @@ class TestHelpers(unittest.TestCase):
         for msg in msgs:
             with self.subTest(msg=msg):
                 helpers.parse_std_and_write_to_gp_ui(msg)
+
 
 if __name__ == '__main__':
     unittest.main()

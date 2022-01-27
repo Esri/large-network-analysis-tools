@@ -98,7 +98,7 @@ def convert_output_format_str_to_enum(output_format):
         return OutputFormat.featureclass
     if output_format.lower() == "csv files":
         return OutputFormat.csv
-    if output_format.lower() == "Apache Arrow files":
+    if output_format.lower() == "apache arrow files":
         return OutputFormat.arrow
     # If we got to this point, the input distance units were invalid.
     err = f"Invalid output format: {output_format}"
