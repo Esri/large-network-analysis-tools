@@ -16,6 +16,8 @@ Copyright 2022 Esri
 import enum
 import arcpy
 
+arcgis_version = arcpy.GetInstallInfo()["Version"]
+
 # Set some shared global variables that can be referenced from the other scripts
 MSG_STR_SPLITTER = " | "
 DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
