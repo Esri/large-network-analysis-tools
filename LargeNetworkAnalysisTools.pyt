@@ -262,17 +262,27 @@ class SolveLargeODCostMatrix(object):
         parameter.  This method is called after internal validation."""
         param_network = parameters[2]
         param_max_processes = parameters[7]
+        param_output_format = parameters[10]
         param_out_od_lines = parameters[11]
         param_out_folder = parameters[12]
 
-        # If the network data source is arcgis.com, cap max processes
-        if param_max_processes.altered and param_max_processes.valueAsText and \
-                param_network.altered and param_network.valueAsText:
-            if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
-                param_max_processes.setErrorMessage((
-                    f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
-                    "ArcGIS Online services are used as the network data source."
-                ))
+        # If the network data source is arcgis.com:
+        # - Cap max processes
+        # - Show an error if attempting to use Arrow output, which is not supported at this time
+        if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
+            if param_max_processes.altered and param_max_processes.valueAsText:
+                if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
+                    param_max_processes.setErrorMessage((
+                        f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
+                        "ArcGIS Online services are used as the network data source."
+                    ))
+            if param_output_format.altered and param_output_format.valueAsText:
+                output_format = helpers.convert_output_format_str_to_enum(param_output_format.valueAsText)
+                if output_format is helpers.OutputFormat.arrow:
+                    param_output_format.setErrorMessage((
+                        f"{param_output_format.valueAsText} output format is not available when a service is used as "
+                        "the network data source."
+                    ))
 
         # Make the appropriate output parameter required based on the user's choice of output format. Just require
         # whichever output parameter is enabled. Enablement is controlled in updateParameters() based on the user's

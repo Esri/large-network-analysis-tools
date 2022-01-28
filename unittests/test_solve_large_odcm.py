@@ -125,6 +125,18 @@ class TestSolveLargeODCM(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     od_solver._validate_inputs()
 
+        # Check validation when the network data source is a service and Arrow output is requested
+        # Arrow output from services is not yet supported.
+        output_format = "Apache Arrow files"
+        with self.subTest(output_format=output_format, network_data_source=self.portal_nd):
+            inputs = deepcopy(self.od_args)
+            inputs["output_format"] = output_format
+            inputs["output_data_folder"] = "Stuff"
+            inputs["network_data_source"] = self.portal_nd
+            od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
+            with self.assertRaises(ValueError):
+                od_solver._validate_inputs()
+
     def test_get_tool_limits_and_is_agol(self):
         """Test the _get_tool_limits_and_is_agol function for a portal network data source."""
         inputs = deepcopy(self.od_args)
