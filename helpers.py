@@ -22,7 +22,11 @@ arcgis_version = arcpy.GetInstallInfo()["Version"]
 MSG_STR_SPLITTER = " | "
 DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
 TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
-OUTPUT_FORMATS = ["Feature class", "CSV files", "Apache Arrow files"]
+OUTPUT_FORMATS = ["Feature class", "CSV files"]
+if arcgis_version >= "2.9":
+    # The ODCostMatrix solver object's toArrowTable method was added at Pro 2.9. Allow this output format only
+    # in software versions that support it.
+    OUTPUT_FORMATS.append("Apache Arrow files")
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 
 
