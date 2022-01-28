@@ -1,4 +1,4 @@
-"""Compute a large Origin Destination (OD) cost matrices by chunking the
+"""Compute a large Origin Destination (OD) cost matrix by chunking the
 inputs and solving in parallel. Write outputs into a single combined
 feature class, a collection of CSV files, or a collection of Apache
 Arrow files.
