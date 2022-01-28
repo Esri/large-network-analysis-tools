@@ -19,12 +19,14 @@ import datetime
 import subprocess
 import unittest
 from copy import deepcopy
+from glob import glob
 import arcpy
 import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import solve_large_odcm  # noqa: E402, pylint: disable=wrong-import-position
+import helpers  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeODCM(unittest.TestCase):
@@ -47,10 +49,10 @@ class TestSolveLargeODCM(unittest.TestCase):
         arcpy.SignInToPortal(self.portal_nd, portal_credentials.PORTAL_USERNAME, portal_credentials.PORTAL_PASSWORD)
 
         # Create a unique output directory and gdb for this test
-        self.output_folder = os.path.join(
+        self.scratch_folder = os.path.join(
             CWD, "TestOutput", "Output_SolveLargeODCM_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
-        os.makedirs(self.output_folder)
-        self.output_gdb = os.path.join(self.output_folder, "outputs.gdb")
+        os.makedirs(self.scratch_folder)
+        self.output_gdb = os.path.join(self.scratch_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
 
         # Copy some data to the output gdb to serve as barriers. Do not use tutorial data directly as input because
@@ -63,13 +65,15 @@ class TestSolveLargeODCM(unittest.TestCase):
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
             "travel_mode": self.local_tm_dist,
-            "output_od_lines": os.path.join(self.output_gdb, "OutODLines"),
             "output_origins": os.path.join(self.output_gdb, "OutOrigins"),
             "output_destinations": os.path.join(self.output_gdb, "OutDestinations"),
             "chunk_size": 20,
             "max_processes": 4,
             "time_units": "Minutes",
             "distance_units": "Miles",
+            "output_format": "Feature class",
+            "output_od_lines": os.path.join(self.output_gdb, "OutODLines"),
+            "output_data_folder": None,
             "cutoff": 2,
             "num_destinations": 1,
             "precalculate_network_locations": True,
@@ -102,6 +106,23 @@ class TestSolveLargeODCM(unittest.TestCase):
                 inputs[property_name] = value
                 od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
                 with self.assertRaises(error_type):
+                    od_solver._validate_inputs()
+
+        # Check validation of missing output feature class or folder location depending on output format
+        for output_format in helpers.OUTPUT_FORMATS:
+            if output_format == "Feature class":
+                output_od_lines = None
+                output_data_folder = "Stuff"
+            else:
+                output_od_lines = "Stuff"
+                output_data_folder = None
+            with self.subTest(output_format=output_format):
+                inputs = deepcopy(self.od_args)
+                inputs["output_format"] = output_format
+                inputs["output_od_lines"] = output_od_lines
+                inputs["output_data_folder"] = output_data_folder
+                od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
+                with self.assertRaises(ValueError):
                     od_solver._validate_inputs()
 
     def test_get_tool_limits_and_is_agol(self):
@@ -191,28 +212,32 @@ class TestSolveLargeODCM(unittest.TestCase):
             for val in row:
                 self.assertIsNotNone(val)
 
-    def test_solve_large_od_cost_matrix(self):
-        """Test the full solve OD Cost Matrix workflow."""
+    def test_solve_large_od_cost_matrix_featureclass(self):
+        """Test the full solve OD Cost Matrix workflow with feature class output."""
         od_solver = solve_large_odcm.ODCostMatrixSolver(**self.od_args)
         od_solver.solve_large_od_cost_matrix()
         self.assertTrue(arcpy.Exists(self.od_args["output_od_lines"]))
         self.assertTrue(arcpy.Exists(self.od_args["output_origins"]))
         self.assertTrue(arcpy.Exists(self.od_args["output_destinations"]))
 
-    def test_solve_large_od_cost_matrix_same_inputs(self):
-        """Test the full solve OD Cost Matrix workflow when origins and destinations are the same."""
+    def test_solve_large_od_cost_matrix_same_inputs_csv(self):
+        """Test the full solve OD Cost Matrix workflow when origins and destinations are the same. Use CSV outputs."""
+        out_folder = os.path.join(self.scratch_folder, "FullWorkflow_CSV_SameInputs")
+        os.mkdir(out_folder)
         od_args = {
             "origins": self.destinations,
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
             "travel_mode": self.local_tm_dist,
-            "output_od_lines": os.path.join(self.output_gdb, "OutODLinesSame"),
             "output_origins": os.path.join(self.output_gdb, "OutOriginsSame"),
             "output_destinations": os.path.join(self.output_gdb, "OutDestinationsSame"),
             "chunk_size": 50,
             "max_processes": 4,
             "time_units": "Minutes",
             "distance_units": "Miles",
+            "output_format": "CSV files",
+            "output_od_lines": None,
+            "output_data_folder": out_folder,
             "cutoff": 2,
             "num_destinations": 2,
             "precalculate_network_locations": True,
@@ -220,24 +245,58 @@ class TestSolveLargeODCM(unittest.TestCase):
         }
         od_solver = solve_large_odcm.ODCostMatrixSolver(**od_args)
         od_solver.solve_large_od_cost_matrix()
-        self.assertTrue(arcpy.Exists(od_args["output_od_lines"]))
         self.assertTrue(arcpy.Exists(od_args["output_origins"]))
         self.assertTrue(arcpy.Exists(od_args["output_destinations"]))
+        csv_files = glob(os.path.join(out_folder, "*.csv"))
+        self.assertGreater(len(csv_files), 0)
+
+    def test_solve_large_od_cost_matrix_arrow(self):
+        """Test the full solve OD Cost Matrix workflow with Arrow table outputs"""
+        out_folder = os.path.join(self.scratch_folder, "FullWorkflow_Arrow")
+        os.mkdir(out_folder)
+        od_args = {
+            "origins": self.destinations,
+            "destinations": self.destinations,
+            "network_data_source": self.local_nd,
+            "travel_mode": self.local_tm_dist,
+            "output_origins": os.path.join(self.output_gdb, "OutOriginsArrow"),
+            "output_destinations": os.path.join(self.output_gdb, "OutDestinationsArrow"),
+            "chunk_size": 50,
+            "max_processes": 4,
+            "time_units": "Minutes",
+            "distance_units": "Miles",
+            "output_format": "Apache Arrow files",
+            "output_od_lines": None,
+            "output_data_folder": out_folder,
+            "cutoff": 2,
+            "num_destinations": 2,
+            "precalculate_network_locations": True,
+            "barriers": ""
+        }
+        od_solver = solve_large_odcm.ODCostMatrixSolver(**od_args)
+        od_solver.solve_large_od_cost_matrix()
+        self.assertTrue(arcpy.Exists(od_args["output_origins"]))
+        self.assertTrue(arcpy.Exists(od_args["output_destinations"]))
+        arrow_files = glob(os.path.join(out_folder, "*.arrow"))
+        self.assertGreater(len(arrow_files), 0)
 
     def test_cli(self):
         """Test the command line interface of solve_large_odcm."""
+        out_folder = os.path.join(self.scratch_folder, "CLI_CSV_Output")
+        os.mkdir(out_folder)
         odcm_inputs = [
             os.path.join(sys.exec_prefix, "python.exe"),
             os.path.join(os.path.dirname(CWD), "solve_large_odcm.py"),
             "--origins", self.origins,
             "--destinations", self.destinations,
-            "--output-od-lines", os.path.join(self.output_gdb, "OutODLinesCLI"),
             "--output-origins", os.path.join(self.output_gdb, "OutOriginsCLI"),
             "--output-destinations", os.path.join(self.output_gdb, "OutDestinationsCLI"),
             "--network-data-source", self.local_nd,
             "--travel-mode", self.local_tm_time,
             "--time-units", "Minutes",
             "--distance-units", "Miles",
+            "--output-format", "CSV files",
+            "--output-data-folder", out_folder,
             "--chunk-size", "50",
             "--max-processes", "4",
             "--cutoff", "10",
