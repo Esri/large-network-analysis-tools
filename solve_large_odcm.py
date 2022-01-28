@@ -123,13 +123,19 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
                 arcpy.AddError(err)
                 raise ValueError(err)
 
-        # Validate that if the output format is Arrow, the network data source is not a service.
-        # Arrow output from services solves is not yet supported.
-        if self.output_format is helpers.OutputFormat.arrow and self.is_service:
-            err = (f"{self.output_format_str} output format is not available when a service is used as the network "
-                   "data source.")
-            arcpy.AddError(err)
-            raise ValueError(err)
+        # Validate that if the output format is Arrow:
+        # - The Pro version is >= 2.9. Arrow output was not supported in earlier versions of Pro.
+        # - The network data source is not a service. Arrow output from services solves is not yet supported.
+        if self.output_format is helpers.OutputFormat.arrow:
+            if helpers.arcgis_version < "2.9":
+                err = f"{self.output_format_str} output format is not available in versions of ArcGIS Pro prior to 2.9."
+                arcpy.AddError(err)
+                raise RuntimeError(err)
+            if self.is_service:
+                err = (f"{self.output_format_str} output format is not available when a service is used as the network "
+                       "data source.")
+                arcpy.AddError(err)
+                raise ValueError(err)
 
         # Validate input numerical values
         if self.chunk_size < 1:
