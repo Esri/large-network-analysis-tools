@@ -43,6 +43,13 @@ from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL
 
 import helpers
 
+if helpers.arcgis_version >= "2.9":
+    # The pyarrow module was not included in earlier versions of Pro, so do not attempt to import it.
+    # Tool validation prevents users from choosing the Arrow output format in older versions anyway,
+    # so this module will not be needed.
+    import pyarrow as pa
+    from pyarrow import fs
+
 arcpy.env.overwriteOutput = True
 
 # Set logging for the main process.
@@ -887,17 +894,19 @@ class ParallelODCalculator():
                     msgs = result["solveMessages"]
                     LOGGER.warning(msgs)
 
-        # Merge individual OD Lines feature classes into a single feature class
+        # Post-process outputs
         if self.od_line_files:
             self.od_line_files = sorted(self.od_line_files)
             if self.output_format is helpers.OutputFormat.featureclass:
                 self._post_process_od_line_fcs()
             elif self.output_format is helpers.OutputFormat.csv:
                 self._post_process_od_line_csvs()
+            elif self.output_format is helpers.OutputFormat.arrow:
+                self._post_process_od_line_arrow_files()
         else:
             LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
-        # Cleanup
+        # Clean up
         # Delete the job folders if the job succeeded
         if DELETE_INTERMEDIATE_OD_OUTPUTS:
             LOGGER.info("Deleting intermediate outputs...")
@@ -989,18 +998,73 @@ class ParallelODCalculator():
 
                 # Read the csv files into a pandas dataframe for easy sorting
                 df = pd.concat(map(pd.read_csv, csvs_for_origin_range), ignore_index=True)
-                # Sort according to OriginOID and cost field
-                df.sort_values(["OriginOID", self.optimized_cost_field], inplace=True)
-                # Keep only the first k records for each OriginOID
-                df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
-                # Properly calculate the DestinationRank field
-                df["DestinationRank"] = df.groupby("OriginOID").cumcount() + 1
+                # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
+                df = self._update_df_for_k_nearest(df)
 
                 # Write the updated CSV file and delete the originals
                 out_csv = os.path.join(self.output_od_location, f"ODLines_O_{origin_range[0]}_{origin_range[1]}.csv")
                 df.to_csv(out_csv, index=False)
                 for csv_file in csvs_for_origin_range:
                     os.remove(csv_file)
+
+    def _post_process_od_line_arrow_files(self):
+        """Post-process Arrow file outputs."""
+        # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
+        # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
+        # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
+        # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
+        if self.num_destinations:
+            # Handle each origin range separately to avoid pulling all results into memory at once
+            for origin_range in self.origin_ranges:
+                files_for_origin_range = [
+                    f for f in self.od_line_files if os.path.basename(f).startswith(
+                        f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
+                    )
+                ]
+                if len(files_for_origin_range) < 2:
+                    # Either there were no results for this chunk, or all results are already in the same table, so
+                    # there is no need to post-process because the k closest have already been found.
+                    continue
+
+                # Read the Arrow files into a pandas dataframe for easy sorting
+                # Note: An Arrow dataset could reasonably be used here, along with native Arrow table
+                # manipulations, instead of reading the files into pandas dataframes. However, the pyarrow
+                # version included in ArcGIS Pro (as of 2.9) does not support the new dataset option and
+                # other useful newer Arrow features. Additionally, using pandas allows us to share code
+                # with the CSV post-processing.
+                arrow_dfs = []
+                for arrow_file in files_for_origin_range:
+                    with pa.memory_map(arrow_file, 'r') as source:
+                        batch_reader = pa.ipc.RecordBatchFileReader(source)
+                        arrow_dfs.append(batch_reader.read_all().to_pandas(split_blocks=True))
+                df = pd.concat(arrow_dfs, ignore_index=True)
+
+                # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
+                df = self._update_df_for_k_nearest(df)
+
+                # Write the updated Arrow file and delete the originals
+                table = pa.Table.from_pandas(df)
+                out_file = os.path.join(self.output_od_location, f"ODLines_O_{origin_range[0]}_{origin_range[1]}.arrow")
+                local = fs.LocalFileSystem()
+                with local.open_output_stream(out_file) as f:
+                    with pa.RecordBatchFileWriter(f, table.schema) as writer:
+                        writer.write_table(table)
+                del df
+                del table
+                del arrow_dfs
+                del batch_reader
+                for arrow_file in files_for_origin_range:
+                    os.remove(arrow_file)
+
+    def _update_df_for_k_nearest(self, df):
+        """Drop all but the k nearest records for each Origin from the dataframe and calculate DestinationRank."""
+        # Sort according to OriginOID and cost field
+        df.sort_values(["OriginOID", self.optimized_cost_field], inplace=True)
+        # Keep only the first k records for each OriginOID
+        df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
+        # Properly calculate the DestinationRank field
+        df["DestinationRank"] = df.groupby("OriginOID").cumcount() + 1
+        return df
 
 
 def launch_parallel_od():

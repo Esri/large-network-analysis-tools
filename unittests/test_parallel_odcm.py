@@ -1,6 +1,6 @@
 """Unit tests for the parallel_parallel_odcm.py module.'
 
-Copyright 2021 Esri
+Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -34,6 +34,7 @@ if helpers.arcgis_version >= "2.9":
     # earlier versions of Pro.
     TEST_ARROW = True
     import pyarrow as pa
+
 
 class TestParallelODCM(unittest.TestCase):
     """Test cases for the odcm module."""
@@ -310,6 +311,46 @@ class TestParallelODCM(unittest.TestCase):
         # With 2 destinations for each origin, expect 414 rows in the output
         # Note: 1 origin finds no destinations, and that's why we don't have 416.
         self.assertEqual(414, df.shape[0], "Incorrect number of rows in combined output CSV files.")
+
+    @unittest.skipIf(not TEST_ARROW, "Arrow table output is not available in versions of Pro prior to 2.9.")
+    def test_ParallelODCalculator_solve_od_in_parallel_arrow(self):
+        """Test the solve_od_in_parallel function. Output to Arrow files."""
+        out_folder = os.path.join(self.scratch_folder, "ParallelODCalculator_Arrow")
+        os.mkdir(out_folder)
+        inputs = {
+            "origins": self.origins,
+            "destinations": self.destinations,
+            "network_data_source": self.local_nd,
+            "travel_mode": self.local_tm_time,
+            "output_format": "Apache Arrow files",
+            "output_od_location": out_folder,
+            "max_origins": 20,
+            "max_destinations": 20,
+            "max_processes": 4,
+            "time_units": "Minutes",
+            "distance_units": "Miles",
+            "cutoff": 30,
+            "num_destinations": 2,
+            "barriers": []
+        }
+
+        # Run parallel process. This calculates the OD and also post-processes the results
+        od_calculator = parallel_odcm.ParallelODCalculator(**inputs)
+        od_calculator.solve_od_in_parallel()
+
+        # Check results
+        arrow_files = glob(os.path.join(out_folder, "*.arrow"))
+        self.assertEqual(11, len(arrow_files), "Incorrect number of CSV files produced.")
+        arrow_dfs = []
+        for arrow_file in arrow_files:
+            with pa.memory_map(arrow_file, 'r') as source:
+                batch_reader = pa.ipc.RecordBatchFileReader(source)
+                chunk_table = batch_reader.read_all()
+            arrow_dfs.append(chunk_table.to_pandas(split_blocks=True))
+        df = pd.concat(arrow_dfs, ignore_index=True)
+        # With 2 destinations for each origin, expect 414 rows in the output
+        # Note: 1 origin finds no destinations, and that's why we don't have 416.
+        self.assertEqual(414, df.shape[0], "Incorrect number of rows in combined output Arrow files.")
 
 
 if __name__ == '__main__':
