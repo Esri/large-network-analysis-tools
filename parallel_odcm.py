@@ -1,6 +1,7 @@
 """Compute a large Origin Destination (OD) cost matrices by chunking the
-inputs, solving in parallel, and recombining the results into a single
-feature class.
+inputs and solving in parallel. Write outputs into a single combined
+feature class, a collection of CSV files, or a collection of Apache
+Arrow files.
 
 This is a sample script users can modify to fit their specific needs.
 
