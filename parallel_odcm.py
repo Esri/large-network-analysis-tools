@@ -34,6 +34,7 @@ import time
 import traceback
 import argparse
 import csv
+import pandas as pd
 
 import arcpy
 
@@ -472,7 +473,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.logger.debug(f"Saving OD cost matrix Lines output to CSV as {out_csv_file}.")
         with open(out_csv_file, "w", newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["OriginOID", "DestinationOID"])
+            writer.writerow(self.output_fields)
             for row in self.solve_result.searchCursor(
                 arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
                 self.output_fields
@@ -765,13 +766,13 @@ class ParallelODCalculator():
         self.od_line_files = []
 
         # Construct OID ranges for chunks of origins and destinations
-        origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
+        self.origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
         destination_ranges = self._get_oid_ranges_for_input(destinations, max_destinations)
 
         # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
-        self.ranges = itertools.product(origin_ranges, destination_ranges)
+        self.ranges = itertools.product(self.origin_ranges, destination_ranges)
         # Calculate the total number of jobs to use in logging
-        self.total_jobs = len(origin_ranges) * len(destination_ranges)
+        self.total_jobs = len(self.origin_ranges) * len(destination_ranges)
 
         self.optimized_cost_field = None
 
@@ -891,6 +892,8 @@ class ParallelODCalculator():
             self.od_line_files = sorted(self.od_line_files)
             if self.output_format is helpers.OutputFormat.featureclass:
                 self._post_process_od_line_fcs()
+            elif self.output_format is helpers.OutputFormat.csv:
+                self._post_process_od_line_csvs()
         else:
             LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
@@ -964,6 +967,40 @@ class ParallelODCalculator():
 
         LOGGER.info("Post-processing complete.")
         LOGGER.info(f"Results written to {self.output_od_location}.")
+
+    def _post_process_od_line_csvs(self):
+        """Post-process CSV file outputs."""
+        # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
+        # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
+        # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
+        # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
+        if self.num_destinations:
+            # Handle each origin range separately to avoid pulling all results into memory at once
+            for origin_range in self.origin_ranges:
+                csvs_for_origin_range = [
+                    f for f in self.od_line_files if os.path.basename(f).startswith(
+                        f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
+                    )
+                ]
+                if len(csvs_for_origin_range) < 2:
+                    # Either there were no results for this chunk, or all results are already in the same table, so
+                    # there is no need to post-process because the k closest have already been found.
+                    continue
+
+                # Read the csv files into a pandas dataframe for easy sorting
+                df = pd.concat(map(pd.read_csv, csvs_for_origin_range), ignore_index=True)
+                # Sort according to OriginOID and cost field
+                df.sort_values(["OriginOID", self.optimized_cost_field], inplace=True)
+                # Keep only the first k records for each OriginOID
+                df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
+                # Properly calculate the DestinationRank field
+                df["DestinationRank"] = df.groupby("OriginOID").cumcount() + 1
+
+                # Write the updated CSV file and delete the originals
+                out_csv = os.path.join(self.output_od_location, f"ODLines_O_{origin_range[0]}_{origin_range[1]}.csv")
+                df.to_csv(out_csv, index=False)
+                for csv_file in csvs_for_origin_range:
+                    os.remove(csv_file)
 
 
 def launch_parallel_od():
