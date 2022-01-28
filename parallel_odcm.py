@@ -478,17 +478,54 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     def _export_to_csv(self, out_csv_file):
         """Save the OD Lines result to a CSV file."""
         self.logger.debug(f"Saving OD cost matrix Lines output to CSV as {out_csv_file}.")
-        with open(out_csv_file, "w", newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(self.output_fields)
-            for row in self.solve_result.searchCursor(
-                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
-                self.output_fields
-            ):
-                writer.writerow(row)
-        self.job_result["outputLines"] = out_csv_file
 
-        ## TODO: Deal with services
+        # For services solve, properly populate OriginOID and DestinationOID fields in the output Lines. Services do
+        # not preserve the original input OIDs, instead resetting from 1, unlike solves using a local network dataset,
+        # so this extra post-processing step is necessary.
+        if self.is_service:
+            # Read the Lines output
+            with self.solve_result.searchCursor(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, self.output_fields
+            ) as cur:
+                od_df = pd.DataFrame(cur, columns=self.output_fields)
+            # Read the Origins output and transfer original OriginOID to Lines
+            origins_columns = ["ObjectID", self.orig_origin_oid_field]
+            with self.solve_result.searchCursor(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Origins, origins_columns
+            ) as cur:
+                origins_df = pd.DataFrame(cur, columns=origins_columns)
+            origins_df.set_index("ObjectID", inplace=True)
+            od_df = od_df.join(origins_df, "OriginOID")
+            del origins_df
+            # Read the Destinations output and transfer original DestinationOID to Lines
+            dest_columns = ["ObjectID", self.orig_dest_oid_field]
+            with self.solve_result.searchCursor(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Destinations, dest_columns
+            ) as cur:
+                dests_df = pd.DataFrame(cur, columns=dest_columns)
+            dests_df.set_index("ObjectID", inplace=True)
+            od_df = od_df.join(dests_df, "DestinationOID")
+            del dests_df
+            # Clean up and rename columns
+            od_df.drop(["OriginOID", "DestinationOID"], axis="columns", inplace=True)
+            od_df.rename(
+                columns={self.orig_origin_oid_field: "OriginOID", self.orig_dest_oid_field: "DestinationOID"},
+                inplace=True
+            )
+            # Write CSV file
+            od_df.to_csv(out_csv_file, index=False)
+
+        else:  # Local network dataset output
+            with open(out_csv_file, "w", newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(self.output_fields)
+                for row in self.solve_result.searchCursor(
+                    arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
+                    self.output_fields
+                ):
+                    writer.writerow(row)
+            
+        self.job_result["outputLines"] = out_csv_file
 
     def _export_to_arrow(self, out_arrow_file):
         """Save the OD Lines result to an Apache Arrow file."""

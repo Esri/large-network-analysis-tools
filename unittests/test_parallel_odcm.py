@@ -26,6 +26,7 @@ CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import parallel_odcm  # noqa: E402, pylint: disable=wrong-import-position
 import helpers  # noqa: E402, pylint: disable=wrong-import-position
+import portal_credentials  # noqa: E402, pylint: disable=wrong-import-position
 
 TEST_ARROW = False
 if helpers.arcgis_version >= "2.9":
@@ -51,6 +52,10 @@ class TestParallelODCM(unittest.TestCase):
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"
         self.local_tm_dist = "Driving Distance"
+        self.portal_nd = portal_credentials.PORTAL_URL
+        self.portal_tm = portal_credentials.PORTAL_TRAVEL_MODE
+
+        arcpy.SignInToPortal(self.portal_nd, portal_credentials.PORTAL_USERNAME, portal_credentials.PORTAL_PASSWORD)
 
         # Create a unique output directory and gdb for this test
         self.scratch_folder = os.path.join(
@@ -219,6 +224,83 @@ class TestParallelODCM(unittest.TestCase):
             batch_reader = pa.ipc.RecordBatchFileReader(source)
             arrow_table = batch_reader.read_all()
         self.assertEqual(2, arrow_table.num_rows, "OD line Arrow file has an incorrect number of rows.")
+
+    def test_ODCostMatrix_solve_service_featureclass(self):
+        """Test the solve method of the ODCostMatrix class using a service with feature class output.
+
+        When a service is used, the code does special extra steps to ensure the original origin and
+        destination OIDs are transferred instead of reset starting with 1 for each chunk. This test
+        specifically validates this special behavior.
+        """
+        # Initialize an ODCostMatrix analysis object
+        od_inputs = {
+            "origins": self.origins,
+            "destinations": self.destinations,
+            "output_format": helpers.OutputFormat.featureclass,
+            "output_od_location": os.path.join(self.output_gdb, "TestOutputService"),
+            "network_data_source": self.portal_nd,
+            "travel_mode": self.portal_tm,
+            "time_units": arcpy.nax.TimeUnits.Minutes,
+            "distance_units": arcpy.nax.DistanceUnits.Miles,
+            "cutoff": 10,
+            "num_destinations": None,
+            "scratch_folder": self.scratch_folder,
+            "barriers": []
+        }
+        od = parallel_odcm.ODCostMatrix(**od_inputs)
+        # Solve a chunk
+        origin_criteria = [45, 50]
+        dest_criteria = [8, 12]
+        od.solve(origin_criteria, dest_criteria)
+        self.assertTrue(od.job_result["solveSucceeded"], "OD solve failed")
+        self.assertTrue(arcpy.Exists(od.job_result["outputLines"]), "OD line output does not exist.")
+        # Ensure the OriginOID and DestinationOID fields in the output have the correct numerical ranges
+        for row in arcpy.da.SearchCursor(od.job_result["outputLines"], ["OriginOID", "DestinationOID"]):
+            self.assertTrue(origin_criteria[0] <= row[0] <= origin_criteria[1], "OriginOID out of range.")
+            self.assertTrue(dest_criteria[0] <= row[1] <= dest_criteria[1], "DestinationOID out of range.")
+
+    def test_ODCostMatrix_solve_service_csv(self):
+        """Test the solve method of the ODCostMatrix class using a service with csv output.
+
+        When a service is used, the code does special extra steps to ensure the original origin and
+        destination OIDs are transferred instead of reset starting with 1 for each chunk. This test
+        specifically validates this special behavior.
+        """
+        out_folder = os.path.join(self.scratch_folder, "ODCostMatrix_CSV_service")
+        os.mkdir(out_folder)
+        # Initialize an ODCostMatrix analysis object
+        od_inputs = {
+            "origins": self.origins,
+            "destinations": self.destinations,
+            "output_format": helpers.OutputFormat.csv,
+            "output_od_location": out_folder,
+            "network_data_source": self.portal_nd,
+            "travel_mode": self.portal_tm,
+            "time_units": arcpy.nax.TimeUnits.Minutes,
+            "distance_units": arcpy.nax.DistanceUnits.Miles,
+            "cutoff": 10,
+            "num_destinations": None,
+            "scratch_folder": self.scratch_folder,
+            "barriers": []
+        }
+        od = parallel_odcm.ODCostMatrix(**od_inputs)
+        # Solve a chunk
+        origin_criteria = [45, 50]
+        dest_criteria = [8, 12]
+        od.solve(origin_criteria, dest_criteria)
+        self.assertTrue(od.job_result["solveSucceeded"], "OD solve failed")
+        expected_out_file = os.path.join(
+            out_folder,
+            f"ODLines_O_{origin_criteria[0]}_{origin_criteria[1]}_D_{dest_criteria[0]}_{dest_criteria[1]}.csv"
+        )
+        self.assertTrue(os.path.exists(od.job_result["outputLines"]), "OD line CSV file output does not exist.")
+        self.assertEqual(expected_out_file, od.job_result["outputLines"], "OD line CSV file has the wrong filepath.")
+        # Ensure the OriginOID and DestinationOID fields in the output have the correct numerical ranges
+        df = pd.read_csv(expected_out_file)
+        self.assertTrue(df["OriginOID"].min() >= origin_criteria[0], "OriginOID out of range.")
+        self.assertTrue(df["OriginOID"].max() <= origin_criteria[1], "OriginOID out of range.")
+        self.assertTrue(df["DestinationOID"].min() >= dest_criteria[0], "DestinationOID out of range.")
+        self.assertTrue(df["DestinationOID"].max() <= dest_criteria[1], "DestinationOID out of range.")
 
     def test_solve_od_cost_matrix(self):
         """Test the solve_od_cost_matrix function."""
