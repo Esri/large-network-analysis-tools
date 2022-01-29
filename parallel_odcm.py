@@ -399,37 +399,32 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.job_result["solveSucceeded"] = True
 
         # Save output
+        # Example: ODLines_O_1_1000_D_2001_3000.csv
+        out_filename = (f"ODLines_O_{origins_criteria[0]}_{origins_criteria[1]}_"
+                        f"D_{destinations_criteria[0]}_{destinations_criteria[1]}")
         if self.output_format is helpers.OutputFormat.featureclass:
-            self._export_od_lines()
+            self._export_to_feature_class(out_filename)
         elif self.output_format is helpers.OutputFormat.csv:
-            out_csv_file = os.path.join(
-                self.output_od_location,
-                (f"ODLines_O_{origins_criteria[0]}_{origins_criteria[1]}_"
-                 f"D_{destinations_criteria[0]}_{destinations_criteria[1]}.csv")  # ODLines_O_1_1000_D_2001_3000.csv
-            )
+            out_csv_file = os.path.join(self.output_od_location, f"{out_filename}.csv")
             self._export_to_csv(out_csv_file)
         elif self.output_format is helpers.OutputFormat.arrow:
-            out_arrow_file = os.path.join(
-                self.output_od_location,
-                (f"ODLines_O_{origins_criteria[0]}_{origins_criteria[1]}_"
-                 f"D_{destinations_criteria[0]}_{destinations_criteria[1]}.arrow")  # ODLines_O_1_1000_D_2001_3000.arrow
-            )
+            out_arrow_file = os.path.join(self.output_od_location, f"{out_filename}.arrow")
             self._export_to_arrow(out_arrow_file)
 
         self.logger.debug("Finished calculating OD cost matrix.")
 
-    def _export_od_lines(self):
+    def _export_to_feature_class(self, out_fc_name):
         """Export the OD Lines result to a feature class."""
         # Make output gdb
-        od_workspace = os.path.join(self.job_folder, "scratch.gdb")
         self.logger.debug("Creating output geodatabase for OD cost matrix analysis...")
+        od_workspace = os.path.join(self.job_folder, "scratch.gdb")
         run_gp_tool(
             arcpy.management.CreateFileGDB,
             [os.path.dirname(od_workspace), os.path.basename(od_workspace)],
             log_to_use=self.logger
         )
 
-        output_od_lines = os.path.join(od_workspace, "output_od_lines")
+        output_od_lines = os.path.join(od_workspace, out_fc_name)
         self.logger.debug(f"Exporting OD cost matrix Lines output to {output_od_lines}...")
         self.solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, output_od_lines)
         self.job_result["outputLines"] = output_od_lines
@@ -934,6 +929,7 @@ class ParallelODCalculator():
 
         # Post-process outputs
         if self.od_line_files:
+            LOGGER.info("Post-processing OD Cost Matrix results...")
             self.od_line_files = sorted(self.od_line_files)
             if self.output_format is helpers.OutputFormat.featureclass:
                 self._post_process_od_line_fcs()
@@ -962,55 +958,62 @@ class ParallelODCalculator():
         Args:
             out_fc (str): Catalog path of the output feature class to be created
         """
-        LOGGER.info("Post-processing OD Cost Matrix results...")
-
-        # Merge all the individual OD Lines feature classes
-        LOGGER.debug("Merging OD Cost Matrix feature class results...")
-        run_gp_tool(arcpy.management.Merge, [self.od_line_files, self.output_od_location])
+        # If we aren't limiting the number of destinations to find, no special processing is required.
+        if not self.num_destinations:
+            # Merge all the individual OD Lines feature classes
+            LOGGER.debug("Merging OD Cost Matrix feature class results...")
+            run_gp_tool(arcpy.management.Merge, [self.od_line_files, self.output_od_location])
 
         # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
         # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
         # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
-        # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
-        if self.num_destinations:
-            LOGGER.debug("Sorting merged OD Lines results...")
-            out_sorted_lines = arcpy.CreateUniqueName(
-                "ODLines_Sorted", arcpy.env.scratchGDB)  # pylint: disable=no-member
-            sort_fields = [["OriginOID", "ASCENDING"], [self.optimized_cost_field, "ASCENDING"]]
-            run_gp_tool(arcpy.management.Sort, [self.output_od_location, out_sorted_lines, sort_fields])
-            desc = arcpy.Describe(out_sorted_lines)
-            # Delete the original output OD lines feature class and re-create it from scratch with the same schema.
-            run_gp_tool(arcpy.management.Delete, [[self.output_od_location]])
+        # beyond the first k.
+        else:
+            # Create the final output feature class
+            desc = arcpy.Describe(self.od_line_files[0])
             run_gp_tool(arcpy.management.CreateFeatureclass, [
                 os.path.dirname(self.output_od_location),
                 os.path.basename(self.output_od_location),
                 "POLYLINE",
-                out_sorted_lines,  # template feature class to transfer full schema
+                self.od_line_files[0],  # template feature class to transfer full schema
                 "SAME_AS_TEMPLATE",
                 "SAME_AS_TEMPLATE",
                 desc.spatialReference
             ])
-            # Loop through the sorted feature class and insert only the first k into the final output
-            field_names = ["OriginOID", "SHAPE@"] + [f.name for f in desc.fields if f.name != "OriginOID"]
-            with arcpy.da.InsertCursor(self.output_od_location, field_names) as cur:  # pylint: disable=no-member
-                current_origin_id = None
-                count = 0
-                for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):  # pylint: disable=no-member
-                    origin_id = row[0]
-                    if origin_id != current_origin_id:
-                        # Starting a fresh origin ID
-                        current_origin_id = origin_id
-                        count = 0
-                    count += 1
-                    if count > self.num_destinations:
-                        # Skip this row because we have exceeded the number we want to keep for this origin
-                        continue
-                    # If we got this far, we want to keep this row.
-                    cur.insertRow(row)
 
-            # Clean up intermediate outputs
-            LOGGER.debug("Deleting intermediate post-processing outputs...")
-            run_gp_tool(arcpy.management.Delete, [[out_sorted_lines]])
+            # Insert the rows from all the individual output feature classes into the final output
+            fields = ["SHAPE@"] + [f.name for f in desc.fields]
+            with arcpy.da.InsertCursor(self.output_od_location, fields) as cur:  # pylint: disable=no-member
+                # Handle each origin range separately to avoid pulling all results into memory at once
+                for origin_range in self.origin_ranges:
+                    fcs_for_origin_range = [
+                        f for f in self.od_line_files if os.path.basename(f).startswith(
+                            f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
+                        )
+                    ]
+                    if not fcs_for_origin_range:
+                        # No records for this chunk of origins. Just move on to the next chunk of origins.
+                        continue
+                    if len(fcs_for_origin_range) < 2:
+                        # All results for this chunk of origins are already in the same table, so
+                        # there is no need to post-process because the k closest have already been found. Just insert
+                        # the records directly into the final output table.
+                        for row in arcpy.da.SearchCursor(fcs_for_origin_range[0], fields):  # pylint: disable=no-member
+                            cur.insertRow(row)
+                        continue
+                    # If there are multiple feature classes to handle at once, we need to eliminate extra rows and
+                    # properly update the DestinationRank field. To do this, read them into pandas.
+                    fc_dfs = []
+                    df_fields = ["Shape"] + fields[1:]
+                    for fc in fcs_for_origin_range:
+                        with arcpy.da.SearchCursor(fc, fields) as cur2:  # pylint: disable=no-member
+                            fc_dfs.append(pd.DataFrame(cur2, columns=df_fields))
+                    df = pd.concat(fc_dfs, ignore_index=True)
+                    # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
+                    df = self._update_df_for_k_nearest(df)
+                    # Write the pandas rows to the final output feature class
+                    for row in df.itertuples(index=False, name=None):
+                        cur.insertRow(row)
 
         LOGGER.info("Post-processing complete.")
         LOGGER.info(f"Results written to {self.output_od_location}.")
