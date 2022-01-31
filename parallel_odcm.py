@@ -962,7 +962,7 @@ class ParallelODCalculator():
         For the case where we wanted to find only the k closest destinations for each origin, calculating the OD in
         chunks means our combined output may have more than k destinations for each origin because each individual chunk
         found the closest k for that chunk. We need to eliminate all extra rows beyond the first k.
-        
+
         Calculating the OD in chunks also means the DestinationRank field calculated by each chunk is not correct for
         the entire analysis. DestinationRank refers to the rank within the chunk, not the overall rank. We need to
         recalculate DestinationRank considering the entire dataset.
