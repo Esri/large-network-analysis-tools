@@ -955,65 +955,64 @@ class ParallelODCalculator():
     def _post_process_od_line_fcs(self):
         """Merge and post-process the OD Lines calculated in each separate process.
 
-        Args:
-            out_fc (str): Catalog path of the output feature class to be created
+        Create an empty final output feature class and populate it from each of the intermediate OD Lines feature
+        classes. Do this instead of simply using the Merge tool in order to correctly calculate the DestinationRank
+        field and eliminate extra records when only the k closest destinations should be found.
+
+        For the case where we wanted to find only the k closest destinations for each origin, calculating the OD in
+        chunks means our combined output may have more than k destinations for each origin because each individual chunk
+        found the closest k for that chunk. We need to eliminate all extra rows beyond the first k.
+        
+        Calculating the OD in chunks also means the DestinationRank field calculated by each chunk is not correct for
+        the entire analysis. DestinationRank refers to the rank within the chunk, not the overall rank. We need to
+        recalculate DestinationRank considering the entire dataset.
         """
-        # If we aren't limiting the number of destinations to find, no special processing is required.
-        if not self.num_destinations:
-            # Merge all the individual OD Lines feature classes
-            LOGGER.debug("Merging OD Cost Matrix feature class results...")
-            run_gp_tool(arcpy.management.Merge, [self.od_line_files, self.output_od_location])
+        # Create the final output feature class
+        desc = arcpy.Describe(self.od_line_files[0])
+        run_gp_tool(arcpy.management.CreateFeatureclass, [
+            os.path.dirname(self.output_od_location),
+            os.path.basename(self.output_od_location),
+            "POLYLINE",
+            self.od_line_files[0],  # template feature class to transfer full schema
+            "SAME_AS_TEMPLATE",
+            "SAME_AS_TEMPLATE",
+            desc.spatialReference
+        ])
 
-        # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
-        # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
-        # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
-        # beyond the first k.
-        else:
-            # Create the final output feature class
-            desc = arcpy.Describe(self.od_line_files[0])
-            run_gp_tool(arcpy.management.CreateFeatureclass, [
-                os.path.dirname(self.output_od_location),
-                os.path.basename(self.output_od_location),
-                "POLYLINE",
-                self.od_line_files[0],  # template feature class to transfer full schema
-                "SAME_AS_TEMPLATE",
-                "SAME_AS_TEMPLATE",
-                desc.spatialReference
-            ])
-
-            # Insert the rows from all the individual output feature classes into the final output
-            fields = ["SHAPE@"] + [f.name for f in desc.fields]
-            with arcpy.da.InsertCursor(self.output_od_location, fields) as cur:  # pylint: disable=no-member
-                # Handle each origin range separately to avoid pulling all results into memory at once
-                for origin_range in self.origin_ranges:
-                    fcs_for_origin_range = [
-                        f for f in self.od_line_files if os.path.basename(f).startswith(
-                            f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
-                        )
-                    ]
-                    if not fcs_for_origin_range:
-                        # No records for this chunk of origins. Just move on to the next chunk of origins.
-                        continue
-                    if len(fcs_for_origin_range) < 2:
-                        # All results for this chunk of origins are already in the same table, so
-                        # there is no need to post-process because the k closest have already been found. Just insert
-                        # the records directly into the final output table.
-                        for row in arcpy.da.SearchCursor(fcs_for_origin_range[0], fields):  # pylint: disable=no-member
-                            cur.insertRow(row)
-                        continue
-                    # If there are multiple feature classes to handle at once, we need to eliminate extra rows and
-                    # properly update the DestinationRank field. To do this, read them into pandas.
-                    fc_dfs = []
-                    df_fields = ["Shape"] + fields[1:]
-                    for fc in fcs_for_origin_range:
-                        with arcpy.da.SearchCursor(fc, fields) as cur2:  # pylint: disable=no-member
-                            fc_dfs.append(pd.DataFrame(cur2, columns=df_fields))
-                    df = pd.concat(fc_dfs, ignore_index=True)
-                    # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
-                    df = self._update_df_for_k_nearest(df)
-                    # Write the pandas rows to the final output feature class
-                    for row in df.itertuples(index=False, name=None):
+        # Insert the rows from all the individual output feature classes into the final output
+        fields = ["SHAPE@"] + [f.name for f in desc.fields]
+        with arcpy.da.InsertCursor(self.output_od_location, fields) as cur:  # pylint: disable=no-member
+            # Handle each origin range separately to avoid pulling all results into memory at once
+            for origin_range in self.origin_ranges:
+                fcs_for_origin_range = [
+                    f for f in self.od_line_files if os.path.basename(f).startswith(
+                        f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
+                    )
+                ]
+                if not fcs_for_origin_range:
+                    # No records for this chunk of origins. Just move on to the next chunk of origins.
+                    continue
+                if len(fcs_for_origin_range) < 2:
+                    # All results for this chunk of origins are already in the same table, so
+                    # there is no need to post-process because the k closest have already been found, and the
+                    # DestinationRank field is already correct. Just insert the records directly into the final output
+                    # table.
+                    for row in arcpy.da.SearchCursor(fcs_for_origin_range[0], fields):  # pylint: disable=no-member
                         cur.insertRow(row)
+                    continue
+                # If there are multiple feature classes to handle at once, we need to eliminate extra rows and
+                # properly update the DestinationRank field. To do this, read them into pandas.
+                fc_dfs = []
+                df_fields = ["Shape"] + fields[1:]
+                for fc in fcs_for_origin_range:
+                    with arcpy.da.SearchCursor(fc, fields) as cur2:  # pylint: disable=no-member
+                        fc_dfs.append(pd.DataFrame(cur2, columns=df_fields))
+                df = pd.concat(fc_dfs, ignore_index=True)
+                # Drop all but the k nearest rows for each OriginOID (if needed) and calculate DestinationRank
+                df = self._update_df_for_k_nearest_and_destination_rank(df)
+                # Write the pandas rows to the final output feature class
+                for row in df.itertuples(index=False, name=None):
+                    cur.insertRow(row)
 
         LOGGER.info("Post-processing complete.")
         LOGGER.info(f"Results written to {self.output_od_location}.")
@@ -1040,7 +1039,7 @@ class ParallelODCalculator():
                 # Read the csv files into a pandas dataframe for easy sorting
                 df = pd.concat(map(pd.read_csv, csvs_for_origin_range), ignore_index=True)
                 # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
-                df = self._update_df_for_k_nearest(df)
+                df = self._update_df_for_k_nearest_and_destination_rank(df)
 
                 # Write the updated CSV file and delete the originals
                 out_csv = os.path.join(self.output_od_location, f"ODLines_O_{origin_range[0]}_{origin_range[1]}.csv")
@@ -1081,7 +1080,7 @@ class ParallelODCalculator():
                 df = pd.concat(arrow_dfs, ignore_index=True)
 
                 # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
-                df = self._update_df_for_k_nearest(df)
+                df = self._update_df_for_k_nearest_and_destination_rank(df)
 
                 # Write the updated Arrow file and delete the originals
                 table = pa.Table.from_pandas(df)
@@ -1097,12 +1096,13 @@ class ParallelODCalculator():
                 for arrow_file in files_for_origin_range:
                     os.remove(arrow_file)
 
-    def _update_df_for_k_nearest(self, df):
+    def _update_df_for_k_nearest_and_destination_rank(self, df):
         """Drop all but the k nearest records for each Origin from the dataframe and calculate DestinationRank."""
         # Sort according to OriginOID and cost field
         df.sort_values(["OriginOID", self.optimized_cost_field], inplace=True)
         # Keep only the first k records for each OriginOID
-        df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
+        if self.num_destinations:
+            df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
         # Properly calculate the DestinationRank field
         df["DestinationRank"] = df.groupby("OriginOID").cumcount() + 1
         return df
