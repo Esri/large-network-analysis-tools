@@ -120,7 +120,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
 
     @unittest.skipIf(
         helpers.arcgis_version < "2.9", "Arrow table output is not available in versions of Pro prior to 2.9.")
-    def test_run_tool_time_units_arrows(self):
+    def test_run_tool_time_units_arrow(self):
         """Test the tool with Apache Arrow outputs."""
         # Run tool
         out_origins = os.path.join(self.output_gdb, "Arrow_Origins")
