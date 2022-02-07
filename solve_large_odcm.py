@@ -1,12 +1,13 @@
-"""Compute a large Origin Destination (OD) cost matrices by chunking the
-inputs, solving in parallel, and recombining the results into a single
-feature class.
+"""Compute a large Origin Destination (OD) cost matrix by chunking the
+inputs and solving in parallel. Write outputs into a single combined
+feature class, a collection of CSV files, or a collection of Apache
+Arrow files.
 
 This is a sample script users can modify to fit their specific needs.
 
 This script can be called from the script tool definition or from the command line.
 
-Copyright 2021 Esri
+Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -44,8 +45,9 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
     """
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, destinations, network_data_source, travel_mode, output_od_lines, output_origins,
-        output_destinations, chunk_size, max_processes, time_units, distance_units, cutoff=None, num_destinations=None,
+        self, origins, destinations, network_data_source, travel_mode, output_origins,
+        output_destinations, chunk_size, max_processes, time_units, distance_units, output_format,
+        output_od_lines=None, output_data_folder=None, cutoff=None, num_destinations=None,
         precalculate_network_locations=True, barriers=None
     ):
         """Initialize the ODCostMatrixSolver class.
@@ -55,13 +57,17 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
             destinations (str, layer): Catalog path or layer for the input destinations
             network_data_source (str, layer): Catalog path, layer, or URL for the input network dataset
             travel_mode (str, travel mode): Travel mode object, name, or json string representation
-            output_od_lines (str): Catalog path to the output OD Lines feature class
             output_origins (str): Catalog path to the output Origins feature class
             output_destinations (str): Catalog path to the output Destinations feature class
             chunk_size (int): Maximum number of origins and destinations that can be in one chunk
             max_processes (int): Maximum number of allowed parallel processes
             time_units (str): String representation of time units
             distance_units (str): String representation of distance units
+            output_format (str): String representation of the output format
+            output_od_lines (str, optional): Catalog path to the output OD Lines feature class. Required if
+                output_format is "Feature class".
+            output_data_folder (str, optional): Catalog path to the output folder where CSV or Arrow files will be
+                stored. Required if output_format is "CSV files" or "Apache Arrow files".
             cutoff (float, optional): Impedance cutoff to limit the OD Cost Matrix solve. Interpreted in the time_units
                 if the travel mode is time-based. Interpreted in the distance-units if the travel mode is distance-
                 based. Interpreted in the impedance units if the travel mode is neither time- nor distance-based.
@@ -77,9 +83,6 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
         self.destinations = destinations
         self.network_data_source = network_data_source
         self.travel_mode = travel_mode
-        self.output_od_lines = output_od_lines
-        self.output_origins = output_origins
-        self.output_destinations = output_destinations
         self.chunk_size = chunk_size
         self.max_processes = max_processes
         self.time_units = time_units
@@ -88,6 +91,13 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
         self.num_destinations = num_destinations
         self.should_precalc_network_locations = precalculate_network_locations
         self.barriers = barriers if barriers else []
+
+        self.output_origins = output_origins
+        self.output_destinations = output_destinations
+        self.output_format_str = output_format
+        self.output_format = None  # Set during validation
+        self.output_od_lines = output_od_lines
+        self.output_data_folder = output_data_folder
 
         self.same_origins_destinations = bool(self.origins == self.destinations)
 
@@ -100,6 +110,33 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
 
     def _validate_inputs(self):
         """Validate the OD Cost Matrix inputs."""
+        # Validate the output format and ensure proper output location has been specified.
+        self.output_format = helpers.convert_output_format_str_to_enum(self.output_format_str)
+        if self.output_format is helpers.OutputFormat.featureclass:
+            if not self.output_od_lines:
+                err = f"Output OD Lines Feature Class is required when the output format is {self.output_format_str}."
+                arcpy.AddError(err)
+                raise ValueError(err)
+        else:
+            if not self.output_data_folder:
+                err = f"Output Folder is required when the output format is {self.output_format_str}."
+                arcpy.AddError(err)
+                raise ValueError(err)
+
+        # Validate that if the output format is Arrow:
+        # - The Pro version is >= 2.9. Arrow output was not supported in earlier versions of Pro.
+        # - The network data source is not a service. Arrow output from services solves is not yet supported.
+        if self.output_format is helpers.OutputFormat.arrow:
+            if helpers.arcgis_version < "2.9":
+                err = f"{self.output_format_str} output format is not available in versions of ArcGIS Pro prior to 2.9."
+                arcpy.AddError(err)
+                raise RuntimeError(err)
+            if self.is_service:
+                err = (f"{self.output_format_str} output format is not available when a service is used as the network "
+                       "data source.")
+                arcpy.AddError(err)
+                raise ValueError(err)
+
         # Validate input numerical values
         if self.chunk_size < 1:
             err = "Chunk size must be greater than 0."
@@ -386,7 +423,6 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
             os.path.join(cwd, "parallel_odcm.py"),
             "--origins", self.output_origins,
             "--destinations", self.output_destinations,
-            "--output-od-lines", self.output_od_lines,
             "--network-data-source", self.network_data_source,
             "--travel-mode", self.travel_mode,
             "--time-units", self.time_units,
@@ -394,7 +430,14 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
             "--max-origins", str(self.max_origins),
             "--max-destinations", str(self.max_destinations),
             "--max-processes", str(self.max_processes),
+            "--output-format", str(self.output_format_str)
         ]
+        # Include correct output location
+        if self.output_format is helpers.OutputFormat.featureclass:
+            odcm_inputs += ["--output-od-location", self.output_od_lines]
+        else:
+            odcm_inputs += ["--output-od-location", self.output_data_folder]
+        # Include other optional parameters if relevant
         if self.barriers:
             odcm_inputs += ["--barriers"]
             odcm_inputs += self.barriers
@@ -420,7 +463,7 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
                 if output:
                     msg_string = output.strip().decode()
                     helpers.parse_std_and_write_to_gp_ui(msg_string)
-                time.sleep(.5)
+                time.sleep(.1)
 
             # Once the process is finished, check if any additional errors were returned. Messages that came after the
             # last process.poll() above will still be in the queue here. This is especially important for detecting
@@ -469,11 +512,6 @@ def _run_from_command_line():
     help_string = "The full catalog path to the feature class containing the destinations."
     parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
 
-    # --output-od-lines parameter
-    help_string = "The catalog path to the output feature class that will contain the combined OD Cost Matrix results."
-    parser.add_argument(
-        "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
-
     # --output-origins parameter
     help_string = "The catalog path to the output feature class that will contain the updated origins."
     parser.add_argument(
@@ -517,6 +555,24 @@ def _run_from_command_line():
     help_string = "Maximum number parallel processes to use for the OD Cost Matrix solves."
     parser.add_argument(
         "-mp", "--max-processes", action="store", dest="max_processes", type=int, help=help_string, required=True)
+
+    # --output-format parameter
+    help_string = ("The desired format for the output OD Cost Matrix Lines results. "
+                   f"Choices: {', '.join(helpers.OUTPUT_FORMATS)}")
+    parser.add_argument(
+        "-of", "--output-format", action="store", dest="output_format", help=help_string, required=True)
+
+    # --output-od-lines parameter
+    help_string = ("The catalog path to the output feature class that will contain the combined OD Cost Matrix "
+                   "results. Applies only when output-format is 'Feature class'.")
+    parser.add_argument(
+        "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=False)
+
+    # --output-data-format parameter
+    help_string = ("The catalog path to the folder that will contain the OD Cost Matrix result files. "
+                   "Applies only when output-format is 'CSV files' or 'Apache Arrow files'.")
+    parser.add_argument(
+        "-odf", "--output-data-folder", action="store", dest="output_data_folder", help=help_string, required=False)
 
     # --cutoff parameter
     help_string = (

@@ -2,7 +2,7 @@
 
 This is a sample script users can modify to fit their specific needs.
 
-Copyright 2021 Esri
+Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -13,12 +13,20 @@ Copyright 2021 Esri
    See the License for the specific language governing permissions and
    limitations under the License.
 """
+import enum
 import arcpy
+
+arcgis_version = arcpy.GetInstallInfo()["Version"]
 
 # Set some shared global variables that can be referenced from the other scripts
 MSG_STR_SPLITTER = " | "
 DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
 TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
+OUTPUT_FORMATS = ["Feature class", "CSV files"]
+if arcgis_version >= "2.9":
+    # The ODCostMatrix solver object's toArrowTable method was added at Pro 2.9. Allow this output format only
+    # in software versions that support it.
+    OUTPUT_FORMATS.append("Apache Arrow files")
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 
 
@@ -74,6 +82,32 @@ def convert_distance_units_str_to_enum(distance_units):
         return arcpy.nax.DistanceUnits.NauticalMiles
     # If we got to this point, the input distance units were invalid.
     err = f"Invalid distance units: {distance_units}"
+    arcpy.AddError(err)
+    raise ValueError(err)
+
+
+class OutputFormat(enum.Enum):
+    """Enum defining the output format for the OD Cost Matrix results."""
+
+    featureclass = 1
+    csv = 2
+    arrow = 3
+
+
+def convert_output_format_str_to_enum(output_format):
+    """Convert a string representation of the desired output format to an enum.
+
+    Raises:
+        ValueError: If the string cannot be parsed as a valid arcpy.nax.DistanceUnits enum value.
+    """
+    if output_format.lower() == "feature class":
+        return OutputFormat.featureclass
+    if output_format.lower() == "csv files":
+        return OutputFormat.csv
+    if output_format.lower() == "apache arrow files":
+        return OutputFormat.arrow
+    # If we got to this point, the input distance units were invalid.
+    err = f"Invalid output format: {output_format}"
     arcpy.AddError(err)
     raise ValueError(err)
 

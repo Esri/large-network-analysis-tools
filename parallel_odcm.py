@@ -1,6 +1,7 @@
-"""Compute a large Origin Destination (OD) cost matrices by chunking the
-inputs, solving in parallel, and recombining the results into a single
-feature class.
+"""Compute a large Origin Destination (OD) cost matrix by chunking the
+inputs and solving in parallel. Write outputs into a single combined
+feature class, a collection of CSV files, or a collection of Apache
+Arrow files.
 
 This is a sample script users can modify to fit their specific needs.
 
@@ -11,7 +12,7 @@ within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
 
-Copyright 2021 Esri
+Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -33,6 +34,8 @@ import itertools
 import time
 import traceback
 import argparse
+import csv
+import pandas as pd
 
 import arcpy
 
@@ -40,6 +43,13 @@ import arcpy
 from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL
 
 import helpers
+
+if helpers.arcgis_version >= "2.9":
+    # The pyarrow module was not included in earlier versions of Pro, so do not attempt to import it.
+    # Tool validation prevents users from choosing the Arrow output format in older versions anyway,
+    # so this module will not be needed.
+    import pyarrow as pa
+    from pyarrow import fs
 
 arcpy.env.overwriteOutput = True
 
@@ -139,33 +149,36 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         Expected arguments:
         - origins
         - destinations
+        - output_format
+        - output_od_location
         - network_data_source
         - travel_mode
         - time_units
         - distance_units
         - cutoff
         - num_destinations
-        - output_folder
+        - scratch_folder
         - barriers
         """
         self.origins = kwargs["origins"]
         self.destinations = kwargs["destinations"]
+        self.output_format = kwargs["output_format"]
+        self.output_od_location = kwargs["output_od_location"]
         self.network_data_source = kwargs["network_data_source"]
         self.travel_mode = kwargs["travel_mode"]
         self.time_units = kwargs["time_units"]
         self.distance_units = kwargs["distance_units"]
         self.cutoff = kwargs["cutoff"]
         self.num_destinations = kwargs["num_destinations"]
-        self.output_folder = kwargs["output_folder"]
+        self.scratch_folder = kwargs["scratch_folder"]
         self.barriers = []
         if "barriers" in kwargs:
             self.barriers = kwargs["barriers"]
 
         # Create a job ID and a folder and scratch gdb for this job
         self.job_id = uuid.uuid4().hex
-        self.job_folder = os.path.join(self.output_folder, self.job_id)
+        self.job_folder = os.path.join(self.scratch_folder, self.job_id)
         os.mkdir(self.job_folder)
-        self.od_workspace = os.path.join(self.job_folder, "scratch.gdb")
 
         # Setup the class logger. Logs for each parallel process are not written to the console but instead to a
         # process-specific log file.
@@ -177,6 +190,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Set up other instance attributes
         self.is_service = helpers.is_nds_service(self.network_data_source)
         self.od_solver = None
+        self.solve_result = None
         self.time_attribute = ""
         self.distance_attribute = ""
         self.is_travel_mode_time_based = True
@@ -186,6 +200,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.input_destinations_layer = "InputDestinations" + self.job_id
         self.input_origins_layer_obj = None
         self.input_destinations_layer_obj = None
+
+        # Define fields to include in the output for CSV and Arrow modes
+        self.output_fields = ["OriginOID", "DestinationOID", "DestinationRank", "Total_Time", "Total_Distance"]
 
         # Create a network dataset layer
         self.nds_layer_name = "NetworkDatasetLayer"
@@ -210,6 +227,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.destinations_oid_field_name = desc_destinations.oidFieldName
         self.origins_fields = desc_origins.fields
         self.destinations_fields = desc_destinations.fields
+        self.orig_origin_oid_field = "Orig_Origin_OID"
+        self.orig_dest_oid_field = "Orig_Dest_OID"
 
     def _make_nds_layer(self):
         """Create a network dataset layer if one does not already exist."""
@@ -270,14 +289,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             origins_criteria (list): Origin ObjectID range to select from the input dataset
             destinations_criteria ([type]): Destination ObjectID range to select from the input dataset
         """
-        # Make output gdb
-        self.logger.debug("Creating output geodatabase for OD cost matrix analysis...")
-        run_gp_tool(
-            arcpy.management.CreateFileGDB,
-            [os.path.dirname(self.od_workspace), os.path.basename(self.od_workspace)],
-            log_to_use=self.logger
-        )
-
         # Select the origins and destinations to process
         self._select_inputs(origins_criteria, destinations_criteria)
         if not self.input_destinations_layer_obj:
@@ -290,17 +301,16 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the origins
         self.logger.debug("Loading origins...")
-        origin_oid_field = "Orig_Origin_OID"
         self.od_solver.addFields(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
-            [[origin_oid_field, "LONG"]]
+            [[self.orig_origin_oid_field, "LONG"]]
         )
         origins_field_mappings = self.od_solver.fieldMappings(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
             True  # Use network location fields
         )
         for fname in origins_field_mappings:
-            if fname == origin_oid_field:
+            if fname == self.orig_origin_oid_field:
                 origins_field_mappings[fname].mappedFieldName = self.origins_oid_field_name
             else:
                 origins_field_mappings[fname].mappedFieldName = fname
@@ -313,17 +323,16 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Load the destinations
         self.logger.debug("Loading destinations...")
-        dest_oid_field = "Orig_Dest_OID"
         self.od_solver.addFields(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
-            [[dest_oid_field, "LONG"]]
+            [[self.orig_dest_oid_field, "LONG"]]
         )
         destinations_field_mappings = self.od_solver.fieldMappings(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
             True  # Use network location fields
         )
         for fname in destinations_field_mappings:
-            if fname == dest_oid_field:
+            if fname == self.orig_dest_oid_field:
                 destinations_field_mappings[fname].mappedFieldName = self.destinations_oid_field_name
             else:
                 destinations_field_mappings[fname].mappedFieldName = fname
@@ -360,12 +369,12 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Solve the OD cost matrix analysis
         self.logger.debug("Solving OD cost matrix...")
         solve_start = time.time()
-        solve_result = self.od_solver.solve()
+        self.solve_result = self.od_solver.solve()
         solve_end = time.time()
         self.logger.debug(f"Solving OD cost matrix completed in {round(solve_end - solve_start, 3)} (seconds).")
 
         # Handle solve messages
-        solve_msgs = [msg[-1] for msg in solve_result.solverMessages(arcpy.nax.MessageSeverity.All)]
+        solve_msgs = [msg[-1] for msg in self.solve_result.solverMessages(arcpy.nax.MessageSeverity.All)]
         initial_num_msgs = len(solve_msgs)
         for msg in solve_msgs:
             self.logger.debug(msg)
@@ -383,28 +392,54 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
 
         # Update the result dictionary
         self.job_result["solveMessages"] = solve_msgs
-        if not solve_result.solveSucceeded:
+        if not self.solve_result.solveSucceeded:
             self.logger.debug("Solve failed.")
             return
         self.logger.debug("Solve succeeded.")
         self.job_result["solveSucceeded"] = True
 
-        # Export the OD Lines output to a feature class
-        output_od_lines = os.path.join(self.od_workspace, "output_od_lines")
+        # Save output
+        # Example: ODLines_O_1_1000_D_2001_3000.csv
+        out_filename = (f"ODLines_O_{origins_criteria[0]}_{origins_criteria[1]}_"
+                        f"D_{destinations_criteria[0]}_{destinations_criteria[1]}")
+        if self.output_format is helpers.OutputFormat.featureclass:
+            self._export_to_feature_class(out_filename)
+        elif self.output_format is helpers.OutputFormat.csv:
+            out_csv_file = os.path.join(self.output_od_location, f"{out_filename}.csv")
+            self._export_to_csv(out_csv_file)
+        elif self.output_format is helpers.OutputFormat.arrow:
+            out_arrow_file = os.path.join(self.output_od_location, f"{out_filename}.arrow")
+            self._export_to_arrow(out_arrow_file)
+
+        self.logger.debug("Finished calculating OD cost matrix.")
+
+    def _export_to_feature_class(self, out_fc_name):
+        """Export the OD Lines result to a feature class."""
+        # Make output gdb
+        self.logger.debug("Creating output geodatabase for OD cost matrix analysis...")
+        od_workspace = os.path.join(self.job_folder, "scratch.gdb")
+        run_gp_tool(
+            arcpy.management.CreateFileGDB,
+            [os.path.dirname(od_workspace), os.path.basename(od_workspace)],
+            log_to_use=self.logger
+        )
+
+        output_od_lines = os.path.join(od_workspace, out_fc_name)
         self.logger.debug(f"Exporting OD cost matrix Lines output to {output_od_lines}...")
-        solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, output_od_lines)
+        self.solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, output_od_lines)
         self.job_result["outputLines"] = output_od_lines
 
         # For services solve, export Origins and Destinations and properly populate OriginOID and DestinationOID fields
         # in the output Lines. Services do not preserve the original input OIDs, instead resetting from 1, unlike solves
         # using a local network dataset, so this extra post-processing step is necessary.
         if self.is_service:
-            output_origins = os.path.join(self.od_workspace, "output_od_origins")
+            output_origins = os.path.join(od_workspace, "output_od_origins")
             self.logger.debug(f"Exporting OD cost matrix Origins output to {output_origins}...")
-            solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Origins, output_origins)
-            output_destinations = os.path.join(self.od_workspace, "output_od_destinations")
+            self.solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Origins, output_origins)
+            output_destinations = os.path.join(od_workspace, "output_od_destinations")
             self.logger.debug(f"Exporting OD cost matrix Destinations output to {output_destinations}...")
-            solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Destinations, output_destinations)
+            self.solve_result.export(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Destinations, output_destinations)
             self.logger.debug("Updating values for OriginOID and DestinationOID fields...")
             lines_layer_name = "Out_Lines"
             origins_layer_name = "Out_Origins"
@@ -421,7 +456,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             run_gp_tool(
                 arcpy.management.CalculateField,
                 [lines_layer_name, f"{os.path.basename(output_od_lines)}.OriginOID",
-                 f"!{os.path.basename(output_origins)}.{origin_oid_field}!", "PYTHON3"]
+                 f"!{os.path.basename(output_origins)}.{self.orig_origin_oid_field}!", "PYTHON3"]
             )
             run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
             # Update DestinationOID values
@@ -432,11 +467,71 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             run_gp_tool(
                 arcpy.management.CalculateField,
                 [lines_layer_name, f"{os.path.basename(output_od_lines)}.DestinationOID",
-                 f"!{os.path.basename(output_destinations)}.{dest_oid_field}!", "PYTHON3"]
+                 f"!{os.path.basename(output_destinations)}.{self.orig_dest_oid_field}!", "PYTHON3"]
             )
             run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
 
-        self.logger.debug("Finished calculating OD cost matrix.")
+    def _export_to_csv(self, out_csv_file):
+        """Save the OD Lines result to a CSV file."""
+        self.logger.debug(f"Saving OD cost matrix Lines output to CSV as {out_csv_file}.")
+
+        # For services solve, properly populate OriginOID and DestinationOID fields in the output Lines. Services do
+        # not preserve the original input OIDs, instead resetting from 1, unlike solves using a local network dataset,
+        # so this extra post-processing step is necessary.
+        if self.is_service:
+            # Read the Lines output
+            with self.solve_result.searchCursor(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, self.output_fields
+            ) as cur:
+                od_df = pd.DataFrame(cur, columns=self.output_fields)
+            # Read the Origins output and transfer original OriginOID to Lines
+            origins_columns = ["ObjectID", self.orig_origin_oid_field]
+            with self.solve_result.searchCursor(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Origins, origins_columns
+            ) as cur:
+                origins_df = pd.DataFrame(cur, columns=origins_columns)
+            origins_df.set_index("ObjectID", inplace=True)
+            od_df = od_df.join(origins_df, "OriginOID")
+            del origins_df
+            # Read the Destinations output and transfer original DestinationOID to Lines
+            dest_columns = ["ObjectID", self.orig_dest_oid_field]
+            with self.solve_result.searchCursor(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Destinations, dest_columns
+            ) as cur:
+                dests_df = pd.DataFrame(cur, columns=dest_columns)
+            dests_df.set_index("ObjectID", inplace=True)
+            od_df = od_df.join(dests_df, "DestinationOID")
+            del dests_df
+            # Clean up and rename columns
+            od_df.drop(["OriginOID", "DestinationOID"], axis="columns", inplace=True)
+            od_df.rename(
+                columns={self.orig_origin_oid_field: "OriginOID", self.orig_dest_oid_field: "DestinationOID"},
+                inplace=True
+            )
+            # Write CSV file
+            od_df.to_csv(out_csv_file, index=False)
+
+        else:  # Local network dataset output
+            with open(out_csv_file, "w", newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(self.output_fields)
+                for row in self.solve_result.searchCursor(
+                    arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
+                    self.output_fields
+                ):
+                    writer.writerow(row)
+            
+        self.job_result["outputLines"] = out_csv_file
+
+    def _export_to_arrow(self, out_arrow_file):
+        """Save the OD Lines result to an Apache Arrow file."""
+        self.logger.debug(f"Saving OD cost matrix Lines output to Apache Arrow as {out_arrow_file}.")
+        self.solve_result.toArrowTable(
+            arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
+            self.output_fields,
+            out_arrow_file
+        )
+        self.job_result["outputLines"] = out_arrow_file
 
     def _hour_to_time_units(self):
         """Convert 1 hour to the user's specified time units.
@@ -584,11 +679,12 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         impedance = travel_mode.impedance
         time_attribute = travel_mode.timeAttributeName
         distance_attribute = travel_mode.distanceAttributeName
-        self.is_travel_mode_time_based = True if time_attribute == impedance else False
-        self.is_travel_mode_dist_based = True if distance_attribute == impedance else False
+        self.is_travel_mode_time_based = time_attribute == impedance
+        self.is_travel_mode_dist_based = distance_attribute == impedance
         # Determine which of the OD Lines output table fields contains the optimized cost values
         if not self.is_travel_mode_time_based and not self.is_travel_mode_dist_based:
             self.optimized_field_name = "Total_Other"
+            self.output_fields.append(self.optimized_field_name)
         elif self.is_travel_mode_time_based:
             self.optimized_field_name = "Total_Time"
         else:
@@ -635,8 +731,9 @@ class ParallelODCalculator():
     """Solves a large OD Cost Matrix by chunking the problem, solving in parallel, and combining results."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, destinations, network_data_source, travel_mode, output_od_lines, max_origins, max_destinations,
-        max_processes, time_units, distance_units, cutoff=None, num_destinations=None, barriers=None
+        self, origins, destinations, network_data_source, travel_mode, output_format, output_od_location,
+        max_origins, max_destinations, max_processes, time_units, distance_units,
+        cutoff=None, num_destinations=None, barriers=None
     ):
         """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
@@ -648,7 +745,9 @@ class ParallelODCalculator():
             destinations (str): Catalog path to destinations
             network_data_source (str): Network data source catalog path or URL
             travel_mode (str): String-based representation of a travel mode (name or JSON)
-            output_od_lines (str): Catalog path to the output OD Lines feature class to be created
+            output_format (str): String representation of the output format
+            output_od_location (str): Catalog path to the output feature class or folder where the OD Lines output will
+                be stored.
             max_origins (int): Maximum origins allowed in a chunk
             max_destinations (int): Maximum destinations allowed in a chunk
             max_processes (int): Maximum number of parallel processes allowed
@@ -665,6 +764,8 @@ class ParallelODCalculator():
         """
         time_units = helpers.convert_time_units_str_to_enum(time_units)
         distance_units = helpers.convert_distance_units_str_to_enum(distance_units)
+        self.output_format = helpers.convert_output_format_str_to_enum(output_format)
+        self.output_od_location = output_od_location
         if cutoff == "":
             cutoff = None
         if not barriers:
@@ -680,13 +781,20 @@ class ParallelODCalculator():
         LOGGER.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
         os.mkdir(self.scratch_folder)
 
+        # Output folder to store CSV or Arrow outputs
+        if self.output_format is not helpers.OutputFormat.featureclass:
+            if not os.path.exists(self.output_od_location):
+                os.mkdir(self.output_od_location)
+
         # Initialize the dictionary of inputs to send to each OD solve
         self.od_inputs = {
             "origins": origins,
             "destinations": destinations,
+            "output_format": self.output_format,
+            "output_od_location": self.output_od_location,
             "network_data_source": network_data_source,
             "travel_mode": travel_mode,
-            "output_folder": self.scratch_folder,
+            "scratch_folder": self.scratch_folder,
             "time_units": time_units,
             "distance_units": distance_units,
             "cutoff": cutoff,
@@ -694,19 +802,17 @@ class ParallelODCalculator():
             "barriers": barriers
         }
 
-        # Final combined output feature class
-        self.output_od_lines = output_od_lines
-        # List of intermediate output feature classes created by each process
-        self.od_line_fcs = []
+        # List of intermediate output OD Line files created by each process
+        self.od_line_files = []
 
         # Construct OID ranges for chunks of origins and destinations
-        origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
+        self.origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
         destination_ranges = self._get_oid_ranges_for_input(destinations, max_destinations)
 
         # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
-        self.ranges = itertools.product(origin_ranges, destination_ranges)
+        self.ranges = itertools.product(self.origin_ranges, destination_ranges)
         # Calculate the total number of jobs to use in logging
-        self.total_jobs = len(origin_ranges) * len(destination_ranges)
+        self.total_jobs = len(self.origin_ranges) * len(destination_ranges)
 
         self.optimized_cost_field = None
 
@@ -815,19 +921,26 @@ class ParallelODCalculator():
 
                 # Parse the results dictionary and store components for post-processing.
                 if result["solveSucceeded"]:
-                    self.od_line_fcs.append(result["outputLines"])
+                    self.od_line_files.append(result["outputLines"])
                 else:
                     LOGGER.warning(f"Solve failed for job id {result['jobId']}")
                     msgs = result["solveMessages"]
                     LOGGER.warning(msgs)
 
-        # Merge individual OD Lines feature classes into a single feature class
-        if self.od_line_fcs:
-            self._post_process_od_lines()
+        # Post-process outputs
+        if self.od_line_files:
+            LOGGER.info("Post-processing OD Cost Matrix results...")
+            self.od_line_files = sorted(self.od_line_files)
+            if self.output_format is helpers.OutputFormat.featureclass:
+                self._post_process_od_line_fcs()
+            elif self.output_format is helpers.OutputFormat.csv:
+                self._post_process_od_line_csvs()
+            elif self.output_format is helpers.OutputFormat.arrow:
+                self._post_process_od_line_arrow_files()
         else:
             LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
-        # Cleanup
+        # Clean up
         # Delete the job folders if the job succeeded
         if DELETE_INTERMEDIATE_OD_OUTPUTS:
             LOGGER.info("Deleting intermediate outputs...")
@@ -839,64 +952,160 @@ class ParallelODCalculator():
 
         LOGGER.info("Finished calculating OD Cost Matrices.")
 
-    def _post_process_od_lines(self):
+    def _post_process_od_line_fcs(self):
         """Merge and post-process the OD Lines calculated in each separate process.
 
-        Args:
-            out_fc (str): Catalog path of the output feature class to be created
+        Create an empty final output feature class and populate it from each of the intermediate OD Lines feature
+        classes. Do this instead of simply using the Merge tool in order to correctly calculate the DestinationRank
+        field and eliminate extra records when only the k closest destinations should be found.
+
+        For the case where we wanted to find only the k closest destinations for each origin, calculating the OD in
+        chunks means our combined output may have more than k destinations for each origin because each individual chunk
+        found the closest k for that chunk. We need to eliminate all extra rows beyond the first k.
+
+        Calculating the OD in chunks also means the DestinationRank field calculated by each chunk is not correct for
+        the entire analysis. DestinationRank refers to the rank within the chunk, not the overall rank. We need to
+        recalculate DestinationRank considering the entire dataset.
         """
-        LOGGER.info("Post-processing OD Cost Matrix results...")
+        # Create the final output feature class
+        desc = arcpy.Describe(self.od_line_files[0])
+        run_gp_tool(arcpy.management.CreateFeatureclass, [
+            os.path.dirname(self.output_od_location),
+            os.path.basename(self.output_od_location),
+            "POLYLINE",
+            self.od_line_files[0],  # template feature class to transfer full schema
+            "SAME_AS_TEMPLATE",
+            "SAME_AS_TEMPLATE",
+            desc.spatialReference
+        ])
 
-        # Merge all the individual OD Lines feature classes
-        LOGGER.debug("Merging OD Cost Matrix results...")
-        run_gp_tool(arcpy.management.Merge, [self.od_line_fcs, self.output_od_lines])
+        # Insert the rows from all the individual output feature classes into the final output
+        fields = ["SHAPE@"] + [f.name for f in desc.fields]
+        with arcpy.da.InsertCursor(self.output_od_location, fields) as cur:  # pylint: disable=no-member
+            # Handle each origin range separately to avoid pulling all results into memory at once
+            for origin_range in self.origin_ranges:
+                fcs_for_origin_range = [
+                    f for f in self.od_line_files if os.path.basename(f).startswith(
+                        f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
+                    )
+                ]
+                if not fcs_for_origin_range:
+                    # No records for this chunk of origins. Just move on to the next chunk of origins.
+                    continue
+                if len(fcs_for_origin_range) < 2:
+                    # All results for this chunk of origins are already in the same table, so
+                    # there is no need to post-process because the k closest have already been found, and the
+                    # DestinationRank field is already correct. Just insert the records directly into the final output
+                    # table.
+                    for row in arcpy.da.SearchCursor(fcs_for_origin_range[0], fields):  # pylint: disable=no-member
+                        cur.insertRow(row)
+                    continue
+                # If there are multiple feature classes to handle at once, we need to eliminate extra rows and
+                # properly update the DestinationRank field. To do this, read them into pandas.
+                fc_dfs = []
+                df_fields = ["Shape"] + fields[1:]
+                for fc in fcs_for_origin_range:
+                    with arcpy.da.SearchCursor(fc, fields) as cur2:  # pylint: disable=no-member
+                        fc_dfs.append(pd.DataFrame(cur2, columns=df_fields))
+                df = pd.concat(fc_dfs, ignore_index=True)
+                # Drop all but the k nearest rows for each OriginOID (if needed) and calculate DestinationRank
+                df = self._update_df_for_k_nearest_and_destination_rank(df)
+                # Write the pandas rows to the final output feature class
+                for row in df.itertuples(index=False, name=None):
+                    cur.insertRow(row)
 
+        LOGGER.info("Post-processing complete.")
+        LOGGER.info(f"Results written to {self.output_od_location}.")
+
+    def _post_process_od_line_csvs(self):
+        """Post-process CSV file outputs."""
         # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
         # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
         # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
         # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
         if self.num_destinations:
-            LOGGER.debug("Sorting merged OD Lines results...")
-            out_sorted_lines = arcpy.CreateUniqueName(
-                "ODLines_Sorted", arcpy.env.scratchGDB)  # pylint: disable=no-member
-            sort_fields = [["OriginOID", "ASCENDING"], [self.optimized_cost_field, "ASCENDING"]]
-            run_gp_tool(arcpy.management.Sort, [self.output_od_lines, out_sorted_lines, sort_fields])
-            desc = arcpy.Describe(out_sorted_lines)
-            # Delete the original output OD lines feature class and re-create it from scratch with the same schema.
-            run_gp_tool(arcpy.management.Delete, [[self.output_od_lines]])
-            run_gp_tool(arcpy.management.CreateFeatureclass, [
-                os.path.dirname(self.output_od_lines),
-                os.path.basename(self.output_od_lines),
-                "POLYLINE",
-                out_sorted_lines,  # template feature class to transfer full schema
-                "SAME_AS_TEMPLATE",
-                "SAME_AS_TEMPLATE",
-                desc.spatialReference
-            ])
-            # Loop through the sorted feature class and insert only the first k into the final output
-            field_names = ["OriginOID", "SHAPE@"] + [f.name for f in desc.fields if f.name != "OriginOID"]
-            with arcpy.da.InsertCursor(self.output_od_lines, field_names) as cur:  # pylint: disable=no-member
-                current_origin_id = None
-                count = 0
-                for row in arcpy.da.SearchCursor(out_sorted_lines, field_names):  # pylint: disable=no-member
-                    origin_id = row[0]
-                    if origin_id != current_origin_id:
-                        # Starting a fresh origin ID
-                        current_origin_id = origin_id
-                        count = 0
-                    count += 1
-                    if count > self.num_destinations:
-                        # Skip this row because we have exceeded the number we want to keep for this origin
-                        continue
-                    # If we got this far, we want to keep this row.
-                    cur.insertRow(row)
+            # Handle each origin range separately to avoid pulling all results into memory at once
+            for origin_range in self.origin_ranges:
+                csvs_for_origin_range = [
+                    f for f in self.od_line_files if os.path.basename(f).startswith(
+                        f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
+                    )
+                ]
+                if len(csvs_for_origin_range) < 2:
+                    # Either there were no results for this chunk, or all results are already in the same table, so
+                    # there is no need to post-process because the k closest have already been found.
+                    continue
 
-            # Clean up intermediate outputs
-            LOGGER.debug("Deleting intermediate post-processing outputs...")
-            run_gp_tool(arcpy.management.Delete, [[out_sorted_lines]])
+                # Read the csv files into a pandas dataframe for easy sorting
+                df = pd.concat(map(pd.read_csv, csvs_for_origin_range), ignore_index=True)
+                # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
+                df = self._update_df_for_k_nearest_and_destination_rank(df)
 
-        LOGGER.info("Post-processing complete.")
-        LOGGER.info(f"Results written to {self.output_od_lines}.")
+                # Write the updated CSV file and delete the originals
+                out_csv = os.path.join(self.output_od_location, f"ODLines_O_{origin_range[0]}_{origin_range[1]}.csv")
+                df.to_csv(out_csv, index=False)
+                for csv_file in csvs_for_origin_range:
+                    os.remove(csv_file)
+
+    def _post_process_od_line_arrow_files(self):
+        """Post-process Arrow file outputs."""
+        # If we wanted to find only the k closest destinations for each origin, we have to do additional post-
+        # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
+        # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
+        # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
+        if self.num_destinations:
+            # Handle each origin range separately to avoid pulling all results into memory at once
+            for origin_range in self.origin_ranges:
+                files_for_origin_range = [
+                    f for f in self.od_line_files if os.path.basename(f).startswith(
+                        f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
+                    )
+                ]
+                if len(files_for_origin_range) < 2:
+                    # Either there were no results for this chunk, or all results are already in the same table, so
+                    # there is no need to post-process because the k closest have already been found.
+                    continue
+
+                # Read the Arrow files into a pandas dataframe for easy sorting
+                # Note: An Arrow dataset could reasonably be used here, along with native Arrow table
+                # manipulations, instead of reading the files into pandas dataframes. However, the pyarrow
+                # version included in ArcGIS Pro (as of 2.9) does not support the new dataset option and
+                # other useful newer Arrow features. Additionally, using pandas allows us to share code
+                # with the CSV post-processing.
+                arrow_dfs = []
+                for arrow_file in files_for_origin_range:
+                    with pa.memory_map(arrow_file, 'r') as source:
+                        batch_reader = pa.ipc.RecordBatchFileReader(source)
+                        arrow_dfs.append(batch_reader.read_all().to_pandas(split_blocks=True))
+                df = pd.concat(arrow_dfs, ignore_index=True)
+
+                # Drop all but the k nearest rows for each OriginOID and calculate DestinationRank
+                df = self._update_df_for_k_nearest_and_destination_rank(df)
+
+                # Write the updated Arrow file and delete the originals
+                table = pa.Table.from_pandas(df)
+                out_file = os.path.join(self.output_od_location, f"ODLines_O_{origin_range[0]}_{origin_range[1]}.arrow")
+                local = fs.LocalFileSystem()
+                with local.open_output_stream(out_file) as f:
+                    with pa.RecordBatchFileWriter(f, table.schema) as writer:
+                        writer.write_table(table)
+                del df
+                del table
+                del arrow_dfs
+                del batch_reader
+                for arrow_file in files_for_origin_range:
+                    os.remove(arrow_file)
+
+    def _update_df_for_k_nearest_and_destination_rank(self, df):
+        """Drop all but the k nearest records for each Origin from the dataframe and calculate DestinationRank."""
+        # Sort according to OriginOID and cost field
+        df.sort_values(["OriginOID", self.optimized_cost_field], inplace=True)
+        # Keep only the first k records for each OriginOID
+        if self.num_destinations:
+            df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
+        # Properly calculate the DestinationRank field
+        df["DestinationRank"] = df.groupby("OriginOID").cumcount() + 1
+        return df
 
 
 def launch_parallel_od():
@@ -921,10 +1130,16 @@ def launch_parallel_od():
     help_string = "The full catalog path to the feature class containing the destinations."
     parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
 
-    # --output-od-lines parameter
-    help_string = "The catalog path to the output feature class that will contain the combined OD Cost Matrix results."
+    # --output-format parameter
+    help_string = ("The desired format for the output OD Cost Matrix Lines results. "
+                   f"Choices: {', '.join(helpers.OUTPUT_FORMATS)}")
     parser.add_argument(
-        "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=True)
+        "-of", "--output-format", action="store", dest="output_format", help=help_string, required=True)
+
+    # ----output-od-location parameter
+    help_string = "The catalog path to the output feature class or folder that will contain the OD Cost Matrix results."
+    parser.add_argument(
+        "-ol", "--output-od-location", action="store", dest="output_od_location", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
