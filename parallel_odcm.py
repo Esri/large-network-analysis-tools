@@ -204,11 +204,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Define fields to include in the output for CSV and Arrow modes
         self.output_fields = ["OriginOID", "DestinationOID", "DestinationRank", "Total_Time", "Total_Distance"]
 
-        # Create a network dataset layer
-        self.nds_layer_name = "NetworkDatasetLayer"
+        # Create a network dataset layer if needed
         if not self.is_service:
             self._make_nds_layer()
-            self.network_data_source = self.nds_layer_name
 
         # Prepare a dictionary to store info about the analysis results
         self.job_result = {
@@ -234,15 +232,20 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         """Create a network dataset layer if one does not already exist."""
         if self.is_service:
             return
-        if arcpy.Exists(self.nds_layer_name):
-            self.logger.debug(f"Using existing network dataset layer: {self.nds_layer_name}")
+        nds_layer_name = os.path.basename(self.network_data_source)
+        if arcpy.Exists(nds_layer_name):
+            # The network dataset layer already exists in this process, so we can re-use it without having to spend
+            # time re-opening the network dataset and making a fresh layer.
+            self.logger.debug(f"Using existing network dataset layer: {nds_layer_name}")
         else:
+            # The network dataset layer does not exist in this process, so create the layer.
             self.logger.debug("Creating network dataset layer...")
             run_gp_tool(
                 arcpy.na.MakeNetworkDatasetLayer,
-                [self.network_data_source, self.nds_layer_name],
+                [self.network_data_source, nds_layer_name],
                 log_to_use=self.logger
             )
+        self.network_data_source = nds_layer_name
 
     def initialize_od_solver(self):
         """Initialize an OD solver object and set properties."""
