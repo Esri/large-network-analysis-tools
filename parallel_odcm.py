@@ -869,6 +869,11 @@ class ParallelODCalculator():
         finally:
             if odcm:
                 LOGGER.debug("Deleting temporary test OD Cost Matrix job folder...")
+                # Close logging
+                for handler in odcm.logger.handlers:
+                    handler.close()
+                    odcm.logger.removeHandler(handler)
+                # Delete output folder
                 shutil.rmtree(odcm.job_result["jobFolder"], ignore_errors=True)
                 del odcm
 
