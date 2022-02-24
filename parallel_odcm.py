@@ -204,11 +204,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Define fields to include in the output for CSV and Arrow modes
         self.output_fields = ["OriginOID", "DestinationOID", "DestinationRank", "Total_Time", "Total_Distance"]
 
-        # Create a network dataset layer
-        self.nds_layer_name = "NetworkDatasetLayer"
+        # Create a network dataset layer if needed
         if not self.is_service:
             self._make_nds_layer()
-            self.network_data_source = self.nds_layer_name
 
         # Prepare a dictionary to store info about the analysis results
         self.job_result = {
@@ -234,15 +232,20 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         """Create a network dataset layer if one does not already exist."""
         if self.is_service:
             return
-        if arcpy.Exists(self.nds_layer_name):
-            self.logger.debug(f"Using existing network dataset layer: {self.nds_layer_name}")
+        nds_layer_name = os.path.basename(self.network_data_source)
+        if arcpy.Exists(nds_layer_name):
+            # The network dataset layer already exists in this process, so we can re-use it without having to spend
+            # time re-opening the network dataset and making a fresh layer.
+            self.logger.debug(f"Using existing network dataset layer: {nds_layer_name}")
         else:
+            # The network dataset layer does not exist in this process, so create the layer.
             self.logger.debug("Creating network dataset layer...")
             run_gp_tool(
                 arcpy.na.MakeNetworkDatasetLayer,
-                [self.network_data_source, self.nds_layer_name],
+                [self.network_data_source, nds_layer_name],
                 log_to_use=self.logger
             )
+        self.network_data_source = nds_layer_name
 
     def initialize_od_solver(self):
         """Initialize an OD solver object and set properties."""
@@ -268,16 +271,25 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
                 continue
             try:
                 setattr(self.od_solver, prop, OD_PROPS[prop])
+                if hasattr(OD_PROPS[prop], "name"):
+                    self.logger.debug(f"{prop}: {OD_PROPS[prop].name}")
+                else:
+                    self.logger.debug(f"{prop}: {OD_PROPS[prop]}")
             except Exception as ex:  # pylint: disable=broad-except
                 self.logger.warning(f"Failed to set property {prop} from OD config file. Default will be used instead.")
                 self.logger.warning(str(ex))
         # Set properties explicitly specified in the tool UI as arguments
         self.logger.debug("Setting OD Cost Matrix analysis properties specified tool inputs...")
         self.od_solver.travelMode = self.travel_mode
+        self.logger.debug(f"travelMode: {self.travel_mode}")
         self.od_solver.timeUnits = self.time_units
+        self.logger.debug(f"timeUnits: {self.time_units}")
         self.od_solver.distanceUnits = self.distance_units
+        self.logger.debug(f"distanceUnits: {self.distance_units}")
         self.od_solver.defaultDestinationCount = self.num_destinations
+        self.logger.debug(f"defaultDestinationCount: {self.num_destinations}")
         self.od_solver.defaultImpedanceCutoff = self.cutoff
+        self.logger.debug(f"defaultImpedanceCutoff: {self.cutoff}")
 
         # Determine if the travel mode has impedance units that are time-based, distance-based, or other.
         self._determine_if_travel_mode_time_based()
@@ -416,7 +428,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     def _export_to_feature_class(self, out_fc_name):
         """Export the OD Lines result to a feature class."""
         # Make output gdb
-        self.logger.debug("Creating output geodatabase for OD cost matrix analysis...")
+        self.logger.debug("Creating output geodatabase for OD cost matrix results...")
         od_workspace = os.path.join(self.job_folder, "scratch.gdb")
         run_gp_tool(
             arcpy.management.CreateFileGDB,
@@ -520,7 +532,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
                     self.output_fields
                 ):
                     writer.writerow(row)
-            
+
         self.job_result["outputLines"] = out_csv_file
 
     def _export_to_arrow(self, out_arrow_file):
@@ -600,6 +612,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         cutoff_dist = self.cutoff * max_speed
         # Add a 5% margin to be on the safe side
         cutoff_dist = cutoff_dist + (0.05 * cutoff_dist)
+        self.logger.debug((
+            f"Time cutoff {self.cutoff} {self.time_units.name} converted to distance: "
+            f"{cutoff_dist} {self.distance_units.name}"
+        ))
         return cutoff_dist
 
     def _select_inputs(self, origins_criteria, destinations_criteria):
@@ -615,11 +631,14 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             f"{self.origins_oid_field_name} >= {origins_criteria[0]} "
             f"And {self.origins_oid_field_name} <= {origins_criteria[1]}"
         )
+        self.logger.debug(f"Origins where clause: {origins_where_clause}")
         self.input_origins_layer_obj = run_gp_tool(
             arcpy.management.MakeFeatureLayer,
             [self.origins, self.input_origins_layer, origins_where_clause],
             log_to_use=self.logger
         ).getOutput(0)
+        num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
+        self.logger.debug(f"Number of origins selected: {num_origins}")
 
         # Select the destinations with ObjectIDs in this range
         self.logger.debug("Selecting destinations for this chunk...")
@@ -627,11 +646,14 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             f"{self.destinations_oid_field_name} >= {destinations_criteria[0]} "
             f"And {self.destinations_oid_field_name} <= {destinations_criteria[1]} "
         )
+        self.logger.debug(f"Destinations where clause: {destinations_where_clause}")
         self.input_destinations_layer_obj = run_gp_tool(
             arcpy.management.MakeFeatureLayer,
             [self.destinations, self.input_destinations_layer, destinations_where_clause],
             log_to_use=self.logger
         ).getOutput(0)
+        num_destinations = int(arcpy.management.GetCount(self.input_destinations_layer_obj).getOutput(0))
+        self.logger.debug(f"Number of destinations selected: {num_destinations}")
 
         # Eliminate irrelevant destinations in this chunk if possible by selecting only those that fall within a
         # reasonable straight-line distance cutoff. The straight-line distance will always be >= the network distance,
@@ -670,6 +692,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             self.logger.debug(msg)
             self.job_result["solveMessages"] = msg
             return
+        num_destinations = int(arcpy.management.GetCount(self.input_destinations_layer_obj).getOutput(0))
+        self.logger.debug(f"Number of destinations selected: {num_destinations}")
 
     def _determine_if_travel_mode_time_based(self):
         """Determine if the travel mode uses a time-based impedance attribute."""
@@ -845,6 +869,11 @@ class ParallelODCalculator():
         finally:
             if odcm:
                 LOGGER.debug("Deleting temporary test OD Cost Matrix job folder...")
+                # Close logging
+                for handler in odcm.logger.handlers:
+                    handler.close()
+                    odcm.logger.removeHandler(handler)
+                # Delete output folder
                 shutil.rmtree(odcm.job_result["jobFolder"], ignore_errors=True)
                 del odcm
 
@@ -923,9 +952,13 @@ class ParallelODCalculator():
                 if result["solveSucceeded"]:
                     self.od_line_files.append(result["outputLines"])
                 else:
-                    LOGGER.warning(f"Solve failed for job id {result['jobId']}")
-                    msgs = result["solveMessages"]
-                    LOGGER.warning(msgs)
+                    # Typically, a solve fails because no destinations were found for any of the origins in the chunk,
+                    # and this is a perfectly legitimate failure. It is not an error. However, they may be other, less
+                    # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
+                    # mode only in case the user is having problems. The user can also check the individual OD log
+                    # files.
+                    LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
+                    LOGGER.debug(result["solveMessages"])
 
         # Post-process outputs
         if self.od_line_files:

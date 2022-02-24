@@ -39,6 +39,9 @@ def is_nds_service(network_data_source):
     Returns:
         bool: True if the network data source is a service URL. False otherwise.
     """
+    if not isinstance(network_data_source, str):
+        # Probably a network dataset layer
+        return False
     return bool(network_data_source.startswith("http"))
 
 

@@ -37,11 +37,11 @@ arcpy.env.overwriteOutput = True
 class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too-few-public-methods
     """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
-    This class preprocesses and validate inputs and then spins up a subprocess to do the actual OD Cost Matrix
+    This class preprocesses and validates inputs and then spins up a subprocess to do the actual OD Cost Matrix
     calculations. This is necessary because the a script tool running in the ArcGIS Pro UI cannot directly call
     multiprocessing using concurrent.futures. We must spin up a subprocess, and the subprocess must spawn parallel
     processes for the calculations. Thus, this class does all the pre-processing, passes inputs to the subprocess, and
-    handles messages returned by the subprocess. The subprocess actually does the calculations.
+    handles messages returned by the subprocess. The subprocess, parallel_odcm.py, actually does the calculations.
     """
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments

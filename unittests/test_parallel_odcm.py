@@ -38,7 +38,7 @@ if helpers.arcgis_version >= "2.9":
 
 
 class TestParallelODCM(unittest.TestCase):
-    """Test cases for the odcm module."""
+    """Test cases for the parallel_odcm module."""
 
     @classmethod
     def setUpClass(self):  # pylint: disable=bad-classmethod-argument
