@@ -952,9 +952,13 @@ class ParallelODCalculator():
                 if result["solveSucceeded"]:
                     self.od_line_files.append(result["outputLines"])
                 else:
-                    LOGGER.warning(f"Solve failed for job id {result['jobId']}")
-                    msgs = result["solveMessages"]
-                    LOGGER.warning(msgs)
+                    # Typically, a solve fails because no destinations were found for any of the origins in the chunk,
+                    # and this is a perfectly legitimate failure. It is not an error. However, they may be other, less
+                    # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
+                    # mode only in case the user is having problems. The user can also check the individual OD log
+                    # files.
+                    LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
+                    LOGGER.debug(result["solveMessages"])
 
         # Post-process outputs
         if self.od_line_files:
