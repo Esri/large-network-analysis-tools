@@ -310,6 +310,10 @@ class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too
         arcpy.AddMessage(f"Spatially sorting input dataset {input_features}...")
 
         # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
+        # Note: This can be implemented in a simpler way in ArcGIS Pro 2.9 and later because the Sort tool was
+        # enhanced to include an ORIG_FID field in the output tracking the original ObjectID. However, since we want
+        # this code sample to be compatible with older versions of ArcGIS Pro, this more complicated implementation of
+        # ObjectID field tracking has been maintained.
         # Note that if the original input was a shapefile, these IDs will likely be wrong because copying the original
         # input to the output geodatabase will have altered the original ObjectIDs.
         # Consequently, don't use shapefiles as inputs.
