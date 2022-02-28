@@ -751,7 +751,7 @@ def solve_od_cost_matrix(inputs, chunk):
     return odcm.job_result
 
 
-class ParallelODCalculator():
+class ParallelODCalculator:
     """Solves a large OD Cost Matrix by chunking the problem, solving in parallel, and combining results."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments

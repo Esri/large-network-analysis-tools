@@ -34,7 +34,7 @@ from od_config import OD_PROPS  # Import OD Cost Matrix settings from config fil
 arcpy.env.overwriteOutput = True
 
 
-class ODCostMatrixSolver():  # pylint: disable=too-many-instance-attributes, too-few-public-methods
+class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-few-public-methods
     """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
     This class preprocesses and validates inputs and then spins up a subprocess to do the actual OD Cost Matrix
