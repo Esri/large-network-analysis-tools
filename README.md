@@ -96,7 +96,8 @@ Why do we have both solve_large_odcm.py and parallel_odcm.py? Why do we call par
 
 * [OD Cost Matrix tutorial](https://pro.arcgis.com/en/pro-app/help/analysis/networks/od-cost-matrix-tutorial.htm)
 * [Network Analyst arcpy.nax python module documentation](https://pro.arcgis.com/en/pro-app/arcpy/network-analyst/what-is-the-network-analyst-module.htm)
-* [Video presentation about solving large problems from DevSummit 2020](https://youtu.be/9PI7HIm1y8U)
+* [Video presentation about solving large problems from DevSummit 2021](https://www.esri.com/videos/watch?videoid=iD79ckvczlE)
+* [Network Analyst code samples, presentations, and other resources](https://esri.github.io/network-analyst-resources/ )
 
 ## Issues
 
