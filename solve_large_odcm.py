@@ -241,7 +241,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             odcm.distanceUnits = distance_units
             odcm.defaultImpedanceCutoff = self.cutoff
             odcm.defaultDestinationCount = self.num_destinations
-            odcm.timeOfDay = datetime.strptime(self.time_of_day, helpers.DATETIME_FORMAT)
+            odcm.timeOfDay = datetime.datetime.strptime(self.time_of_day, helpers.DATETIME_FORMAT)
         except Exception:
             arcpy.AddError("Invalid OD Cost Matrix settings.")
             errs = traceback.format_exc().splitlines()

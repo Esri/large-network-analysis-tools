@@ -805,7 +805,7 @@ class ParallelODCalculator:
         if not time_of_day:
             self.time_of_day = None
         else:
-            self.time_of_day = datetime.strptime(time_of_day, helpers.DATETIME_FORMAT)
+            self.time_of_day = datetime.datetime.strptime(time_of_day, helpers.DATETIME_FORMAT)
 
         # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
         unique_id = uuid.uuid4().hex
