@@ -45,6 +45,7 @@ class TestSolveLargeODCM(unittest.TestCase):
         self.local_tm_dist = "Driving Distance"
         self.portal_nd = portal_credentials.PORTAL_URL
         self.portal_tm = portal_credentials.PORTAL_TRAVEL_MODE
+        self.time_of_day_str = "20220329 16:45"
 
         arcpy.SignInToPortal(self.portal_nd, portal_credentials.PORTAL_USERNAME, portal_credentials.PORTAL_PASSWORD)
 
@@ -76,6 +77,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "output_data_folder": None,
             "cutoff": 2,
             "num_destinations": 1,
+            "time_of_day": None,
             "precalculate_network_locations": True,
             "barriers": [self.barriers]
         }
@@ -96,6 +98,8 @@ class TestSolveLargeODCM(unittest.TestCase):
             ("barriers", [os.path.join(self.sf_gdb, "Analysis", "DoesNotExist")], ValueError),
             ("network_data_source", os.path.join(self.sf_gdb, "Transportation", "DoesNotExist"), ValueError),
             ("travel_mode", "BadTM", RuntimeError),
+            ("time_of_day", "3/29/2022 4:45 PM", ValueError),
+            ("time_of_day", "BadDateTime", ValueError)
         ]
         for invalid_input in invalid_inputs:
             property_name = invalid_input[0]
@@ -252,6 +256,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "output_data_folder": out_folder,
             "cutoff": 2,
             "num_destinations": 2,
+            "time_of_day": self.time_of_day_str,
             "precalculate_network_locations": True,
             "barriers": ""
         }
@@ -282,6 +287,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "output_data_folder": out_folder,
             "cutoff": 2,
             "num_destinations": 2,
+            "time_of_day": None,
             "precalculate_network_locations": True,
             "barriers": ""
         }
@@ -313,6 +319,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "--max-processes", "4",
             "--cutoff", "10",
             "--num-destinations", "1",
+            "--time-of-day", self.time_of_day_str,
             "--precalculate-network-locations", "true",
             "--barriers", self.barriers
         ]
