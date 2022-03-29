@@ -242,7 +242,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         # Validate time and distance units
         time_units = helpers.convert_time_units_str_to_enum(self.time_units)
         distance_units = helpers.convert_distance_units_str_to_enum(self.distance_units)
-        # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties
+        # Create a dummy ODCostMatrix object and set properties
         try:
             odcm = arcpy.nax.OriginDestinationCostMatrix(self.network_data_source)
             odcm.travelMode = self.travel_mode

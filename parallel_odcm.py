@@ -387,7 +387,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         solve_start = time.time()
         self.solve_result = self.od_solver.solve()
         solve_end = time.time()
-        self.logger.debug(f"Solving OD cost matrix completed in {round(solve_end - solve_start, 3)} (seconds).")
+        self.logger.debug(f"Solving OD cost matrix completed in {round(solve_end - solve_start, 3)} seconds.")
 
         # Handle solve messages
         solve_msgs = [msg[-1] for msg in self.solve_result.solverMessages(arcpy.nax.MessageSeverity.All)]
