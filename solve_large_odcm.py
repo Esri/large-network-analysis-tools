@@ -91,6 +91,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         self.cutoff = cutoff
         self.num_destinations = num_destinations
         self.time_of_day = time_of_day
+        self.time_of_day_dt = None  # Set during validation
         self.should_precalc_network_locations = precalculate_network_locations
         self.barriers = barriers if barriers else []
 
@@ -156,6 +157,14 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             err = "Number of destinations to find must be greater than 0."
             arcpy.AddError(err)
             raise ValueError(err)
+
+        # Validate time of day
+        if self.time_of_day:
+            try:
+                self.time_of_day_dt = datetime.datetime.strptime(self.time_of_day, helpers.DATETIME_FORMAT)
+            except ValueError as ex:
+                arcpy.AddError(f"Could not convert input time of day to datetime: {str(ex)}")
+                raise ex
 
         # Validate origins, destinations, and barriers
         self._validate_input_feature_class(self.origins)
@@ -241,7 +250,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             odcm.distanceUnits = distance_units
             odcm.defaultImpedanceCutoff = self.cutoff
             odcm.defaultDestinationCount = self.num_destinations
-            odcm.timeOfDay = datetime.datetime.strptime(self.time_of_day, helpers.DATETIME_FORMAT)
+            odcm.timeOfDay = self.time_of_day_dt
         except Exception:
             arcpy.AddError("Invalid OD Cost Matrix settings.")
             errs = traceback.format_exc().splitlines()
