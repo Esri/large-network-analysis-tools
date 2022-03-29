@@ -49,7 +49,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, origins, assigned_dest_field, destinations, dest_id_field, network_data_source, travel_mode,
         time_units, distance_units, chunk_size, max_processes,
-        output_routes, output_destinations,
+        output_routes, output_origins, output_destinations,
         time_of_day=None, barriers=None, precalculate_network_locations=True
     ):
         """Initialize the RoutePairSolver class.
@@ -98,6 +98,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.should_precalc_network_locations = precalculate_network_locations
 
         self.output_routes = output_routes
+        self.output_origins = output_origins
         self.output_destinations = output_destinations
 
         self.is_service = helpers.is_nds_service(self.network_data_source)
@@ -276,43 +277,48 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                 arcpy.AddMessage(
                     f"Max OD pairs per chunk has been updated to {self.chunk_size} to accommodate service limits.")
 
-    def _precalculate_network_locations(self, input_features):
-        """Precalculate network location fields if possible for faster loading and solving later.
+    def _sort_origins_by_assigned_destination(self):
+        """Sort the origins by the assigned destination field.
 
-        Cannot be used if the network data source is a service. Uses the searchTolerance, searchToleranceUnits, and
-        searchQuery properties set in the OD config file.
-
-        Args:
-            input_features (feature class catalog path): Feature class to calculate network locations for
-            network_data_source (network dataset catalog path): Network dataset to use to calculate locations
-            travel_mode (travel mode): Travel mode name, object, or json representation to use when calculating
-            locations.
+        Also adds a field called "OriginOID" to the input feature class to preserve the original OID values.
         """
-        if self.is_service:
-            arcpy.AddMessage(
-                "Skipping precalculating network location fields because the network data source is a service.")
-            return
+        arcpy.AddMessage(f"Spatially sorting input dataset {self.output_origins}...")
 
-        arcpy.AddMessage(f"Precalculating network location fields for {input_features}...")
+        # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
+        # Note: This can be implemented in a simpler way in ArcGIS Pro 2.9 and later because the Sort tool was
+        # enhanced to include an ORIG_FID field in the output tracking the original ObjectID. However, since we want
+        # this code sample to be compatible with older versions of ArcGIS Pro, this more complicated implementation of
+        # ObjectID field tracking has been maintained.
+        # Note that if the original input was a shapefile, these IDs will likely be wrong because copying the original
+        # input to the output geodatabase will have altered the original ObjectIDs.
+        # Consequently, don't use shapefiles as inputs.
+        desc = arcpy.Describe(self.output_origins)
+        tracked_oid_name = "OriginOID"
+        if tracked_oid_name in [f.name for f in desc.fields]:
+            arcpy.management.DeleteField(self.output_origins, tracked_oid_name)
+        arcpy.management.AddField(self.output_origins, tracked_oid_name, "LONG")
+        arcpy.management.CalculateField(self.output_origins, tracked_oid_name, f"!{desc.oidFieldName}!")
 
-        # Get location settings from config file if present
-        search_tolerance = None
-        if "searchTolerance" in OD_PROPS and "searchToleranceUnits" in OD_PROPS:
-            search_tolerance = f"{OD_PROPS['searchTolerance']} {OD_PROPS['searchToleranceUnits'].name}"
-        search_query = OD_PROPS.get("search_query", None)
+        # Make a temporary copy of the inputs so the Sort tool can write its output to the self.output_origins path,
+        # which is the ultimate desired location
+        temp_inputs = arcpy.CreateUniqueName("TempODInputs", arcpy.env.scratchGDB)  # pylint:disable = no-member
+        arcpy.management.Copy(self.output_origins, temp_inputs)
 
-        # Calculate network location fields if network data source is local
-        arcpy.na.CalculateLocations(
-            input_features, self.network_data_source,
-            search_tolerance=search_tolerance,
-            search_query=search_query,
-            travel_mode=self.travel_mode
-        )
+        # Sort input features
+        arcpy.management.Sort(temp_inputs, self.output_origins, [[self.assigned_dest_field, "ASCENDING"]])
+
+        # Clean up. Delete temporary copy of inputs
+        arcpy.management.Delete([temp_inputs])
 
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
         # Copy Destinations to output
-        arcpy.AddMessage("Copying input destinations to outputs...")
+        arcpy.AddMessage("Copying input origins and destinations to outputs...")
+        arcpy.conversion.FeatureClassToFeatureClass(
+            self.origins,
+            os.path.dirname(self.output_origins),
+            os.path.basename(self.output_origins)
+        )
         arcpy.conversion.FeatureClassToFeatureClass(
             self.destinations,
             os.path.dirname(self.output_destinations),
