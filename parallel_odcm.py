@@ -32,6 +32,7 @@ import logging
 import shutil
 import itertools
 import time
+import datetime
 import traceback
 import argparse
 import csv
@@ -170,6 +171,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.distance_units = kwargs["distance_units"]
         self.cutoff = kwargs["cutoff"]
         self.num_destinations = kwargs["num_destinations"]
+        self.time_of_day = kwargs["time_of_day"]
         self.scratch_folder = kwargs["scratch_folder"]
         self.barriers = []
         if "barriers" in kwargs:
@@ -290,6 +292,8 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.logger.debug(f"defaultDestinationCount: {self.num_destinations}")
         self.od_solver.defaultImpedanceCutoff = self.cutoff
         self.logger.debug(f"defaultImpedanceCutoff: {self.cutoff}")
+        self.od_solver.timeOfDay = self.time_of_day
+        self.logger.debug(f"timeOfDay: {self.time_of_day}")
 
         # Determine if the travel mode has impedance units that are time-based, distance-based, or other.
         self._determine_if_travel_mode_time_based()
@@ -757,7 +761,7 @@ class ParallelODCalculator:
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, origins, destinations, network_data_source, travel_mode, output_format, output_od_location,
         max_origins, max_destinations, max_processes, time_units, distance_units,
-        cutoff=None, num_destinations=None, barriers=None
+        cutoff=None, num_destinations=None, time_of_day=None, barriers=None
     ):
         """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
@@ -798,6 +802,10 @@ class ParallelODCalculator:
             num_destinations = None
         self.num_destinations = num_destinations
         self.max_processes = max_processes
+        if not time_of_day:
+            self.time_of_day = None
+        else:
+            self.time_of_day = datetime.strptime(time_of_day, helpers.DATETIME_FORMAT)
 
         # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
         unique_id = uuid.uuid4().hex
@@ -823,6 +831,7 @@ class ParallelODCalculator:
             "distance_units": distance_units,
             "cutoff": cutoff,
             "num_destinations": self.num_destinations,
+            "time_of_day": self.time_of_day,
             "barriers": barriers
         }
 
@@ -1231,6 +1240,11 @@ def launch_parallel_od():
     parser.add_argument(
         "-nd", "--num-destinations", action="store", dest="num_destinations", type=int, help=help_string,
         required=False)
+
+    # --time-of-day parameter
+    help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "
+                   "time neutral.")
+    parser.add_argument("-tod", "--time-of-day", action="store", dest="time_of_day", help=help_string,required=False)
 
     # --barriers parameter
     help_string = "A list of catalog paths to the feature classes containing barriers to use in the OD Cost Matrix."
