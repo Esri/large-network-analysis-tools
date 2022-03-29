@@ -21,6 +21,7 @@ Copyright 2022 Esri
 import os
 import sys
 import time
+import datetime
 import traceback
 import argparse
 import subprocess
@@ -47,7 +48,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, origins, destinations, network_data_source, travel_mode, output_origins,
         output_destinations, chunk_size, max_processes, time_units, distance_units, output_format,
-        output_od_lines=None, output_data_folder=None, cutoff=None, num_destinations=None,
+        output_od_lines=None, output_data_folder=None, cutoff=None, num_destinations=None, time_of_day=None,
         precalculate_network_locations=True, barriers=None
     ):
         """Initialize the ODCostMatrixSolver class.
@@ -89,6 +90,8 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         self.distance_units = distance_units
         self.cutoff = cutoff
         self.num_destinations = num_destinations
+        self.time_of_day = time_of_day
+        self.time_of_day_dt = None  # Set during validation
         self.should_precalc_network_locations = precalculate_network_locations
         self.barriers = barriers if barriers else []
 
@@ -154,6 +157,14 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             err = "Number of destinations to find must be greater than 0."
             arcpy.AddError(err)
             raise ValueError(err)
+
+        # Validate time of day
+        if self.time_of_day:
+            try:
+                self.time_of_day_dt = datetime.datetime.strptime(self.time_of_day, helpers.DATETIME_FORMAT)
+            except ValueError as ex:
+                arcpy.AddError(f"Could not convert input time of day to datetime: {str(ex)}")
+                raise ex
 
         # Validate origins, destinations, and barriers
         self._validate_input_feature_class(self.origins)
@@ -239,6 +250,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             odcm.distanceUnits = distance_units
             odcm.defaultImpedanceCutoff = self.cutoff
             odcm.defaultDestinationCount = self.num_destinations
+            odcm.timeOfDay = self.time_of_day_dt
         except Exception:
             arcpy.AddError("Invalid OD Cost Matrix settings.")
             errs = traceback.format_exc().splitlines()
@@ -449,6 +461,8 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             odcm_inputs += ["--cutoff", str(self.cutoff)]
         if self.num_destinations:
             odcm_inputs += ["--num-destinations", str(self.num_destinations)]
+        if self.time_of_day:
+            odcm_inputs += ["--time-of-day", self.time_of_day]
         # We do not want to show the console window when calling the command line tool from within our GP tool.
         # This can be done by setting this hex code.
         create_no_window = 0x08000000
@@ -593,6 +607,11 @@ def _run_from_command_line():
     parser.add_argument(
         "-nd", "--num-destinations", action="store", dest="num_destinations", type=int, help=help_string,
         required=False)
+
+    # --time-of-day parameter
+    help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "
+                   "time neutral.")
+    parser.add_argument("-tod", "--time-of-day", action="store", dest="time_of_day", help=help_string, required=False)
 
     # --precalculate-network-locations parameter
     help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."

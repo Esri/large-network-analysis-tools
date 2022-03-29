@@ -177,6 +177,14 @@ class SolveLargeODCostMatrix(object):
             direction="Input"
         )
 
+        param_time_of_day = arcpy.Parameter(
+            displayName="Time of Day",
+            name="Time_Of_Day",
+            datatype="GPDate",
+            parameterType="Optional",
+            direction="Input"
+        )
+
         param_barriers = arcpy.Parameter(
             displayName="Barriers",
             name="Barriers",
@@ -213,8 +221,9 @@ class SolveLargeODCostMatrix(object):
             param_out_folder,  # 12
             param_cutoff,  # 13
             param_num_dests,  # 14
-            param_barriers,  # 15
-            param_precalculate_network_locations  # 16
+            param_time_of_day,  # 15
+            param_barriers,  # 16
+            param_precalculate_network_locations  # 17
         ]
 
         return params
@@ -231,7 +240,7 @@ class SolveLargeODCostMatrix(object):
         param_output_format = parameters[10]
         param_out_od_lines = parameters[11]
         param_out_folder = parameters[12]
-        param_precalculate = parameters[16]
+        param_precalculate = parameters[17]
 
         # Make appropriate OD Cost Matrix output parameter visible based on chosen output format
         if not param_output_format.hasBeenValidated and param_output_format.altered and param_output_format.valueAsText:
@@ -301,6 +310,9 @@ class SolveLargeODCostMatrix(object):
     def execute(self, parameters, messages):
         """The source code of the tool."""
         # Initialize the solver class
+        time_of_day = parameters[15].value
+        if time_of_day:
+            time_of_day = time_of_day.strftime(helpers.DATETIME_FORMAT)
         od_solver = ODCostMatrixSolver(
             parameters[0].value,  # origins
             parameters[1].value,  # destinations
@@ -317,8 +329,9 @@ class SolveLargeODCostMatrix(object):
             parameters[12].valueAsText,  # output data folder
             parameters[13].value,  # cutoff
             parameters[14].value,  # number of destinations to find
-            parameters[16].value,  # Should precalculate network locations
-            get_catalog_path_multivalue(parameters[15])  # barriers
+            time_of_day,  # time of day
+            parameters[17].value,  # Should precalculate network locations
+            get_catalog_path_multivalue(parameters[16])  # barriers
         )
 
         # Solve the OD Cost Matrix analysis

@@ -79,6 +79,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             None,
             15,  # cutoff
             1,  # number of destinations
+            datetime.datetime(2022, 3, 29, 16, 45, 0),  # time of day
             None,  # barriers
             True  # precalculate network locations
         )
@@ -109,6 +110,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             out_folder,
             5,  # cutoff
             2,  # number of destinations
+            None,  # time of day
             None,  # barriers
             True  # precalculate network locations
         )
@@ -142,6 +144,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             out_folder,
             5,  # cutoff
             2,  # number of destinations
+            None,  # time of day
             None,  # barriers
             True  # precalculate network locations
         )
@@ -172,6 +175,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             None,
             15,  # cutoff
             1,  # number of destinations
+            None,  # time of day
             None,  # barriers
             True  # precalculate network locations
         )
@@ -202,6 +206,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 "Junk",
                 15,  # cutoff
                 1,  # number of destinations
+                None,  # time of day
                 None,  # barriers
                 True  # precalculate network locations
             )
@@ -235,6 +240,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 None,
                 15,  # cutoff
                 1,  # number of destinations
+                None,  # time of day
                 None,  # barriers
                 True  # precalculate network locations
             )
@@ -269,6 +275,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 None,
                 15,  # cutoff
                 1,  # number of destinations
+                None,  # time of day
                 None,  # barriers
                 True  # precalculate network locations
             )
@@ -308,6 +315,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 out_od_folder,
                 15,  # cutoff
                 1,  # number of destinations
+                None,  # time of day
                 None,  # barriers
                 True  # precalculate network locations
             )

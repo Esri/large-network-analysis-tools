@@ -75,6 +75,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": arcpy.nax.DistanceUnits.Miles,
             "cutoff": 2,
             "num_destinations": 1,
+            "time_of_day": None,
             "scratch_folder": self.scratch_folder,
             "barriers": []
         }
@@ -93,6 +94,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": "Miles",
             "cutoff": 2,
             "num_destinations": 1,
+            "time_of_day": "20220329 16:45",
             "barriers": []
         }
 
@@ -244,6 +246,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": arcpy.nax.DistanceUnits.Miles,
             "cutoff": 10,
             "num_destinations": None,
+            "time_of_day": None,
             "scratch_folder": self.scratch_folder,
             "barriers": []
         }
@@ -280,6 +283,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": arcpy.nax.DistanceUnits.Miles,
             "cutoff": 10,
             "num_destinations": None,
+            "time_of_day": None,
             "scratch_folder": self.scratch_folder,
             "barriers": []
         }
@@ -348,6 +352,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": "Miles",
             "cutoff": 30,
             "num_destinations": 2,
+            "time_of_day": None,
             "barriers": []
         }
 
@@ -381,6 +386,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": "Miles",
             "cutoff": 30,
             "num_destinations": None,
+            "time_of_day": None,
             "barriers": []
         }
 
@@ -410,6 +416,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": "Miles",
             "cutoff": 30,
             "num_destinations": 2,
+            "time_of_day": None,
             "barriers": []
         }
 
@@ -444,6 +451,7 @@ class TestParallelODCM(unittest.TestCase):
             "distance_units": "Miles",
             "cutoff": 30,
             "num_destinations": 2,
+            "time_of_day": None,
             "barriers": []
         }
 
