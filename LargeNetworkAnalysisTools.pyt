@@ -20,6 +20,7 @@ import arcpy
 
 import helpers
 from solve_large_odcm import ODCostMatrixSolver
+from solve_large_route_pair_analysis import RoutePairSolver
 
 
 class Toolbox(object):
@@ -31,7 +32,7 @@ class Toolbox(object):
         self.alias = "LargeNetworkAnalysisTools"
 
         # List of tool classes associated with this toolbox
-        self.tools = [SolveLargeODCostMatrix]
+        self.tools = [SolveLargeODCostMatrix, SolveLargeAnalysisWithKnownPairs]
 
 
 class SolveLargeODCostMatrix(object):
@@ -336,6 +337,244 @@ class SolveLargeODCostMatrix(object):
 
         # Solve the OD Cost Matrix analysis
         od_solver.solve_large_od_cost_matrix()
+
+        return
+
+
+class SolveLargeAnalysisWithKnownPairs(object):
+    """Sample script tool to solve a large analysis with known origin-destination pairs."""
+
+    def __init__(self):
+        """Define the tool."""
+        self.label = "Solve Large Analysis With Known OD Pairs"
+        self.description = ((
+            "Solve a large analysis with known origin-destination pairs by chunking the input data and solving in "
+            "parallel."
+        ))
+        self.canRunInBackground = True
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+
+        param_origins = arcpy.Parameter(
+            displayName="Origins",
+            name="Origins",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_assigned_dest_field = arcpy.Parameter(
+            displayName="Assigned Destination Field",
+            name="Assigned_Destination_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_assigned_dest_field.parameterDependencies = [param_origins.name]
+
+        param_destinations = arcpy.Parameter(
+            displayName="Destinations",
+            name="Destinations",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_dest_id_field = arcpy.Parameter(
+            displayName="Destination Unique ID Field",
+            name="Destination_Unique_ID_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_dest_id_field.parameterDependencies = [param_destinations.name]
+
+        param_network = arcpy.Parameter(
+            displayName="Network Data Source",
+            name="Network_Data_Source",
+            datatype="GPNetworkDataSource",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_travel_mode = arcpy.Parameter(
+            displayName="Travel Mode",
+            name="Travel_Mode",
+            datatype="NetworkTravelMode",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_travel_mode.parameterDependencies = [param_network.name]
+
+        param_time_units = arcpy.Parameter(
+            displayName="Time Units",
+            name="Time_Units",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_time_units.filter.list = helpers.TIME_UNITS
+        param_time_units.value = "Minutes"
+
+        param_distance_units = arcpy.Parameter(
+            displayName="Distance Units",
+            name="Distance_Units",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_distance_units.filter.list = helpers.DISTANCE_UNITS
+        param_distance_units.value = "Miles"
+
+        param_chunk_size = arcpy.Parameter(
+            displayName="Maximum OD Pairs per Chunk",
+            name="Max_Pairs_Per_Chunk",
+            datatype="GPLong",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_chunk_size.value = 1000
+
+        ## TODO: Share code?
+        param_max_processes = arcpy.Parameter(
+            displayName="Maximum Number of Parallel Processes",
+            name="Max_Processes",
+            datatype="GPLong",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_max_processes.value = 4
+
+        param_out_routes = arcpy.Parameter(
+            displayName="Output Routes",
+            name="Output_Routes",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_out_destinations = arcpy.Parameter(
+            displayName="Output Updated Destinations",
+            name="Output_Updated_Destinations",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_time_of_day = arcpy.Parameter(
+            displayName="Time of Day",
+            name="Time_Of_Day",
+            datatype="GPDate",
+            parameterType="Optional",
+            direction="Input"
+        )
+
+        param_barriers = arcpy.Parameter(
+            displayName="Barriers",
+            name="Barriers",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input",
+            multiValue=True,
+            category="Advanced"
+        )
+
+        param_precalculate_network_locations = arcpy.Parameter(
+            displayName="Precalculate Network Locations",
+            name="Precalculate_Network_Locations",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input",
+            category="Advanced"
+        )
+        param_precalculate_network_locations.value = True
+
+        params = [
+            param_origins,  # 0
+            param_assigned_dest_field,  # 1
+            param_destinations,  # 2
+            param_dest_id_field,  # 3
+            param_network,  # 4
+            param_travel_mode,  # 5
+            param_time_units,  # 6
+            param_distance_units,  # 7
+            param_chunk_size,  # 8
+            param_max_processes,  # 9
+            param_out_routes,  # 10
+            param_out_destinations,  # 11
+            param_time_of_day,  # 12
+            param_barriers,  # 13
+            param_precalculate_network_locations  # 14
+        ]
+
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        param_network = parameters[4]
+        param_precalculate = parameters[14]
+
+        # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
+        ## TODO: Share code
+        if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
+            if helpers.is_nds_service(param_network.valueAsText):
+                param_precalculate.value = False
+                param_precalculate.enabled = False
+            else:
+                param_precalculate.enabled = True
+
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        param_network = parameters[4]
+        param_max_processes = parameters[9]
+
+        # If the network data source is arcgis.com, cap max processes
+        if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
+            if param_max_processes.altered and param_max_processes.valueAsText:
+                if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
+                    param_max_processes.setErrorMessage((
+                        f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
+                        "ArcGIS Online services are used as the network data source."
+                    ))
+
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        # Initialize the solver class
+        time_of_day = parameters[12].value
+        if time_of_day:
+            time_of_day = time_of_day.strftime(helpers.DATETIME_FORMAT)
+        rt_solver = RoutePairSolver(
+            parameters[0].value,  # origins
+            parameters[1].valueAsText,  # assigned destination field
+            parameters[2].value,  # destinations
+            parameters[3].valueAsText,  # unique destination ID field
+            get_catalog_path(parameters[4]),  # network
+            parameters[5].value,  # travel mode
+            parameters[6].valueAsText,  # time units
+            parameters[7].valueAsText,  # distance units
+            parameters[8].value,  # chunk size
+            parameters[9].value,  # max processes
+            parameters[10].valueAsText,  # output routes
+            parameters[11].valueAsText,  # output destinations
+            time_of_day,  # time of day
+            get_catalog_path_multivalue(parameters[13]),  # barriers
+            parameters[14].value  # Should precalculate network locations
+        )
+
+        # Solve the OD Cost Matrix analysis
+        rt_solver.solve_large_route_pair_analysis()
 
         return
 

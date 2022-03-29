@@ -14,6 +14,7 @@ Copyright 2022 Esri
    limitations under the License.
 """
 import enum
+import traceback
 import arcpy
 
 arcgis_version = arcpy.GetInstallInfo()["Version"]
@@ -30,6 +31,7 @@ if arcgis_version >= "2.9":
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 DATETIME_FORMAT = "%Y%m%d %H:%M"  # Used for converting between datetime and string
 
+
 def is_nds_service(network_data_source):
     """Determine if the network data source points to a service.
 
@@ -43,6 +45,38 @@ def is_nds_service(network_data_source):
         # Probably a network dataset layer
         return False
     return bool(network_data_source.startswith("http"))
+
+
+def get_tool_limits_and_is_agol(network_data_source, service_name, tool_name):
+    """Retrieve a dictionary of various limits supported by a portal tool and whether the portal uses AGOL services.
+
+    Assumes that we have already determined that the network data source is a service.
+
+    Args:
+        network_data_source (str): URL to the service being used as the network data source.
+        service_name (str): Name of the service, such as "asyncODCostMatrix" or "asyncRoute".
+        tool_name (_type_): Tool name for the designated service, such as "GenerateOriginDestinationCostMatrix" or
+            "FindRoutes".
+
+    Returns:
+        (dict, bool): Dictionary of service limits; Boolean indicating if the service is ArcGIS Online or a hybrid
+            portal that falls back to ArcGIS Online.
+    """
+    arcpy.AddMessage("Getting tool limits from the portal...")
+    try:
+        tool_info = arcpy.nax.GetWebToolInfo(service_name, tool_name, network_data_source)
+        # serviceLimits returns the maximum origins and destinations allowed by the service, among other things
+        service_limits = tool_info["serviceLimits"]
+        # isPortal returns True for Enterprise portals and False for AGOL or hybrid portals that fall back to using
+        # the AGOL services
+        is_agol = not tool_info["isPortal"]
+        return service_limits, is_agol
+    except Exception:
+        arcpy.AddError("Error getting tool limits from the portal.")
+        errs = traceback.format_exc().splitlines()
+        for err in errs:
+            arcpy.AddError(err)
+        raise
 
 
 def convert_time_units_str_to_enum(time_units):
@@ -113,6 +147,55 @@ def convert_output_format_str_to_enum(output_format):
     err = f"Invalid output format: {output_format}"
     arcpy.AddError(err)
     raise ValueError(err)
+
+
+def validate_input_feature_class(feature_class):
+    """Validate that the designated input feature class exists and is not empty.
+
+    Args:
+        feature_class (str, layer): Input feature class or layer to validate
+
+    Raises:
+        ValueError: The input feature class does not exist.
+        ValueError: The input feature class has no rows.
+    """
+    if not arcpy.Exists(feature_class):
+        err = f"Input dataset {feature_class} does not exist."
+        arcpy.AddError(err)
+        raise ValueError(err)
+    if int(arcpy.management.GetCount(feature_class).getOutput(0)) <= 0:
+        err = f"Input dataset {feature_class} has no rows."
+        arcpy.AddError(err)
+        raise ValueError(err)
+
+
+def precalculate_network_locations(input_features, network_data_source, travel_mode, config_file_props):
+    """Precalculate network location fields if possible for faster loading and solving later.
+
+    Cannot be used if the network data source is a service. Uses the searchTolerance, searchToleranceUnits, and
+    searchQuery properties set in the config file.
+
+    Args:
+        input_features (feature class catalog path): Feature class to calculate network locations for
+        network_data_source (network dataset catalog path): Network dataset to use to calculate locations
+        travel_mode (travel mode): Travel mode name, object, or json representation to use when calculating locations.
+        config_file_props (dict): Dictionary of solver object properties from config file.
+    """
+    arcpy.AddMessage(f"Precalculating network location fields for {input_features}...")
+
+    # Get location settings from config file if present
+    search_tolerance = None
+    if "searchTolerance" in config_file_props and "searchToleranceUnits" in config_file_props:
+        search_tolerance = f"{config_file_props['searchTolerance']} {config_file_props['searchToleranceUnits'].name}"
+    search_query = config_file_props.get("search_query", None)
+
+    # Calculate network location fields if network data source is local
+    arcpy.na.CalculateLocations(
+        input_features, network_data_source,
+        search_tolerance=search_tolerance,
+        search_query=search_query,
+        travel_mode=travel_mode
+    )
 
 
 def parse_std_and_write_to_gp_ui(msg_string):
