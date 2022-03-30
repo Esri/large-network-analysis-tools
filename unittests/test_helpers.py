@@ -21,8 +21,8 @@ import portal_credentials  # Contains log-in for an ArcGIS Online account to use
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import helpers  # noqa: E402, pylint: disable=wrong-import-position
-from od_config import OD_PROPS
-from rt_config import RT_PROPS
+from od_config import OD_PROPS  # noqa: E402, pylint: disable=wrong-import-position
+from rt_config import RT_PROPS  # noqa: E402, pylint: disable=wrong-import-position
 
 class TestHelpers(unittest.TestCase):
     """Test cases for the helpers module."""
@@ -42,7 +42,6 @@ class TestHelpers(unittest.TestCase):
         os.makedirs(self.scratch_folder)
         self.output_gdb = os.path.join(self.scratch_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
-
 
     def test_is_nds_service(self):
         """Test the is_nds_service function."""
@@ -89,6 +88,23 @@ class TestHelpers(unittest.TestCase):
         with self.assertRaises(ValueError) as ex:
             helpers.convert_output_format_str_to_enum(bad_format)
         self.assertEqual(f"Invalid output format: {bad_format}", str(ex.exception))
+
+    def test_validate_input_feature_class(self):
+        """Test the validate_input_feature_class function."""
+        # Test when the input feature class does note exist.
+        input_fc = os.path.join(self.sf_gdb, "DoesNotExist")
+        with self.subTest(feature_class=input_fc):
+            with self.assertRaises(ValueError) as ex:
+                helpers.validate_input_feature_class(input_fc)
+            self.assertEqual(f"Input dataset {input_fc} does not exist.", str(ex.exception))
+
+        # Test when the input feature class is empty
+        input_fc = os.path.join(self.output_gdb, "EmptyFC")
+        with self.subTest(feature_class=input_fc):
+            arcpy.management.CreateFeatureclass(self.output_gdb, os.path.basename(input_fc))
+            with self.assertRaises(ValueError) as ex:
+                helpers.validate_input_feature_class(input_fc)
+            self.assertEqual(f"Input dataset {input_fc} has no rows.", str(ex.exception))
 
     def test_precalculate_network_locations(self):
         """Test the precalculate_network_locations function."""

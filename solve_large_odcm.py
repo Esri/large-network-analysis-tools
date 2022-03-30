@@ -167,10 +167,10 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
                 raise ex
 
         # Validate origins, destinations, and barriers
-        self._validate_input_feature_class(self.origins)
-        self._validate_input_feature_class(self.destinations)
+        helpers.validate_input_feature_class(self.origins)
+        helpers.validate_input_feature_class(self.destinations)
         for barrier_fc in self.barriers:
-            self._validate_input_feature_class(barrier_fc)
+            helpers.validate_input_feature_class(barrier_fc)
 
         # Validate network
         if not self.is_service and not arcpy.Exists(self.network_data_source):
@@ -208,26 +208,6 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
                 arcpy.AddWarning(
                     "Cannot precalculate network location fields when the network data source is a service.")
                 self.should_precalc_network_locations = False
-
-    @staticmethod
-    def _validate_input_feature_class(feature_class):
-        """Validate that the designated input feature class exists and is not empty.
-
-        Args:
-            feature_class (str, layer): Input feature class or layer to validate
-
-        Raises:
-            ValueError: The input feature class does not exist.
-            ValueError: The input feature class has no rows.
-        """
-        if not arcpy.Exists(feature_class):
-            err = f"Input dataset {feature_class} does not exist."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if int(arcpy.management.GetCount(feature_class).getOutput(0)) <= 0:
-            err = f"Input dataset {feature_class} has no rows."
-            arcpy.AddError(err)
-            raise ValueError(err)
 
     def _validate_od_settings(self):
         """Validate OD cost matrix settings by spinning up a dummy OD Cost Matrix object.
