@@ -411,13 +411,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.job_result["solveSucceeded"] = True
 
         # Save output
-        # Example: Routes_1_1000
-        out_filename = f"Routes_{origins_criteria[0]}_{origins_criteria[1]}"
-        self._export_to_feature_class(out_filename)
+        self._export_to_feature_class(origins_criteria)
 
         self.logger.debug("Finished calculating Route.")
 
-    def _export_to_feature_class(self, out_fc_name):
+    def _export_to_feature_class(self, origins_criteria):
         """Export the Route result to a feature class."""
         # Make output gdb
         self.logger.debug("Creating output geodatabase for Route results...")
@@ -428,9 +426,26 @@ class Route:  # pylint:disable = too-many-instance-attributes
             log_to_use=self.logger
         )
 
-        output_routes = os.path.join(od_workspace, out_fc_name)
-        self.logger.debug(f"Exporting Route output to {output_routes}...")
+        # Export routes
+        output_routes = os.path.join(od_workspace, f"Routes_{origins_criteria[0]}_{origins_criteria[1]}")
+        self.logger.debug(f"Exporting Route Routes output to {output_routes}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Routes, output_routes)
+
+        # Export stops
+        output_stops = os.path.join(od_workspace, f"Stops_{origins_criteria[0]}_{origins_criteria[1]}")
+        self.logger.debug(f"Exporting Route Stops output to {output_stops}...")
+        self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
+
+        # Join the input ID fields to Routes
+        run_gp_tool(
+            arcpy.management.JoinField,
+            [output_routes, "FirstStopOID", output_stops, "ObjectID", [self.origin_unique_id_field_name]]
+        )
+        run_gp_tool(
+            arcpy.management.JoinField,
+            [output_routes, "LastStopOID", output_stops, "ObjectID", [self.dest_unique_id_field_name]]
+        )
+
         self.job_result["outputRoutes"] = output_routes
 
     def setup_logger(self, logger_obj):
