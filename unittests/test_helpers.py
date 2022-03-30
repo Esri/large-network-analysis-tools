@@ -37,6 +37,8 @@ class TestHelpers(unittest.TestCase):
         self.local_nd = os.path.join(self.sf_gdb, "Transportation", "Streets_ND")
         self.portal_nd = portal_credentials.PORTAL_URL
 
+        arcpy.SignInToPortal(self.portal_nd, portal_credentials.PORTAL_USERNAME, portal_credentials.PORTAL_PASSWORD)
+
         self.scratch_folder = os.path.join(
             CWD, "TestOutput", "Output_Helpers_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
         os.makedirs(self.scratch_folder)
@@ -47,6 +49,27 @@ class TestHelpers(unittest.TestCase):
         """Test the is_nds_service function."""
         self.assertTrue(helpers.is_nds_service(self.portal_nd))
         self.assertFalse(helpers.is_nds_service(self.local_nd))
+
+    def test_get_tool_limits_and_is_agol(self):
+        """Test the _get_tool_limits_and_is_agol function for a portal network data source."""
+        services = [
+            ("asyncODCostMatrix", "GenerateOriginDestinationCostMatrix"),
+            ("asyncRoute", "FindRoutes")
+        ]
+        for service in services:
+            with self.subTest(service=service):
+                service_limits, is_agol = helpers.get_tool_limits_and_is_agol(
+                    self.portal_nd, service[0], service[1])
+                self.assertIsInstance(service_limits, dict)
+                self.assertIsInstance(is_agol, bool)
+                if service[0] == "asyncODCostMatrix":
+                    self.assertIn("maximumDestinations", service_limits)
+                    self.assertIn("maximumOrigins", service_limits)
+                elif service[0] == "asyncRoute":
+                    self.assertIn("maximumStops", service_limits)
+                if "arcgis.com" in self.portal_nd:
+                    # Note: If testing with some other portal, this test would need to be updated.
+                    self.assertTrue(is_agol)
 
     def test_convert_time_units_str_to_enum(self):
         """Test the convert_time_units_str_to_enum function."""

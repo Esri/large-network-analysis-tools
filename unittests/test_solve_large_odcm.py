@@ -141,21 +141,6 @@ class TestSolveLargeODCM(unittest.TestCase):
             with self.assertRaises(ValueError):
                 od_solver._validate_inputs()
 
-    def test_get_tool_limits_and_is_agol(self):
-        """Test the _get_tool_limits_and_is_agol function for a portal network data source."""
-        inputs = deepcopy(self.od_args)
-        inputs["network_data_source"] = self.portal_nd
-        inputs["travel_mode"] = self.portal_tm
-        od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
-        od_solver._get_tool_limits_and_is_agol()
-        self.assertIsInstance(od_solver.service_limits, dict)
-        self.assertIsInstance(od_solver.is_agol, bool)
-        self.assertIn("maximumDestinations", od_solver.service_limits)
-        self.assertIn("maximumOrigins", od_solver.service_limits)
-        if "arcgis.com" in self.portal_nd:
-            # Note: If testing with some other portal, this test would need to be updated.
-            self.assertTrue(od_solver.is_agol)
-
     def test_update_max_inputs_for_service(self):
         """Test the update_max_inputs_for_service function."""
         max_origins = 1500
