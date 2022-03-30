@@ -356,6 +356,8 @@ class SolveLargeAnalysisWithKnownPairs(object):
     def getParameterInfo(self):
         """Define parameter definitions"""
 
+        ## TODO: Add direction of travel option?
+
         param_origins = arcpy.Parameter(
             displayName="Origins",
             name="Origins",
@@ -363,6 +365,15 @@ class SolveLargeAnalysisWithKnownPairs(object):
             parameterType="Required",
             direction="Input"
         )
+
+        param_origin_id_field = arcpy.Parameter(
+            displayName="Origin Unique ID Field",
+            name="Origin_Unique_ID_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_origin_id_field.parameterDependencies = [param_origins.name]
 
         param_assigned_dest_field = arcpy.Parameter(
             displayName="Assigned Destination Field",
@@ -492,20 +503,21 @@ class SolveLargeAnalysisWithKnownPairs(object):
 
         params = [
             param_origins,  # 0
-            param_assigned_dest_field,  # 1
-            param_destinations,  # 2
-            param_dest_id_field,  # 3
-            param_network,  # 4
-            param_travel_mode,  # 5
-            param_time_units,  # 6
-            param_distance_units,  # 7
-            param_chunk_size,  # 8
-            param_max_processes,  # 9
-            param_out_routes,  # 10
-            param_out_destinations,  # 11
-            param_time_of_day,  # 12
-            param_barriers,  # 13
-            param_precalculate_network_locations  # 14
+            param_origin_id_field,  # 1
+            param_assigned_dest_field,  # 2
+            param_destinations,  # 3
+            param_dest_id_field,  # 4
+            param_network,  # 5
+            param_travel_mode,  # 6
+            param_time_units,  # 7
+            param_distance_units,  # 8
+            param_chunk_size,  # 9
+            param_max_processes,  # 10
+            param_out_routes,  # 11
+            param_out_destinations,  # 12
+            param_time_of_day,  # 13
+            param_barriers,  # 14
+            param_precalculate_network_locations  # 15
         ]
 
         return params
@@ -518,8 +530,8 @@ class SolveLargeAnalysisWithKnownPairs(object):
         """Modify the values and properties of parameters before internal
         validation is performed.  This method is called whenever a parameter
         has been changed."""
-        param_network = parameters[4]
-        param_precalculate = parameters[14]
+        param_network = parameters[5]
+        param_precalculate = parameters[15]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         ## TODO: Share code
@@ -535,8 +547,8 @@ class SolveLargeAnalysisWithKnownPairs(object):
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
-        param_network = parameters[4]
-        param_max_processes = parameters[9]
+        param_network = parameters[5]
+        param_max_processes = parameters[10]
 
         # If the network data source is arcgis.com, cap max processes
         if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
@@ -552,25 +564,26 @@ class SolveLargeAnalysisWithKnownPairs(object):
     def execute(self, parameters, messages):
         """The source code of the tool."""
         # Initialize the solver class
-        time_of_day = parameters[12].value
+        time_of_day = parameters[13].value
         if time_of_day:
             time_of_day = time_of_day.strftime(helpers.DATETIME_FORMAT)
         rt_solver = RoutePairSolver(
             parameters[0].value,  # origins
-            parameters[1].valueAsText,  # assigned destination field
-            parameters[2].value,  # destinations
-            parameters[3].valueAsText,  # unique destination ID field
-            get_catalog_path(parameters[4]),  # network
-            parameters[5].value,  # travel mode
-            parameters[6].valueAsText,  # time units
-            parameters[7].valueAsText,  # distance units
-            parameters[8].value,  # chunk size
-            parameters[9].value,  # max processes
-            parameters[10].valueAsText,  # output routes
-            parameters[11].valueAsText,  # output destinations
+            parameters[1].valueAsText,  # unique origin ID field
+            parameters[2].valueAsText,  # assigned destination field
+            parameters[3].value,  # destinations
+            parameters[4].valueAsText,  # unique destination ID field
+            get_catalog_path(parameters[5]),  # network
+            parameters[6].value,  # travel mode
+            parameters[7].valueAsText,  # time units
+            parameters[8].valueAsText,  # distance units
+            parameters[9].value,  # chunk size
+            parameters[10].value,  # max processes
+            parameters[11].valueAsText,  # output routes
+            parameters[12].valueAsText,  # output destinations
             time_of_day,  # time of day
-            get_catalog_path_multivalue(parameters[13]),  # barriers
-            parameters[14].value  # Should precalculate network locations
+            get_catalog_path_multivalue(parameters[14]),  # barriers
+            parameters[15].value  # Should precalculate network locations
         )
 
         # Solve the OD Cost Matrix analysis

@@ -47,7 +47,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     """
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, assigned_dest_field, destinations, dest_id_field, network_data_source, travel_mode,
+        self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field, network_data_source, travel_mode,
         time_units, distance_units, chunk_size, max_processes,
         output_routes, output_origins, output_destinations,
         time_of_day=None, barriers=None, precalculate_network_locations=True
@@ -83,6 +83,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                  to use. Defaults to None.
         """
         self.origins = origins
+        self.origin_id_field = origin_id_field
         self.assigned_dest_field = assigned_dest_field
         self.destinations = destinations
         self.dest_id_field = dest_id_field
@@ -132,7 +133,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         helpers.validate_input_feature_class(self.destinations)
         for barrier_fc in self.barriers:
             helpers.validate_input_feature_class(barrier_fc)
-        self._validate_unique_dest_id_field()
+        self._validate_unique_id_field(self.origins, self.origin_id_field)
+        self.destination_ids = self._validate_unique_id_field(self.destinations, self.dest_id_field)
         self._validate_assigned_dest_field()
 
         # Validate network
@@ -177,29 +179,36 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                     "Cannot precalculate network location fields when the network data source is a service.")
                 self.should_precalc_network_locations = False
 
-    def _validate_unique_dest_id_field(self):
-        """Validate the unique ID field in the destinations.
+    @staticmethod
+    def _validate_unique_id_field(input_features, id_field):
+        """Validate the unique ID field in the input features.
+
+        Args:
+            input_features: Input feature class to check.
+            id_field: Field in the input features to check.
 
         Raises:
             ValueError: If the field does not exist in the destinations dataset
             ValueError: If the field values are not unique
         """
         # Check if the field exists
-        field_names = [f.name for f in arcpy.ListFields(self.destinations, wild_card=self.dest_id_field)]
-        if self.dest_id_field not in field_names:
-            err = f"Unique ID field {self.dest_id_field} does not exist in Destinations dataset {self.destinations}."
+        field_names = [f.name for f in arcpy.ListFields(input_features, wild_card=id_field)]
+        if id_field not in field_names:
+            err = f"Unique ID field {id_field} does not exist in Destinations dataset {input_features}."
             arcpy.AddError(err)
             raise ValueError(err)
         # Populate a list of destination IDs and verify that they are unique
-        for row in arcpy.da.SearchCursor(self.destinations, [self.dest_id_field]):  # pylint:disable = no-member
-            self.destination_ids.append(row[0])
-        num_dests = len(self.destination_ids)
-        self.destination_ids = list(set(self.destination_ids))
-        if len(self.destination_ids) != num_dests:
-            err = (f"Non-unique values were found in the unique ID field {self.dest_id_field} in the Destinations "
-                   f"dataset {self.destinations}.")
+        ids = []
+        for row in arcpy.da.SearchCursor(input_features, [id_field]):  # pylint:disable = no-member
+            ids.append(row[0])
+        num_rows = len(ids)
+        ids = list(set(ids))
+        if len(ids) != num_rows:
+            err = f"Non-unique values were found in the unique ID field {id_field} in {input_features}."
             arcpy.AddError(err)
             raise ValueError(err)
+        # Return the list of unique IDs
+        return ids
 
     def _validate_assigned_dest_field(self):
         """Validate the assigned destination field in the origins.

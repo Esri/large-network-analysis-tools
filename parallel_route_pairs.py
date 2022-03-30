@@ -156,15 +156,14 @@ class Route:  # pylint:disable = too-many-instance-attributes
         - barriers
         """
         self.origins = kwargs["origins"]
+        self.origin_id_field = kwargs["origin_id_field"]
+        self.assigned_dest_field = kwargs["assigned_dest_field"]
         self.destinations = kwargs["destinations"]
-        self.output_format = kwargs["output_format"]
-        self.output_od_location = kwargs["output_od_location"]
+        self.dest_id_field = kwargs["dest_id_field"]
         self.network_data_source = kwargs["network_data_source"]
         self.travel_mode = kwargs["travel_mode"]
         self.time_units = kwargs["time_units"]
         self.distance_units = kwargs["distance_units"]
-        self.cutoff = kwargs["cutoff"]
-        self.num_destinations = kwargs["num_destinations"]
         self.time_of_day = kwargs["time_of_day"]
         self.scratch_folder = kwargs["scratch_folder"]
         self.barriers = []
@@ -187,18 +186,9 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.is_service = helpers.is_nds_service(self.network_data_source)
         self.rt_solver = None
         self.solve_result = None
-        self.time_attribute = ""
-        self.distance_attribute = ""
-        self.is_travel_mode_time_based = True
-        self.is_travel_mode_dist_based = True
-        self.optimized_field_name = None
         self.input_origins_layer = "InputOrigins" + self.job_id
         self.input_destinations_layer = "InputDestinations" + self.job_id
         self.input_origins_layer_obj = None
-        self.input_destinations_layer_obj = None
-
-        # Define fields to include in the output for CSV and Arrow modes
-        self.output_fields = ["OriginOID", "DestinationOID", "DestinationRank", "Total_Time", "Total_Distance"]
 
         # Create a network dataset layer if needed
         if not self.is_service:
@@ -210,19 +200,9 @@ class Route:  # pylint:disable = too-many-instance-attributes
             "jobFolder": self.job_folder,
             "solveSucceeded": False,
             "solveMessages": "",
-            "outputLines": "",
+            "outputRoutes": "",
             "logFile": self.log_file
         }
-
-        # Get the ObjectID fields for origins and destinations
-        desc_origins = arcpy.Describe(self.origins)
-        desc_destinations = arcpy.Describe(self.destinations)
-        self.origins_oid_field_name = desc_origins.oidFieldName
-        self.destinations_oid_field_name = desc_destinations.oidFieldName
-        self.origins_fields = desc_origins.fields
-        self.destinations_fields = desc_destinations.fields
-        self.orig_origin_oid_field = "Orig_Origin_OID"
-        self.orig_dest_oid_field = "Orig_Dest_OID"
 
     def _make_nds_layer(self):
         """Create a network dataset layer if one does not already exist."""
@@ -289,66 +269,25 @@ class Route:  # pylint:disable = too-many-instance-attributes
         # Determine if the travel mode has impedance units that are time-based, distance-based, or other.
         self._determine_if_travel_mode_time_based()
 
-    def solve(self, origins_criteria, destinations_criteria):  # pylint: disable=too-many-locals, too-many-statements
-        """Create and solve an Route analysis for the designated chunk of origins and destinations.
+    def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
+        """Create and solve an Route analysis for the designated chunk of origins and their assigned destinations.
 
         Args:
-            origins_criteria (list): Origin ObjectID range to select from the input dataset
-            destinations_criteria ([type]): Destination ObjectID range to select from the input dataset
+            origins_criteria (list): ObjectID range to select from the input origins
         """
-        # Select the origins and destinations to process
-        self._select_inputs(origins_criteria, destinations_criteria)
-        if not self.input_destinations_layer_obj:
-            # No destinations met the criteria for this set of origins
-            self.logger.debug("No destinations met the criteria for this set of origins. Skipping OD calculation.")
-            return
+        # Select the origins to process
+        self._select_inputs(origins_criteria)
 
         # Initialize the Route solver object
         self.initialize_rt_solver()
 
-        # Load the origins
-        self.logger.debug("Loading origins...")
-        self.rt_solver.addFields(
-            arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
-            [[self.orig_origin_oid_field, "LONG"]]
-        )
-        origins_field_mappings = self.rt_solver.fieldMappings(
-            arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
-            True  # Use network location fields
-        )
-        for fname in origins_field_mappings:
-            if fname == self.orig_origin_oid_field:
-                origins_field_mappings[fname].mappedFieldName = self.origins_oid_field_name
-            else:
-                origins_field_mappings[fname].mappedFieldName = fname
-        self.rt_solver.load(
-            arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
-            self.input_origins_layer_obj,
-            origins_field_mappings,
-            False
-        )
+        # Insert the origins and destinations
+        self._insert_stops()
 
-        # Load the destinations
-        self.logger.debug("Loading destinations...")
-        self.rt_solver.addFields(
-            arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
-            [[self.orig_dest_oid_field, "LONG"]]
-        )
-        destinations_field_mappings = self.rt_solver.fieldMappings(
-            arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
-            True  # Use network location fields
-        )
-        for fname in destinations_field_mappings:
-            if fname == self.orig_dest_oid_field:
-                destinations_field_mappings[fname].mappedFieldName = self.destinations_oid_field_name
-            else:
-                destinations_field_mappings[fname].mappedFieldName = fname
-        self.rt_solver.load(
-            arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
-            self.input_destinations_layer_obj,
-            destinations_field_mappings,
-            False
-        )
+        if self.rt_solver.count(arcpy.nax.RouteInputDataType.Stops) == 0:
+            # There were no valid destinations for this set of origins
+            self.logger.debug("No valid destinations for this set of origins. Skipping Route calculation.")
+            return
 
         # Load barriers
         # Note: This loads ALL barrier features for every analysis, even if they are very far away from any of
@@ -382,20 +321,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
         # Handle solve messages
         solve_msgs = [msg[-1] for msg in self.solve_result.solverMessages(arcpy.nax.MessageSeverity.All)]
-        initial_num_msgs = len(solve_msgs)
         for msg in solve_msgs:
             self.logger.debug(msg)
-        # Remove repetitive messages so they don't clog up the stdout pipeline when running the tool
-        # 'No "Destinations" found for "Location 1" in "Origins".' is a common message that tends to be repeated and is
-        # not particularly useful to see in bulk.
-        # Note that this will not work for localized software when this message is translated.
-        common_msg_prefix = 'No "Destinations" found for '
-        solve_msgs = [msg for msg in solve_msgs if not msg.startswith(common_msg_prefix)]
-        num_msgs_removed = initial_num_msgs - len(solve_msgs)
-        if num_msgs_removed:
-            self.logger.debug(f"Repetitive messages starting with {common_msg_prefix} were consolidated.")
-            solve_msgs.append(f"No destinations were found for {num_msgs_removed} origins.")
-        solve_msgs = "\n".join(solve_msgs)
 
         # Update the result dictionary
         self.job_result["solveMessages"] = solve_msgs
@@ -530,12 +457,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
         self.job_result["outputLines"] = out_csv_file
 
-    def _select_inputs(self, origins_criteria, destinations_criteria):
-        """Create layers from the origins and destinations so the layers contain only the desired inputs for the chunk.
+    def _select_inputs(self, origins_criteria):
+        """Create layers from the origins so the layer contains only the desired inputs for the chunk.
 
         Args:
             origins_criteria (list): Origin ObjectID range to select from the input dataset
-            destinations_criteria ([type]): Destination ObjectID range to select from the input dataset
         """
         # Select the origins with ObjectIDs in this range
         self.logger.debug("Selecting origins for this chunk...")
@@ -552,20 +478,46 @@ class Route:  # pylint:disable = too-many-instance-attributes
         num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
         self.logger.debug(f"Number of origins selected: {num_origins}")
 
-        # Select the destinations with ObjectIDs in this range
-        self.logger.debug("Selecting destinations for this chunk...")
-        destinations_where_clause = (
-            f"{self.destinations_oid_field_name} >= {destinations_criteria[0]} "
-            f"And {self.destinations_oid_field_name} <= {destinations_criteria[1]} "
-        )
-        self.logger.debug(f"Destinations where clause: {destinations_where_clause}")
-        self.input_destinations_layer_obj = run_gp_tool(
+    def _insert_stops(self):
+        """Insert the origins and destinations as stops for the analysis."""
+        location_fields = ["SourceID", "SourceOID", "PosAlong", "SideOfEdge"]
+        ## TODO: Only do loc fields when relevant
+        # Make a layer for destinations for quicker access
+        self.input_origins_layer_obj = run_gp_tool(
             arcpy.management.MakeFeatureLayer,
-            [self.destinations, self.input_destinations_layer, destinations_where_clause],
+            [self.destinations, self.input_destinations_layer],
             log_to_use=self.logger
-        ).getOutput(0)
-        num_destinations = int(arcpy.management.GetCount(self.input_destinations_layer_obj).getOutput(0))
-        self.logger.debug(f"Number of destinations selected: {num_destinations}")
+        )
+        # Store a dictionary of destinations used by this group of origins for quick lookups
+        destinations = {}
+        # Use an insertCursor to insert Stops into the Route analysis
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", "SHAPE@", "Name"] + location_fields
+        ) as icur:
+            # Loop through origins and insert them into Stops along with their assigned destinations
+            ## TODO: Deal with Name field
+            for origin_row in arcpy.da.SearchCursor(
+                self.input_origins_layer_obj,
+                ["SHAPE@", "ObjectID", self.assigned_dest_field]
+            ):
+                dest_id = origin_row[1]
+                if dest_id not in destinations:
+                    with arcpy.da.SearchCursor(
+                        self.input_destinations_layer,
+                        ["SHAPE@", self.dest_id_field] + location_fields,
+                        where=f"{self.dest_id_field} = {dest_id}"  ## TODO: Update for str/int
+                    ) as cur:
+                        try:
+                            destinations[dest_id] = next(cur)
+                        except StopIteration:
+                            # The origin's destination is not present in the destinations table. Just skip the origin.
+                            continue
+            # Insert origin and destination
+            destination_row = destinations[dest_id]
+            route_name = f"{origin_row[1]} - {dest_id}"
+            icur.insertRow([route_name, 1, origin_row[0], origin_row[1], None, None, None, None])
+            icur.insertRow([route_name, 2] + list(destination_row))
 
     def _determine_if_travel_mode_time_based(self):
         """Determine if the travel mode uses a time-based impedance attribute."""
@@ -602,7 +554,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
             logger_obj.addHandler(file_handler)
 
 
-def solve_od_cost_matrix(inputs, chunk):
+def solve_route(inputs, chunk):
     """Solve an Route analysis for the given inputs for the given chunk of ObjectIDs.
 
     Args:
@@ -695,7 +647,7 @@ class ParallelODCalculator:
         self.origin_ranges = self._get_oid_ranges_for_stops()
 
         # Calculate the total number of jobs to use in logging
-        self.total_jobs = len(self.origin_ranges) * len(destination_ranges)
+        self.total_jobs = len(self.origin_ranges)
 
         self.optimized_cost_field = None
 
@@ -741,7 +693,7 @@ class ParallelODCalculator:
     def _get_oid_ranges_for_stops(self):
         """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
 
-        The origins table should already be sorted by the assigned destination field.
+        The origins table should already be sorted by the assigned destination field for best efficiency.
 
         Returns:
             list: list of ObjectID ranges for the current dataset representing each chunk. For example,
@@ -779,7 +731,8 @@ class ParallelODCalculator:
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
         # the optimized that are guaranteed to all fail. While we're doing this, check and store the field name that
         # will represent costs in the output OD Lines table. We'll use this in post processing.
-        self.optimized_cost_field = self._validate_rt_settings()
+        ## TODO
+        self.optimized_cost_field = self._validate_route_settings()
 
         # Compute Route in parallel
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
@@ -787,7 +740,7 @@ class ParallelODCalculator:
         with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
             # Each parallel process calls the solve_od_cost_matrix() function with the od_inputs dictionary for the
             # given origin and destination OID ranges.
-            jobs = {executor.submit(solve_od_cost_matrix, self.rt_inputs, range): range for range in self.ranges}
+            jobs = {executor.submit(solve_route, self.rt_inputs, range): range for range in self.origin_ranges}
             # As each job is completed, add some logging information and store the results to post-process later
             for future in futures.as_completed(jobs):
                 completed_jobs += 1
