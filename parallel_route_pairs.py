@@ -223,6 +223,28 @@ class Route:  # pylint:disable = too-many-instance-attributes
             )
         self.network_data_source = nds_layer_name
 
+    def _select_inputs(self, origins_criteria):
+        """Create layers from the origins so the layer contains only the desired inputs for the chunk.
+
+        Args:
+            origins_criteria (list): Origin ObjectID range to select from the input dataset
+        """
+        # Select the origins with ObjectIDs in this range
+        self.logger.debug("Selecting origins for this chunk...")
+        origins_oid_field_name = arcpy.Describe(self.origins).oidFieldName
+        origins_where_clause = (
+            f"{origins_oid_field_name} >= {origins_criteria[0]} "
+            f"And {origins_oid_field_name} <= {origins_criteria[1]}"
+        )
+        self.logger.debug(f"Origins where clause: {origins_where_clause}")
+        self.input_origins_layer_obj = run_gp_tool(
+            arcpy.management.MakeFeatureLayer,
+            [self.origins, self.input_origins_layer, origins_where_clause],
+            log_to_use=self.logger
+        ).getOutput(0)
+        num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
+        self.logger.debug(f"Number of origins selected: {num_origins}")
+
     def initialize_rt_solver(self):
         """Initialize a Route solver object and set properties."""
         # For a local network dataset, we need to checkout the Network Analyst extension license.
@@ -266,8 +288,64 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.rt_solver.timeOfDay = self.time_of_day
         self.logger.debug(f"timeOfDay: {self.time_of_day}")
 
-        # Determine if the travel mode has impedance units that are time-based, distance-based, or other.
-        self._determine_if_travel_mode_time_based()
+    def _insert_stops(self):
+        """Insert the origins and destinations as stops for the analysis."""
+        # Make a layer for destinations for quicker access
+        run_gp_tool(
+            arcpy.management.MakeFeatureLayer,
+            [self.destinations, self.input_destinations_layer],
+            log_to_use=self.logger
+        )
+
+        # Add fields to input Stops with the origin and destination's original unique IDs
+        field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
+                       "Integer": "LONG", "OID": "LONG"}
+        origin_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.origin_id_field)[0]
+        origin_field_def = [self.origin_unique_id_field_name, field_types[origin_id_field.type]]
+        if origin_id_field.type == "String":
+            origin_field_def += [self.origin_unique_id_field_name, origin_id_field.length]
+        dest_fields = arcpy.ListFields(self.input_destinations_layer)
+        location_fields = ["SourceID", "SourceOID", "PosAlong", "SideOfEdge"]
+        if not set(location_fields).issubset(set([f.name for f in dest_fields])):
+            location_fields = []  # Do not use location fields for this analysis
+        dest_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.dest_id_field)[0]
+        dest_field_def = [self.dest_unique_id_field_name, field_types[dest_id_field.type]]
+        if dest_id_field.type == "String":
+            dest_field_def += [self.dest_unique_id_field_name, dest_id_field.length]
+        self.rt_solver.addFields(arcpy.nax.RouteInputDataType.Stops, [origin_field_def, dest_field_def])
+
+        # Use an insertCursor to insert Stops into the Route analysis
+        destinations = {}
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@", self.dest_unique_id_field_name] +
+                location_fields
+        ) as icur:
+            # Loop through origins and insert them into Stops along with their assigned destinations
+            for origin_row in arcpy.da.SearchCursor(  # pylint: disable=no-member
+                self.input_origins_layer,
+                ["SHAPE@", self.origin_id_field, self.assigned_dest_field]
+            ):
+                dest_id = origin_row[2]
+                if dest_id is None:
+                    continue
+                if dest_id not in destinations:
+                    dest_val = f"'{dest_id}'" if isinstance(dest_id, str) else dest_id
+                    with arcpy.da.SearchCursor(  # pylint: disable=no-member
+                        self.input_destinations_layer,
+                        ["SHAPE@", self.dest_id_field] + location_fields,
+                        where_clause=f"{self.dest_id_field} = {dest_val}"
+                    ) as cur:
+                        try:
+                            destinations[dest_id] = next(cur)
+                        except StopIteration:
+                            # The origin's destination is not present in the destinations table. Just skip the origin.
+                            continue
+                # Insert origin and destination
+                destination_row = destinations[dest_id]
+                route_name = f"{origin_row[1]} - {dest_id}"
+                icur.insertRow([route_name, 1, origin_row[1], origin_row[0], None] + [None]*len(location_fields))
+                icur.insertRow([route_name, 2, None] + list(destination_row))
 
     def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
         """Create and solve an Route analysis for the designated chunk of origins and their assigned destinations.
@@ -354,83 +432,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.logger.debug(f"Exporting Route output to {output_routes}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Routes, output_routes)
         self.job_result["outputRoutes"] = output_routes
-
-    def _select_inputs(self, origins_criteria):
-        """Create layers from the origins so the layer contains only the desired inputs for the chunk.
-
-        Args:
-            origins_criteria (list): Origin ObjectID range to select from the input dataset
-        """
-        # Select the origins with ObjectIDs in this range
-        self.logger.debug("Selecting origins for this chunk...")
-        origins_where_clause = (
-            f"{self.origins_oid_field_name} >= {origins_criteria[0]} "
-            f"And {self.origins_oid_field_name} <= {origins_criteria[1]}"
-        )
-        self.logger.debug(f"Origins where clause: {origins_where_clause}")
-        self.input_origins_layer_obj = run_gp_tool(
-            arcpy.management.MakeFeatureLayer,
-            [self.origins, self.input_origins_layer, origins_where_clause],
-            log_to_use=self.logger
-        ).getOutput(0)
-        num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
-        self.logger.debug(f"Number of origins selected: {num_origins}")
-
-    def _insert_stops(self):
-        """Insert the origins and destinations as stops for the analysis."""
-        # Make a layer for destinations for quicker access
-        run_gp_tool(
-            arcpy.management.MakeFeatureLayer,
-            [self.destinations, self.input_destinations_layer],
-            log_to_use=self.logger
-        )
-
-        # Add fields to input Stops with the origin and destination's original unique IDs
-        field_types = {
-            "String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT", "Integer": "LONG"}
-        origin_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.origin_id_field)[0]
-        origin_field_def = [self.origin_unique_id_field_name, field_types[origin_id_field.type]]
-        if origin_id_field.type == "String":
-            origin_field_def += [self.origin_unique_id_field_name, origin_id_field.length]
-        dest_fields = arcpy.ListFields(self.input_destinations_layer)
-        location_fields = ["SourceID", "SourceOID", "PosAlong", "SideOfEdge"]
-        if not set(location_fields).issubset(set([f.name for f in dest_fields])):
-            location_fields = []  # Do not use location fields for this analysis
-        dest_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.dest_id_field)[0]
-        dest_field_def = [self.dest_unique_id_field_name, field_types[dest_id_field.type]]
-        if dest_id_field.type == "String":
-            dest_field_def += [self.dest_unique_id_field_name, dest_id_field.length]
-        self.rt_solver.addFields(arcpy.nax.RouteInputDataType.Stops, [origin_field_def, dest_field_def])
-
-        # Use an insertCursor to insert Stops into the Route analysis
-        destinations = {}
-        with self.rt_solver.insertCursor(
-            arcpy.nax.RouteInputDataType.Stops,
-            ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@", self.dest_unique_id_field_name] +
-                location_fields
-        ) as icur:
-            # Loop through origins and insert them into Stops along with their assigned destinations
-            for origin_row in arcpy.da.SearchCursor(
-                self.input_origins_layer,
-                ["SHAPE@", self.origin_id_field, self.assigned_dest_field]
-            ):
-                dest_id = origin_row[1]
-                if dest_id not in destinations:
-                    with arcpy.da.SearchCursor(
-                        self.input_destinations_layer,
-                        ["SHAPE@", self.dest_id_field] + location_fields,
-                        where=f"{self.dest_id_field} = {dest_id}"  ## TODO: Update for str/int
-                    ) as cur:
-                        try:
-                            destinations[dest_id] = next(cur)
-                        except StopIteration:
-                            # The origin's destination is not present in the destinations table. Just skip the origin.
-                            continue
-                # Insert origin and destination
-                destination_row = destinations[dest_id]
-                route_name = f"{origin_row[1]} - {dest_id}"
-                icur.insertRow([route_name, 1, origin_row[1], origin_row[0], None] + [None]*len(location_fields))
-                icur.insertRow([route_name, 2, None] + list(destination_row))
 
     def setup_logger(self, logger_obj):
         """Set up the logger used for logging messages for this process. Logs are written to a text file.
