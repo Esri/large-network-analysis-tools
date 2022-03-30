@@ -1,4 +1,4 @@
-"""Unit tests for the parallel_parallel_odcm.py module.'
+"""Unit tests for the parallel_.py module.'
 
 Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
