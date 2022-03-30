@@ -353,39 +353,6 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         # Clean up. Delete temporary copy of inputs
         arcpy.management.Delete([temp_inputs])
 
-    def _precalculate_network_locations(self, input_features):
-        """Precalculate network location fields if possible for faster loading and solving later.
-
-        Cannot be used if the network data source is a service. Uses the searchTolerance, searchToleranceUnits, and
-        searchQuery properties set in the OD config file.
-
-        Args:
-            input_features (feature class catalog path): Feature class to calculate network locations for
-            network_data_source (network dataset catalog path): Network dataset to use to calculate locations
-            travel_mode (travel mode): Travel mode name, object, or json representation to use when calculating
-            locations.
-        """
-        if self.is_service:
-            arcpy.AddMessage(
-                "Skipping precalculating network location fields because the network data source is a service.")
-            return
-
-        arcpy.AddMessage(f"Precalculating network location fields for {input_features}...")
-
-        # Get location settings from config file if present
-        search_tolerance = None
-        if "searchTolerance" in OD_PROPS and "searchToleranceUnits" in OD_PROPS:
-            search_tolerance = f"{OD_PROPS['searchTolerance']} {OD_PROPS['searchToleranceUnits'].name}"
-        search_query = OD_PROPS.get("search_query", None)
-
-        # Calculate network location fields if network data source is local
-        arcpy.na.CalculateLocations(
-            input_features, self.network_data_source,
-            search_tolerance=search_tolerance,
-            search_query=search_query,
-            travel_mode=self.travel_mode
-        )
-
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the OD Cost Matrix."""
         # Copy Origins and Destinations to outputs
@@ -411,11 +378,14 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
-            self._precalculate_network_locations(self.output_origins)
+            helpers.precalculate_network_locations(
+                self.output_origins, self.network_data_source, self.travel_mode, OD_PROPS)
             if not self.same_origins_destinations:
-                self._precalculate_network_locations(self.output_destinations)
+                helpers.precalculate_network_locations(
+                    self.output_destinations, self.network_data_source, self.travel_mode, OD_PROPS)
             for barrier_fc in self.barriers:
-                self._precalculate_network_locations(barrier_fc)
+                helpers.precalculate_network_locations(
+                    barrier_fc, self.network_data_source, self.travel_mode, OD_PROPS)
 
         # If Origins and Destinations were the same, copy the output origins to the output destinations. This saves us
         # from having to spatially sort and precalculate network locations on the same feature class twice.

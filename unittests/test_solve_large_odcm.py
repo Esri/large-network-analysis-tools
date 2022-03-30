@@ -213,21 +213,6 @@ class TestSolveLargeODCM(unittest.TestCase):
         self.assertTrue(arcpy.Exists(fc_to_sort))
         self.assertIn("DestinationOID", [f.name for f in arcpy.ListFields(fc_to_sort)])
 
-    def test_precalculate_network_locations(self):
-        """Test the precalculate_network_locations function."""
-        loc_fields = set(["SourceID", "SourceOID", "PosAlong", "SideOfEdge"])
-
-        # Precalculate network locations
-        od_solver = solve_large_odcm.ODCostMatrixSolver(**self.od_args)
-        fc_to_precalculate = os.path.join(self.output_gdb, "Precalculated")
-        arcpy.management.Copy(self.destinations, fc_to_precalculate)
-        od_solver._precalculate_network_locations(fc_to_precalculate)
-        actual_fields = set([f.name for f in arcpy.ListFields(fc_to_precalculate)])
-        self.assertTrue(loc_fields.issubset(actual_fields), "Network location fields not added")
-        for row in arcpy.da.SearchCursor(fc_to_precalculate, list(loc_fields)):  # pylint: disable=no-member
-            for val in row:
-                self.assertIsNotNone(val)
-
     def test_solve_large_od_cost_matrix_featureclass(self):
         """Test the full solve OD Cost Matrix workflow with feature class output."""
         od_solver = solve_large_odcm.ODCostMatrixSolver(**self.od_args)
