@@ -165,50 +165,37 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         rt_solver._update_max_inputs_for_service()
         self.assertEqual(max_routes, rt_solver.chunk_size)
 
-    # def test_spatially_sort_input(self):
-    #     """Test the spatially_sort_input function."""
-    #     rt_solver = solve_large_odcm.ODCostMatrixSolver(**self.rt_args)
-    #     fc_to_sort = os.path.join(self.output_gdb, "Sorted")
-    #     arcpy.management.Copy(self.destinations, fc_to_sort)
-    #     rt_solver._spatially_sort_input(fc_to_sort, "DestinationOID")
-    #     self.assertTrue(arcpy.Exists(fc_to_sort))
-    #     self.assertIn("DestinationOID", [f.name for f in arcpy.ListFields(fc_to_sort)])
+    def test_solve_large_route_pair_analysis(self):
+        """Test the full solve route pair workflow."""
+        rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**self.rt_args)
+        rt_solver.solve_large_route_pair_analysis()
+        self.assertTrue(arcpy.Exists(self.rt_args["output_routes"]))
 
-    # def test_solve_large_od_cost_matrix_featureclass(self):
-    #     """Test the full solve OD Cost Matrix workflow with feature class output."""
-    #     rt_solver = solve_large_odcm.ODCostMatrixSolver(**self.rt_args)
-    #     rt_solver.solve_large_od_cost_matrix()
-    #     self.assertTrue(arcpy.Exists(self.rt_args["output_od_lines"]))
-    #     self.assertTrue(arcpy.Exists(self.rt_args["output_origins"]))
-    #     self.assertTrue(arcpy.Exists(self.rt_args["output_destinations"]))
-
-    # def test_cli(self):
-    #     """Test the command line interface of solve_large_odcm."""
-    #     out_folder = os.path.join(self.scratch_folder, "CLI_CSV_Output")
-    #     os.mkdir(out_folder)
-    #     odcm_inputs = [
-    #         os.path.join(sys.exec_prefix, "python.exe"),
-    #         os.path.join(os.path.dirname(CWD), "solve_large_odcm.py"),
-    #         "--origins", self.origins,
-    #         "--destinations", self.destinations,
-    #         "--output-origins", os.path.join(self.output_gdb, "OutOriginsCLI"),
-    #         "--output-destinations", os.path.join(self.output_gdb, "OutDestinationsCLI"),
-    #         "--network-data-source", self.local_nd,
-    #         "--travel-mode", self.local_tm_time,
-    #         "--time-units", "Minutes",
-    #         "--distance-units", "Miles",
-    #         "--output-format", "CSV files",
-    #         "--output-data-folder", out_folder,
-    #         "--chunk-size", "50",
-    #         "--max-processes", "4",
-    #         "--cutoff", "10",
-    #         "--num-destinations", "1",
-    #         "--time-of-day", self.time_of_day_str,
-    #         "--precalculate-network-locations", "true",
-    #         "--barriers", self.barriers
-    #     ]
-    #     result = subprocess.run(odcm_inputs)
-    #     self.assertEqual(result.returncode, 0)
+    def test_cli(self):
+        """Test the command line interface of solve_large_route_pair_analysis."""
+        out_folder = os.path.join(self.scratch_folder, "CLI_CSV_Output")
+        os.mkdir(out_folder)
+        rt_inputs = [
+            os.path.join(sys.exec_prefix, "python.exe"),
+            os.path.join(os.path.dirname(CWD), "solve_large_route_pair_analysis.py"),
+            "--origins", self.origins,
+            "--origins-id-field", "ID",
+            "--assigned-dest-field", "StoreID",
+            "--destinations", self.destinations,
+            "--destinations-id-field", "NAME",
+            "--network-data-source", self.local_nd,
+            "--travel-mode", self.local_tm_dist,
+            "--time-units", "Minutes",
+            "--distance-units", "Miles",
+            "--max-routes", "15",
+            "--max-processes", "4",
+            "--out-routes", os.path.join(self.output_gdb, "OutCLIRoutes"),
+            "--time-of-day", self.time_of_day_str,
+            "--precalculate-network-locations", "true",
+            "--sort-origins", "true"
+        ]
+        result = subprocess.run(rt_inputs, check=True)
+        self.assertEqual(result.returncode, 0)
 
 
 if __name__ == '__main__':
