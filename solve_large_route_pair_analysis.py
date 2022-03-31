@@ -51,7 +51,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
         network_data_source, travel_mode, time_units, distance_units,
         chunk_size, max_processes, output_routes,
-        time_of_day=None, barriers=None, precalculate_network_locations=True
+        time_of_day=None, barriers=None, precalculate_network_locations=True, sort_origins=True
     ):
         """Initialize the RoutePairSolver class.
 
@@ -98,6 +98,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.time_of_day_dt = None  # Set during validation
         self.barriers = barriers if barriers else []
         self.should_precalc_network_locations = precalculate_network_locations
+        self.should_sort_origins = sort_origins
         self.output_routes = output_routes
 
         # Scratch folder to store intermediate outputs from the Route processes
@@ -280,7 +281,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         Also adds a field called "OriginOID" to the input feature class to preserve the original OID values.
         """
-        arcpy.AddMessage(f"Spatially sorting input dataset {self.output_origins}...")
+        arcpy.AddMessage(f"Sorting origins by assigned destination...")
 
         # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
         # Note: This can be implemented in a simpler way in ArcGIS Pro 2.9 and later because the Sort tool was
@@ -326,6 +327,10 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             os.path.dirname(self.output_destinations),
             os.path.basename(self.output_destinations)
         )
+
+        # Sort origins by assigned destination
+        if self.should_sort_origins:
+            self._sort_origins_by_assigned_destination()
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:

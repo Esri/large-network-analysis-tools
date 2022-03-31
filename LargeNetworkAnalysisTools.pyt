@@ -468,14 +468,6 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Output"
         )
 
-        param_out_destinations = arcpy.Parameter(
-            displayName="Output Updated Destinations",
-            name="Output_Updated_Destinations",
-            datatype="DEFeatureClass",
-            parameterType="Required",
-            direction="Output"
-        )
-
         param_time_of_day = arcpy.Parameter(
             displayName="Time of Day",
             name="Time_Of_Day",
@@ -504,6 +496,16 @@ class SolveLargeAnalysisWithKnownPairs(object):
         )
         param_precalculate_network_locations.value = True
 
+        param_sort_origins = arcpy.Parameter(
+            displayName="Sort Origins by Assigned Destination",
+            name="Sort_Origins",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input",
+            category="Advanced"
+        )
+        param_sort_origins.value = True
+
         params = [
             param_origins,  # 0
             param_origin_id_field,  # 1
@@ -517,10 +519,10 @@ class SolveLargeAnalysisWithKnownPairs(object):
             param_chunk_size,  # 9
             param_max_processes,  # 10
             param_out_routes,  # 11
-            param_out_destinations,  # 12
-            param_time_of_day,  # 13
-            param_barriers,  # 14
-            param_precalculate_network_locations  # 15
+            param_time_of_day,  # 12
+            param_barriers,  # 13
+            param_precalculate_network_locations,  # 14
+            param_sort_origins,  # 15
         ]
 
         return params
@@ -534,7 +536,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         validation is performed.  This method is called whenever a parameter
         has been changed."""
         param_network = parameters[5]
-        param_precalculate = parameters[15]
+        param_precalculate = parameters[14]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         ## TODO: Share code
@@ -554,6 +556,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         param_max_processes = parameters[10]
 
         # If the network data source is arcgis.com, cap max processes
+        ##TODO: Share code
         if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
             if param_max_processes.altered and param_max_processes.valueAsText:
                 if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
@@ -567,7 +570,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
     def execute(self, parameters, messages):
         """The source code of the tool."""
         # Initialize the solver class
-        time_of_day = parameters[13].value
+        time_of_day = parameters[12].value
         if time_of_day:
             time_of_day = time_of_day.strftime(helpers.DATETIME_FORMAT)
         rt_solver = RoutePairSolver(
@@ -583,10 +586,10 @@ class SolveLargeAnalysisWithKnownPairs(object):
             parameters[9].value,  # chunk size
             parameters[10].value,  # max processes
             parameters[11].valueAsText,  # output routes
-            parameters[12].valueAsText,  # output destinations
             time_of_day,  # time of day
-            get_catalog_path_multivalue(parameters[14]),  # barriers
-            parameters[15].value  # Should precalculate network locations
+            get_catalog_path_multivalue(parameters[13]),  # barriers
+            parameters[14].value,  # Should precalculate network locations
+            parameters[15].value  # Should sort origins
         )
 
         # Solve the OD Cost Matrix analysis
