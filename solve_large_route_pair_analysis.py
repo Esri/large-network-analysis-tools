@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import datetime
+import uuid
 import traceback
 import argparse
 import subprocess
@@ -47,9 +48,9 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     """
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field, network_data_source, travel_mode,
-        time_units, distance_units, chunk_size, max_processes,
-        output_routes, output_origins, output_destinations,
+        self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
+        network_data_source, travel_mode, time_units, distance_units,
+        chunk_size, max_processes, output_routes,
         time_of_day=None, barriers=None, precalculate_network_locations=True
     ):
         """Initialize the RoutePairSolver class.
@@ -97,10 +98,15 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.time_of_day_dt = None  # Set during validation
         self.barriers = barriers if barriers else []
         self.should_precalc_network_locations = precalculate_network_locations
-
         self.output_routes = output_routes
-        self.output_origins = output_origins
-        self.output_destinations = output_destinations
+
+        # Scratch folder to store intermediate outputs from the Route processes
+        unique_id = uuid.uuid4().hex
+        self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "rt_" + unique_id)  # pylint: disable=no-member
+        arcpy.AddMessage(f"Intermediate outputs will be written to {self.scratch_folder}.")
+        self.scratch_gdb = os.path.join(self.scratch_folder, "Inputs.gdb")
+        self.output_origins = os.path.join(self.scratch_gdb, "Origins")  # pylint: disable=no-member
+        self.output_destinations = os.path.join(self.scratch_gdb, "Destinations")  # pylint: disable=no-member
 
         self.is_service = helpers.is_nds_service(self.network_data_source)
         self.service_limits = None  # Set during validation
@@ -321,7 +327,11 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
-        # Copy Destinations to output
+        # Make scratch folder and geodatabase
+        os.mkdir(self.scratch_folder)
+        arcpy.management.CreateFileGDB(os.path.dirname(self.scratch_gdb), os.path.basename(self.scratch_gdb))
+
+        # Copy Origins and Destinations to output
         arcpy.AddMessage("Copying input origins and destinations to outputs...")
         arcpy.conversion.FeatureClassToFeatureClass(
             self.origins,
@@ -336,8 +346,6 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
-            ## TODO: Check based on chunk size and number of inputs assigned to each destination whether there is
-            ## any benefit in pre-calculating locations
             helpers.precalculate_network_locations(
                 self.output_destinations, self.network_data_source, self.travel_mode, RT_PROPS)
             for barrier_fc in self.barriers:
@@ -346,23 +354,25 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
     def _execute_solve(self):
         """Solve the multi-route analysis."""
-        # Launch the parallel_route_pairs script as a subprocess so it can spawn parallel processes. We have to do this because
-        # a tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
+        # Launch the parallel_route_pairs script as a subprocess so it can spawn parallel processes. We have to do this
+        # because a tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
         cwd = os.path.dirname(os.path.abspath(__file__))
-        # TODO
         rt_inputs = [
             os.path.join(sys.exec_prefix, "python.exe"),
             os.path.join(cwd, "parallel_route_pairs.py"),
             "--origins", self.output_origins,
+            "--origins-id-field", self.origin_id_field,
+            "--assigned-dest-field", self.assigned_dest_field,
             "--destinations", self.output_destinations,
+            "--destinations-id-field", self.dest_id_field,
             "--network-data-source", self.network_data_source,
             "--travel-mode", self.travel_mode,
             "--time-units", self.time_units,
             "--distance-units", self.distance_units,
-            "--max-origins", str(self.max_origins),
-            "--max-destinations", str(self.max_destinations),
+            "--max-routes", str(self.chunk_size),
             "--max-processes", str(self.max_processes),
-            "--output-format", str(self.output_format_str)
+            "--output-routes", str(self.output_routes),
+            "--scratch-folder", self.scratch_folder
         ]
         # Include other optional parameters if relevant
         if self.barriers:
@@ -370,7 +380,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             rt_inputs += self.barriers
         if self.time_of_day:
             rt_inputs += ["--time-of-day", self.time_of_day]
-        # TODO: Make shared code in a parent class
+
         # We do not want to show the console window when calling the command line tool from within our GP tool.
         # This can be done by setting this hex code.
         create_no_window = 0x08000000

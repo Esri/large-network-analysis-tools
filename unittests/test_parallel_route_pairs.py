@@ -47,10 +47,10 @@ class TestParallelRoutePairs(unittest.TestCase):
         arcpy.SignInToPortal(self.portal_nd, portal_credentials.PORTAL_USERNAME, portal_credentials.PORTAL_PASSWORD)
 
         # Create a unique output directory and gdb for this test
-        self.scratch_folder = os.path.join(
+        self.output_folder = os.path.join(
             CWD, "TestOutput", "Output_ParallelRoutePairs_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
-        os.makedirs(self.scratch_folder)
-        self.output_gdb = os.path.join(self.scratch_folder, "outputs.gdb")
+        os.makedirs(self.output_folder)
+        self.output_gdb = os.path.join(self.output_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
 
         self.route_args = {
@@ -64,7 +64,7 @@ class TestParallelRoutePairs(unittest.TestCase):
             "time_units": arcpy.nax.TimeUnits.Minutes,
             "distance_units": arcpy.nax.DistanceUnits.Miles,
             "time_of_day": None,
-            "scratch_folder": self.scratch_folder,
+            "scratch_folder": self.output_folder,
             "barriers": []
         }
 
@@ -81,6 +81,7 @@ class TestParallelRoutePairs(unittest.TestCase):
             "max_routes": 15,
             "max_processes": 4,
             "out_routes": os.path.join(self.output_gdb, "OutRoutes"),
+            "scratch_folder": self.output_folder,  # Should be set within test if real output will be written
             "time_of_day": "20220329 16:45",
             "barriers": ""
         }
@@ -125,8 +126,11 @@ class TestParallelRoutePairs(unittest.TestCase):
     def test_ParallelRoutePairCalculator_solve_route_in_parallel(self):
         """Test the solve_od_in_parallel function. Output to feature class."""
         out_routes = os.path.join(self.output_gdb, "Out_Combined_Routes")
+        scratch_folder = os.path.join(self.output_folder, "Out_Combined_Routes")
+        os.mkdir(scratch_folder)
         rt_inputs = deepcopy(self.parallel_rt_class_args)
         rt_inputs["out_routes"] = out_routes
+        rt_inputs["scratch_folder"] = scratch_folder
 
         # Run parallel process. This calculates the OD and also post-processes the results
         rt_calculator = parallel_route_pairs.ParallelRoutePairCalculator(**rt_inputs)

@@ -34,7 +34,6 @@ import time
 import datetime
 import traceback
 import argparse
-import pandas as pd
 
 import arcpy
 
@@ -415,7 +414,7 @@ class ParallelRoutePairCalculator:
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
         network_data_source, travel_mode, time_units, distance_units,
-        max_routes, max_processes, out_routes, time_of_day=None, barriers=None
+        max_routes, max_processes, out_routes, scratch_folder, time_of_day=None, barriers=None
     ):
         """Compute Routes between origins and their assigned destinations in parallel and combine results.
         TODO
@@ -439,6 +438,7 @@ class ParallelRoutePairCalculator:
                 Defaults to None.
         """
         self.out_routes = out_routes
+        self.scratch_folder = scratch_folder
         time_units = helpers.convert_time_units_str_to_enum(time_units)
         distance_units = helpers.convert_distance_units_str_to_enum(distance_units)
         if not barriers:
@@ -448,12 +448,6 @@ class ParallelRoutePairCalculator:
             time_of_day = None
         else:
             time_of_day = datetime.datetime.strptime(time_of_day, helpers.DATETIME_FORMAT)
-
-        # Scratch folder to store intermediate outputs from the Route processes
-        unique_id = uuid.uuid4().hex
-        self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "rt_" + unique_id)  # pylint: disable=no-member
-        LOGGER.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
-        os.mkdir(self.scratch_folder)
 
         # Initialize the dictionary of inputs to send to each OD solve
         self.rt_inputs = {
