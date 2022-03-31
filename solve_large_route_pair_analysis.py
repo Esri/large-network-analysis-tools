@@ -415,7 +415,6 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
 
 def _run_from_command_line():
-    # TODO
     """Read arguments from the command line and run the tool."""
     # Create the parser
     parser = argparse.ArgumentParser(description=globals().get("__doc__", ""), fromfile_prefix_chars='@')
@@ -426,19 +425,24 @@ def _run_from_command_line():
     help_string = "The full catalog path to the feature class containing the origins."
     parser.add_argument("-o", "--origins", action="store", dest="origins", help=help_string, required=True)
 
+    # --origins-id-field parameter
+    help_string = "The name of the unique ID field in origins."
+    parser.add_argument(
+        "-oif", "--origins-id-field", action="store", dest="origin_id_field", help=help_string, required=True)
+
+    # --assigned-dest-field parameter
+    help_string = "The name of the field in origins indicating the assigned destination."
+    parser.add_argument(
+        "-adf", "--assigned-dest-field", action="store", dest="assigned_dest_field", help=help_string, required=True)
+
     # --destinations parameter
     help_string = "The full catalog path to the feature class containing the destinations."
     parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
 
-    # --output-origins parameter
-    help_string = "The catalog path to the output feature class that will contain the updated origins."
+    # --destinations-id-field parameter
+    help_string = "The name of the unique ID field in destinations."
     parser.add_argument(
-        "-oo", "--output-origins", action="store", dest="output_origins", help=help_string, required=True)
-
-    # --output-destinations parameter
-    help_string = "The catalog path to the output feature class that will contain the updated destinations."
-    parser.add_argument(
-        "-od", "--output-destinations", action="store", dest="output_destinations", help=help_string, required=True)
+        "-dif", "--destinations-id-field", action="store", dest="dest_id_field", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
@@ -447,8 +451,8 @@ def _run_from_command_line():
 
     # --travel-mode parameter
     help_string = (
-        "A JSON string representation or string name of a travel mode from the network data source that will be used "
-        "for the analysis."
+        "The name or JSON string representation of the travel mode from the network data source that will be used for "
+        "the analysis."
     )
     parser.add_argument("-tm", "--travel-mode", action="store", dest="travel_mode", help=help_string, required=True)
 
@@ -461,75 +465,48 @@ def _run_from_command_line():
     parser.add_argument(
         "-du", "--distance-units", action="store", dest="distance_units", help=help_string, required=True)
 
-    # --chunk-size parameter
-    help_string = (
-        "Maximum number of origins and destinations that can be in one chunk for parallel processing of Route "
-        "solves. For example, 1000 means that a chunk consists of no more than 1000 origins and 1000 destinations."
-    )
+    # --max-routes parameter
+    help_string = "Maximum number of routes that can be in one chunk for parallel processing of Route solves."
     parser.add_argument(
-        "-ch", "--chunk-size", action="store", dest="chunk_size", type=int, help=help_string, required=True)
+        "-mr", "--max-routes", action="store", dest="chunk_size", type=int, help=help_string, required=True)
 
     # --max-processes parameter
     help_string = "Maximum number parallel processes to use for the Route solves."
     parser.add_argument(
         "-mp", "--max-processes", action="store", dest="max_processes", type=int, help=help_string, required=True)
 
-    # --output-format parameter
-    help_string = ("The desired format for the output Route Lines results. "
-                   f"Choices: {', '.join(helpers.OUTPUT_FORMATS)}")
-    parser.add_argument(
-        "-of", "--output-format", action="store", dest="output_format", help=help_string, required=True)
-
-    # --output-od-lines parameter
-    help_string = ("The catalog path to the output feature class that will contain the combined Route "
-                   "results. Applies only when output-format is 'Feature class'.")
-    parser.add_argument(
-        "-ol", "--output-od-lines", action="store", dest="output_od_lines", help=help_string, required=False)
-
-    # --output-data-format parameter
-    help_string = ("The catalog path to the folder that will contain the Route result files. "
-                   "Applies only when output-format is 'CSV files' or 'Apache Arrow files'.")
-    parser.add_argument(
-        "-odf", "--output-data-folder", action="store", dest="output_data_folder", help=help_string, required=False)
-
-    # --cutoff parameter
-    help_string = (
-        "Impedance cutoff to limit the Route search distance. Should be specified in the same units as the "
-        "time-units parameter if the travel mode's impedance is in units of time or in the same units as the "
-        "distance-units parameter if the travel mode's impedance is in units of distance. Otherwise, specify this in "
-        "the units of the travel mode's impedance attribute."
-    )
-    parser.add_argument(
-        "-co", "--cutoff", action="store", dest="cutoff", type=float, help=help_string, required=False)
-
-    # --num-destinations parameter
-    help_string = "The number of destinations to find for each origin. Set to None to find all destinations."
-    parser.add_argument(
-        "-nd", "--num-destinations", action="store", dest="num_destinations", type=int, help=help_string,
-        required=False)
+    # --out-routes parameter
+    help_string = "The full catalog path to the output routes feature class."
+    parser.add_argument("-r", "--out-routes", action="store", dest="output_routes", help=help_string, required=True)
 
     # --time-of-day parameter
     help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "
                    "time neutral.")
     parser.add_argument("-tod", "--time-of-day", action="store", dest="time_of_day", help=help_string, required=False)
 
-    # --precalculate-network-locations parameter
-    help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."
-    parser.add_argument(
-        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
-        dest="precalculate_network_locations", help=help_string, required=True)
-
     # --barriers parameter
     help_string = "A list of catalog paths to the feature classes containing barriers to use in the Route."
     parser.add_argument(
         "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
 
+    # --precalculate-network-locations parameter
+    help_string = "Whether or not to precalculate network location fields before solving the analysis."
+    parser.add_argument(
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
+        dest="precalculate_network_locations", help=help_string, required=True)
+
+    # --sort-origins parameter
+    help_string = "Whether or not to sort the origins by assigned destination before solving the analysis."
+    parser.add_argument(
+        "-so", "--sort-origins", action="store", type=lambda x: bool(strtobool(x)),
+        dest="sort_origins", help=help_string, required=True)
+
     # Get arguments as dictionary.
     args = vars(parser.parse_args())
 
     # Solve the Route
-    od_solver = ODCostMatrixSolver(**args)
-    od_solver.solve_large_od_cost_matrix()
+    rt_solver = RoutePairSolver(**args)
+    rt_solver.solve_large_route_pair_analysis()
 
 
 if __name__ == "__main__":
