@@ -633,7 +633,7 @@ def launch_parallel_rt_pairs():
     # --destinations-id-field parameter
     help_string = "The name of the unique ID field in destinations."
     parser.add_argument(
-        "-oif", "--destinations-id-field", action="store", dest="dest_id_field", help=help_string, required=True)
+        "-dif", "--destinations-id-field", action="store", dest="dest_id_field", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
@@ -678,7 +678,7 @@ def launch_parallel_rt_pairs():
     # --time-of-day parameter
     help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "
                    "time neutral.")
-    parser.add_argument("-tod", "--time-of-day", action="store", dest="time_of_day", help=help_string,required=False)
+    parser.add_argument("-tod", "--time-of-day", action="store", dest="time_of_day", help=help_string, required=False)
 
     # --barriers parameter
     help_string = "A list of catalog paths to the feature classes containing barriers to use in the Route."
