@@ -274,7 +274,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         Also adds a field called "OriginOID" to the input feature class to preserve the original OID values.
         """
-        arcpy.AddMessage(f"Sorting origins by assigned destination...")
+        arcpy.AddMessage("Sorting origins by assigned destination...")
 
         # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
         # Note: This can be implemented in a simpler way in ArcGIS Pro 2.9 and later because the Sort tool was
@@ -345,14 +345,14 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             "--origins-id-field", self.origin_id_field,
             "--assigned-dest-field", self.assigned_dest_field,
             "--destinations", self.output_destinations,
-            "--destinations-id-field", self.dest_id_field,
+            "--destinations-id-field", self.dest_id_field,  ## TODO: If ID field is ObjectID, transfer it
             "--network-data-source", self.network_data_source,
             "--travel-mode", self.travel_mode,
             "--time-units", self.time_units,
             "--distance-units", self.distance_units,
             "--max-routes", str(self.chunk_size),
             "--max-processes", str(self.max_processes),
-            "--output-routes", str(self.output_routes),
+            "--out-routes", str(self.output_routes),
             "--scratch-folder", self.scratch_folder
         ]
         # Include other optional parameters if relevant
