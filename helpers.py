@@ -169,6 +169,44 @@ def validate_input_feature_class(feature_class):
         raise ValueError(err)
 
 
+def validate_network_data_source(network_data_source):
+    """Validate the network data source and return its string-based representation.
+
+    Check out the Network Analyst extension license if relevant.
+
+    Args:
+        network_data_source: The network data source from the tool inputs.
+
+    Raises:
+        ValueError: If the network dataset doesn't exist
+        RuntimeError: If the Network Analyst extension can't be checked out.
+
+    Returns:
+        str: Network data source URL or catalog path suitable for passing as a command line argument.
+    """
+    is_service = is_nds_service(network_data_source)
+    if not is_service and not arcpy.Exists(network_data_source):
+        err = f"Input network dataset {network_data_source} does not exist."
+        arcpy.AddError(err)
+        raise ValueError(err)
+    if is_service:
+        # Add a trailing slash to the URL if needed to avoid potential problems later
+        if not network_data_source.endswith("/"):
+            network_data_source = network_data_source + "/"
+    else:
+        # Try to check out the Network Analyst extension
+        try:
+            arcpy.CheckOutExtension("network")
+        except Exception as ex:
+            err = "Unable to check out Network Analyst extension license."
+            arcpy.AddError(err)
+            raise RuntimeError(err) from ex
+        # If the network dataset is a layer, convert it to a catalog path so we can pass it to the subprocess
+        if hasattr(network_data_source, "dataSource"):
+            network_data_source = network_data_source.dataSource
+    return network_data_source
+
+
 def precalculate_network_locations(input_features, network_data_source, travel_mode, config_file_props):
     """Precalculate network location fields if possible for faster loading and solving later.
 

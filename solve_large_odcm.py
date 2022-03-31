@@ -173,21 +173,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             helpers.validate_input_feature_class(barrier_fc)
 
         # Validate network
-        if not self.is_service and not arcpy.Exists(self.network_data_source):
-            err = f"Input network dataset {self.network_data_source} does not exist."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if not self.is_service:
-            # Try to check out the Network Analyst extension
-            try:
-                arcpy.CheckOutExtension("network")
-            except Exception as ex:
-                err = "Unable to check out Network Analyst extension license."
-                arcpy.AddError(err)
-                raise RuntimeError(err) from ex
-            # If the network dataset is a layer, convert it to a catalog path so we can pass it to the subprocess
-            if hasattr(self.network_data_source, "dataSource"):
-                self.network_data_source = self.network_data_source.dataSource
+        self.network_data_source = helpers.validate_network_data_source(self.network_data_source)
 
         # Validate OD Cost Matrix settings and convert travel mode to a JSON string
         self.travel_mode = self._validate_od_settings()

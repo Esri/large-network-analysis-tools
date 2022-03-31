@@ -25,6 +25,7 @@ import helpers  # noqa: E402, pylint: disable=wrong-import-position
 from od_config import OD_PROPS  # noqa: E402, pylint: disable=wrong-import-position
 from rt_config import RT_PROPS  # noqa: E402, pylint: disable=wrong-import-position
 
+
 class TestHelpers(unittest.TestCase):
     """Test cases for the helpers module."""
 
@@ -129,6 +130,23 @@ class TestHelpers(unittest.TestCase):
             with self.assertRaises(ValueError) as ex:
                 helpers.validate_input_feature_class(input_fc)
             self.assertEqual(f"Input dataset {input_fc} has no rows.", str(ex.exception))
+
+    def test_validate_network_data_source(self):
+        """Test the validate_network_data_source function."""
+        # Check that it returns the catalog path of a network dataset layer
+        nd_layer = arcpy.na.MakeNetworkDatasetLayer(self.local_nd).getOutput(0)
+        with self.subTest(network_data_source=nd_layer):
+            self.assertEqual(self.local_nd, helpers.validate_network_data_source(nd_layer))
+        # Check that it returns a portal URL with a trailing slash if it initially lacked one
+        portal_url = self.portal_nd.strip(r"/")
+        with self.subTest(network_data_source=portal_url):
+            self.assertEqual(portal_url + r"/", helpers.validate_network_data_source(portal_url))
+        # Check for ValueError if the network dataset doesn't exist
+        bad_network = os.path.join(self.sf_gdb, "Transportation", "DoesNotExist")
+        with self.subTest(network_data_source=bad_network):
+            with self.assertRaises(ValueError) as ex:
+                helpers.validate_network_data_source(bad_network)
+            self.assertEqual(str(ex.exception), f"Input network dataset {bad_network} does not exist.")
 
     def test_precalculate_network_locations(self):
         """Test the precalculate_network_locations function."""
