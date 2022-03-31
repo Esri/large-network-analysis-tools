@@ -517,7 +517,7 @@ def _run_from_command_line():
     parser.add_argument("-tod", "--time-of-day", action="store", dest="time_of_day", help=help_string, required=False)
 
     # --precalculate-network-locations parameter
-    help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."
+    help_string = "Whether or not to precalculate network location fields before solving the analysis."
     parser.add_argument(
         "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
