@@ -774,8 +774,8 @@ class ParallelODCalculator:
         self.od_line_files = []
 
         # Construct OID ranges for chunks of origins and destinations
-        self.origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
-        destination_ranges = self._get_oid_ranges_for_input(destinations, max_destinations)
+        self.origin_ranges = helpers.get_oid_ranges_for_input(origins, max_origins)
+        destination_ranges = helpers.get_oid_ranges_for_input(destinations, max_destinations)
 
         # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
         self.ranges = itertools.product(self.origin_ranges, destination_ranges)
@@ -822,44 +822,6 @@ class ParallelODCalculator:
                 del odcm
 
         return optimized_cost_field
-
-    @staticmethod
-    def _get_oid_ranges_for_input(input_fc, max_chunk_size):
-        """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
-
-        Args:
-            input_fc (str, layer): Data that needs to be split into chunks
-            max_chunk_size (int): Maximum number of rows that can be in a chunk
-
-        Returns:
-            list: list of ObjectID ranges for the current dataset representing each chunk. For example,
-                [[1, 1000], [1001, 2000], [2001, 2478]] represents three chunks of no more than 1000 rows.
-        """
-        ranges = []
-        num_in_range = 0
-        current_range = [0, 0]
-        # Loop through all OIDs of the input and construct tuples of min and max OID for each chunk
-        # We do it this way and not by straight-up looking at the numerical values of OIDs to account
-        # for definition queries, selection sets, or feature layers with gaps in OIDs
-        for row in arcpy.da.SearchCursor(input_fc, "OID@"):  # pylint: disable=no-member
-            oid = row[0]
-            if num_in_range == 0:
-                # Starting new range
-                current_range[0] = oid
-            # Increase the count of items in this range and set the top end of the range to the current oid
-            num_in_range += 1
-            current_range[1] = oid
-            if num_in_range == max_chunk_size:
-                # Finishing up a chunk
-                ranges.append(current_range)
-                # Reset range trackers
-                num_in_range = 0
-                current_range = [0, 0]
-        # After looping, close out the last range if we still have one open
-        if current_range != [0, 0]:
-            ranges.append(current_range)
-
-        return ranges
 
     def solve_od_in_parallel(self):
         """Solve the OD Cost Matrix in chunks and post-process the results."""

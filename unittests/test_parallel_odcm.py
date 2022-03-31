@@ -300,12 +300,6 @@ class TestParallelODCM(unittest.TestCase):
         self.assertTrue(arcpy.Exists(result["outputLines"]), "OD line output does not exist.")
         self.assertEqual(2, int(arcpy.management.GetCount(result["outputLines"]).getOutput(0)))
 
-    def test_ParallelODCalculator_get_oid_ranges_for_input(self):
-        """Test the _get_oid_ranges_for_input function."""
-        od_calculator = parallel_odcm.ParallelODCalculator(**self.parallel_od_class_args)
-        ranges = od_calculator._get_oid_ranges_for_input(self.parallel_od_class_args["origins"], 50)
-        self.assertEqual([[1, 50], [51, 100], [101, 150], [151, 200], [201, 208]], ranges)
-
     def test_ParallelODCalculator_validate_od_settings(self):
         """Test the _validate_od_settings function."""
         # Test that with good inputs, we return the correct optimized field name

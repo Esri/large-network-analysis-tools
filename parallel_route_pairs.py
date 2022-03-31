@@ -478,7 +478,7 @@ class ParallelODCalculator:
         self.od_line_files = []
 
         # Construct OID ranges for chunks of origins and destinations
-        self.origin_ranges = self._get_oid_ranges_for_stops()
+        self.origin_ranges = helpers.get_oid_ranges_for_input(self.origins, self.max_routes)
 
         # Calculate the total number of jobs to use in logging
         self.total_jobs = len(self.origin_ranges)
@@ -515,41 +515,6 @@ class ParallelODCalculator:
                 # Delete output folder
                 shutil.rmtree(rt.job_result["jobFolder"], ignore_errors=True)
                 del rt
-
-    def _get_oid_ranges_for_stops(self):
-        """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
-
-        The origins table should already be sorted by the assigned destination field for best efficiency.
-
-        Returns:
-            list: list of ObjectID ranges for the current dataset representing each chunk. For example,
-                [[1, 1000], [1001, 2000], [2001, 2478]] represents three chunks of no more than 1000 rows.
-        """
-        ranges = []
-        num_in_range = 0
-        current_range = [0, 0]
-        # Loop through all OIDs of the origins and construct tuples of min and max OID for each chunk
-        # We do it this way and not by straight-up looking at the numerical values of OIDs to account
-        # for definition queries, selection sets, or feature layers with gaps in OIDs
-        for row in arcpy.da.SearchCursor(self.origins, ["OID@"]):  # pylint: disable=no-member
-            oid = row[0]
-            if num_in_range == 0:
-                # Starting new range
-                current_range[0] = oid
-            # Increase the count of items in this range and set the top end of the range to the current oid
-            num_in_range += 1
-            current_range[1] = oid
-            if num_in_range == self.max_routes:
-                # Finishing up a chunk
-                ranges.append(current_range)
-                # Reset range trackers
-                num_in_range = 0
-                current_range = [0, 0]
-        # After looping, close out the last range if we still have one open
-        if current_range != [0, 0]:
-            ranges.append(current_range)
-
-        return ranges
 
     def solve_route_in_parallel(self):
         """Solve the Route in chunks and post-process the results."""

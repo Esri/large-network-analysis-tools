@@ -155,6 +155,11 @@ class TestHelpers(unittest.TestCase):
         helpers.precalculate_network_locations(fc_to_precalculate, self.local_nd, "Driving Time", RT_PROPS)
         check_precalculated_locations(fc_to_precalculate)
 
+    def test_get_oid_ranges_for_input(self):
+        """Test the get_oid_ranges_for_input function."""
+        ranges = helpers.get_oid_ranges_for_input(os.path.join(self.sf_gdb, "Analysis", "TractCentroids"), 50)
+        self.assertEqual([[1, 50], [51, 100], [101, 150], [151, 200], [201, 208]], ranges)
+
     def test_parse_std_and_write_to_gp_ui(self):
         """Test the parse_std_and_write_to_gp_ui function."""
         # There is nothing much to test here except that nothing terrible happens.
