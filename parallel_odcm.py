@@ -793,7 +793,7 @@ class ParallelODCalculator:
         Returns:
             str: The name of the field in the output OD Lines table containing the optimized costs for the analysis
         """
-        # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties. This allows us to
+        # Create a dummy ODCostMatrix object and set properties. This allows us to
         # detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
         LOGGER.debug("Validating OD Cost Matrix settings...")
         optimized_cost_field = None
