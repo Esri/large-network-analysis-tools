@@ -217,3 +217,75 @@ def parse_std_and_write_to_gp_ui(msg_string):
             arcpy.AddMessage(msg)
     except Exception:  # pylint: disable=broad-except
         arcpy.AddMessage(msg_string)
+
+
+def run_gp_tool(log_to_use, tool, tool_args=None, tool_kwargs=None):
+    """Run a geoprocessing tool with nice logging.
+
+    The purpose of this function is simply to wrap the call to a geoprocessing tool in a way that we can log errors,
+    warnings, and info messages as well as tool run time into our logging. This helps pipe the messages back to our
+    script tool dialog.
+
+    Args:
+        tool (arcpy geoprocessing tool class): GP tool class command, like arcpy.management.CreateFileGDB
+        tool_args (list, optional): Ordered list of values to use as tool arguments. Defaults to None.
+        tool_kwargs (dictionary, optional): Dictionary of tool parameter names and values that can be used as named
+            arguments in the tool command. Defaults to None.
+        log_to_use (logging.logger, optional): logger class to use for messages. Defaults to LOGGER. When calling this
+            from the Route class, use self.logger instead so the messages go to the processes's log file instead
+            of stdout.
+
+    Returns:
+        GP result object: GP result object returned from the tool run.
+
+    Raises:
+        arcpy.ExecuteError if the tool fails
+    """
+    # Try to retrieve and log the name of the tool
+    tool_name = repr(tool)
+    try:
+        tool_name = tool.__esri_toolname__
+    except Exception:  # pylint: disable=broad-except
+        try:
+            tool_name = tool.__name__
+        except Exception:  # pylint: disable=broad-except
+            # Probably the tool didn't have an __esri_toolname__ property or __name__. Just don't worry about it.
+            pass
+    log_to_use.debug(f"Running geoprocessing tool {tool_name}...")
+
+    # Try running the tool, and log all messages
+    try:
+        if tool_args is None:
+            tool_args = []
+        if tool_kwargs is None:
+            tool_kwargs = {}
+        result = tool(*tool_args, **tool_kwargs)
+        info_msgs = [msg for msg in result.getMessages(0).splitlines() if msg]
+        warning_msgs = [msg for msg in result.getMessages(1).splitlines() if msg]
+        for msg in info_msgs:
+            log_to_use.debug(msg)
+        for msg in warning_msgs:
+            log_to_use.warning(msg)
+    except arcpy.ExecuteError:
+        log_to_use.error(f"Error running geoprocessing tool {tool_name}.")
+        # First check if it's a tool error and if so, handle warning and error messages.
+        info_msgs = [msg for msg in arcpy.GetMessages(0).strip("\n").splitlines() if msg]
+        warning_msgs = [msg for msg in arcpy.GetMessages(1).strip("\n").splitlines() if msg]
+        error_msgs = [msg for msg in arcpy.GetMessages(2).strip("\n").splitlines() if msg]
+        for msg in info_msgs:
+            log_to_use.debug(msg)
+        for msg in warning_msgs:
+            log_to_use.warning(msg)
+        for msg in error_msgs:
+            log_to_use.error(msg)
+        raise
+    except Exception:
+        # Unknown non-tool error
+        log_to_use.error(f"Error running geoprocessing tool {tool_name}.")
+        errs = traceback.format_exc().splitlines()
+        for err in errs:
+            log_to_use.error(err)
+        raise
+
+    log_to_use.debug(f"Finished running geoprocessing tool {tool_name}.")
+    return result

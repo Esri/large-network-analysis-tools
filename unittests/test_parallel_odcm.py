@@ -98,22 +98,6 @@ class TestParallelODCM(unittest.TestCase):
             "barriers": []
         }
 
-    def test_run_gp_tool(self):
-        """Test the run_gp_tool function."""
-        # Test for handled tool execute error (create fgdb in invalid folder)
-        with self.assertRaises(arcpy.ExecuteError):
-            parallel_odcm.run_gp_tool(
-                arcpy.management.CreateFileGDB,
-                [self.scratch_folder + "DoesNotExist"],
-                {"out_name": "outputs.gdb"}
-            )
-        # Test for handled non-arcpy error when calling function
-        with self.assertRaises(TypeError):
-            parallel_odcm.run_gp_tool("BadTool", [self.scratch_folder])
-        # Valid call to tool with simple function
-        parallel_odcm.run_gp_tool(
-            arcpy.management.CreateFileGDB, [self.scratch_folder], {"out_name": "testRunTool.gdb"})
-
     def test_ODCostMatrix_hour_to_time_units(self):
         """Test the _hour_to_time_units method of the ODCostMatrix class."""
         # Sanity test to make sure the method works for valid units

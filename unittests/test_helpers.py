@@ -14,6 +14,7 @@ Copyright 2022 Esri
 import sys
 import os
 import datetime
+import logging
 import unittest
 import arcpy
 import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal
@@ -169,6 +170,25 @@ class TestHelpers(unittest.TestCase):
         for msg in msgs:
             with self.subTest(msg=msg):
                 helpers.parse_std_and_write_to_gp_ui(msg)
+
+    def test_run_gp_tool(self):
+        """Test the run_gp_tool function."""
+        # Set up a logger to use with the function
+        logger = logging.getLogger(__name__)  # pylint:disable=invalid-name
+        # Test for handled tool execute error (create fgdb in invalid folder)
+        with self.assertRaises(arcpy.ExecuteError):
+            helpers.run_gp_tool(
+                logger,
+                arcpy.management.CreateFileGDB,
+                [self.scratch_folder + "DoesNotExist"],
+                {"out_name": "outputs.gdb"}
+            )
+        # Test for handled non-arcpy error when calling function
+        with self.assertRaises(TypeError):
+            helpers.run_gp_tool(logger, "BadTool", [self.scratch_folder])
+        # Valid call to tool with simple function
+        helpers.run_gp_tool(
+            logger, arcpy.management.CreateFileGDB, [self.scratch_folder], {"out_name": "testRunTool.gdb"})
 
 
 if __name__ == '__main__':

@@ -60,79 +60,6 @@ LOGGER.addHandler(console_handler)
 DELETE_INTERMEDIATE_OUTPUTS = True  # Set to False for debugging purposes
 
 
-def run_gp_tool(tool, tool_args=None, tool_kwargs=None, log_to_use=LOGGER):
-    ## TODO: Make shared helper function
-    """Run a geoprocessing tool with nice logging.
-
-    The purpose of this function is simply to wrap the call to a geoprocessing tool in a way that we can log errors,
-    warnings, and info messages as well as tool run time into our logging. This helps pipe the messages back to our
-    script tool dialog.
-
-    Args:
-        tool (arcpy geoprocessing tool class): GP tool class command, like arcpy.management.CreateFileGDB
-        tool_args (list, optional): Ordered list of values to use as tool arguments. Defaults to None.
-        tool_kwargs (dictionary, optional): Dictionary of tool parameter names and values that can be used as named
-            arguments in the tool command. Defaults to None.
-        log_to_use (logging.logger, optional): logger class to use for messages. Defaults to LOGGER. When calling this
-            from the Route class, use self.logger instead so the messages go to the processes's log file instead
-            of stdout.
-
-    Returns:
-        GP result object: GP result object returned from the tool run.
-
-    Raises:
-        arcpy.ExecuteError if the tool fails
-    """
-    # Try to retrieve and log the name of the tool
-    tool_name = repr(tool)
-    try:
-        tool_name = tool.__esri_toolname__
-    except Exception:  # pylint: disable=broad-except
-        try:
-            tool_name = tool.__name__
-        except Exception:  # pylint: disable=broad-except
-            # Probably the tool didn't have an __esri_toolname__ property or __name__. Just don't worry about it.
-            pass
-    log_to_use.debug(f"Running geoprocessing tool {tool_name}...")
-
-    # Try running the tool, and log all messages
-    try:
-        if tool_args is None:
-            tool_args = []
-        if tool_kwargs is None:
-            tool_kwargs = {}
-        result = tool(*tool_args, **tool_kwargs)
-        info_msgs = [msg for msg in result.getMessages(0).splitlines() if msg]
-        warning_msgs = [msg for msg in result.getMessages(1).splitlines() if msg]
-        for msg in info_msgs:
-            log_to_use.debug(msg)
-        for msg in warning_msgs:
-            log_to_use.warning(msg)
-    except arcpy.ExecuteError:
-        log_to_use.error(f"Error running geoprocessing tool {tool_name}.")
-        # First check if it's a tool error and if so, handle warning and error messages.
-        info_msgs = [msg for msg in arcpy.GetMessages(0).strip("\n").splitlines() if msg]
-        warning_msgs = [msg for msg in arcpy.GetMessages(1).strip("\n").splitlines() if msg]
-        error_msgs = [msg for msg in arcpy.GetMessages(2).strip("\n").splitlines() if msg]
-        for msg in info_msgs:
-            log_to_use.debug(msg)
-        for msg in warning_msgs:
-            log_to_use.warning(msg)
-        for msg in error_msgs:
-            log_to_use.error(msg)
-        raise
-    except Exception:
-        # Unknown non-tool error
-        log_to_use.error(f"Error running geoprocessing tool {tool_name}.")
-        errs = traceback.format_exc().splitlines()
-        for err in errs:
-            log_to_use.error(err)
-        raise
-
-    log_to_use.debug(f"Finished running geoprocessing tool {tool_name}.")
-    return result
-
-
 class Route:  # pylint:disable = too-many-instance-attributes
     """Used for solving an Route problem in parallel for a designated chunk of the input datasets."""
 
@@ -216,10 +143,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
         else:
             # The network dataset layer does not exist in this process, so create the layer.
             self.logger.debug("Creating network dataset layer...")
-            run_gp_tool(
+            helpers.run_gp_tool(
+                self.logger,
                 arcpy.na.MakeNetworkDatasetLayer,
                 [self.network_data_source, nds_layer_name],
-                log_to_use=self.logger
             )
         self.network_data_source = nds_layer_name
 
@@ -237,10 +164,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
             f"And {origins_oid_field_name} <= {origins_criteria[1]}"
         )
         self.logger.debug(f"Origins where clause: {origins_where_clause}")
-        self.input_origins_layer_obj = run_gp_tool(
+        self.input_origins_layer_obj = helpers.run_gp_tool(
+            self.logger,
             arcpy.management.MakeFeatureLayer,
             [self.origins, self.input_origins_layer, origins_where_clause],
-            log_to_use=self.logger
         ).getOutput(0)
         num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
         self.logger.debug(f"Number of origins selected: {num_origins}")
@@ -291,10 +218,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
     def _insert_stops(self):
         """Insert the origins and destinations as stops for the analysis."""
         # Make a layer for destinations for quicker access
-        run_gp_tool(
+        helpers.run_gp_tool(
+            self.logger,
             arcpy.management.MakeFeatureLayer,
             [self.destinations, self.input_destinations_layer],
-            log_to_use=self.logger
         )
 
         # Add fields to input Stops with the origin and destination's original unique IDs
@@ -420,10 +347,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
         # Make output gdb
         self.logger.debug("Creating output geodatabase for Route results...")
         od_workspace = os.path.join(self.job_folder, "scratch.gdb")
-        run_gp_tool(
+        helpers.run_gp_tool(
+            self.logger,
             arcpy.management.CreateFileGDB,
             [os.path.dirname(od_workspace), os.path.basename(od_workspace)],
-            log_to_use=self.logger
         )
 
         # Export routes
@@ -437,11 +364,13 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
 
         # Join the input ID fields to Routes
-        run_gp_tool(
+        helpers.run_gp_tool(
+            self.logger,
             arcpy.management.JoinField,
             [output_routes, "FirstStopOID", output_stops, "ObjectID", [self.origin_unique_id_field_name]]
         )
-        run_gp_tool(
+        helpers.run_gp_tool(
+            self.logger,
             arcpy.management.JoinField,
             [output_routes, "LastStopOID", output_stops, "ObjectID", [self.dest_unique_id_field_name]]
         )
@@ -701,54 +630,15 @@ class ParallelODCalculator:
         """
         # Create the final output feature class
         desc = arcpy.Describe(self.od_line_files[0])
-        run_gp_tool(arcpy.management.CreateFeatureclass, [
-            os.path.dirname(self.output_od_location),
-            os.path.basename(self.output_od_location),
-            "POLYLINE",
-            self.od_line_files[0],  # template feature class to transfer full schema
-            "SAME_AS_TEMPLATE",
-            "SAME_AS_TEMPLATE",
-            desc.spatialReference
-        ])
-
-        # Insert the rows from all the individual output feature classes into the final output
-        fields = ["SHAPE@"] + [f.name for f in desc.fields]
-        with arcpy.da.InsertCursor(self.output_od_location, fields) as cur:  # pylint: disable=no-member
-            # Handle each origin range separately to avoid pulling all results into memory at once
-            for origin_range in self.origin_ranges:
-                fcs_for_origin_range = [
-                    f for f in self.od_line_files if os.path.basename(f).startswith(
-                        f"ODLines_O_{origin_range[0]}_{origin_range[1]}_"
-                    )
-                ]
-                if not fcs_for_origin_range:
-                    # No records for this chunk of origins. Just move on to the next chunk of origins.
-                    continue
-                if len(fcs_for_origin_range) < 2:
-                    # All results for this chunk of origins are already in the same table, so
-                    # there is no need to post-process because the k closest have already been found, and the
-                    # DestinationRank field is already correct. Just insert the records directly into the final output
-                    # table.
-                    for row in arcpy.da.SearchCursor(fcs_for_origin_range[0], fields):  # pylint: disable=no-member
-                        cur.insertRow(row)
-                    continue
-                # If there are multiple feature classes to handle at once, we need to eliminate extra rows and
-                # properly update the DestinationRank field. To do this, read them into pandas.
-                fc_dfs = []
-                df_fields = ["Shape"] + fields[1:]
-                for fc in fcs_for_origin_range:
-                    with arcpy.da.SearchCursor(fc, fields) as cur2:  # pylint: disable=no-member
-                        fc_dfs.append(pd.DataFrame(cur2, columns=df_fields))
-                df = pd.concat(fc_dfs, ignore_index=True)
-                # Drop all but the k nearest rows for each OriginOID (if needed) and calculate DestinationRank
-                df = self._update_df_for_k_nearest_and_destination_rank(df)
-                # Write the pandas rows to the final output feature class
-                for row in df.itertuples(index=False, name=None):
-                    cur.insertRow(row)
-
-        LOGGER.info("Post-processing complete.")
-        LOGGER.info(f"Results written to {self.output_od_location}.")
-
+        # run_gp_tool(arcpy.management.CreateFeatureclass, [
+        #     os.path.dirname(self.output_od_location),
+        #     os.path.basename(self.output_od_location),
+        #     "POLYLINE",
+        #     self.od_line_files[0],  # template feature class to transfer full schema
+        #     "SAME_AS_TEMPLATE",
+        #     "SAME_AS_TEMPLATE",
+        #     desc.spatialReference
+        # ])
 
 def launch_parallel_od():
     """Read arguments passed in via subprocess and run the parallel Route.
