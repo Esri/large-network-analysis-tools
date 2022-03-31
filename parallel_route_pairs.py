@@ -270,7 +270,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
                 # Insert origin and destination
                 destination_row = destinations[dest_id]
                 route_name = f"{origin_row[1]} - {dest_id}"
-                icur.insertRow([route_name, 1, origin_row[1], origin_row[0], None] + [None]*len(location_fields))
+                origin_row = [route_name, 1, origin_row[1], origin_row[0], None]
+                if location_fields:
+                    # Include invalid location fields as a placeholder so they'll be calculated at solve time
+                    origin_row += [-1, -1, -1, -1]
+                icur.insertRow(origin_row)
                 icur.insertRow([route_name, 2, None] + list(destination_row))
 
     def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
