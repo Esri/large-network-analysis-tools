@@ -604,11 +604,11 @@ class ParallelRoutePairCalculator:
                     cur.insertRow(row)
 
 
-def launch_parallel_od():
+def launch_parallel_rt_pairs():
     """Read arguments passed in via subprocess and run the parallel Route.
 
-    This script is intended to be called via subprocess via the solve_large_rt.py module, which does essential
-    preprocessing and validation. Users should not call this script directly from the command line
+    This script is intended to be called via subprocess via the solve_large_route_pair_analysis.py module, which does
+    essential preprocessing and validation. Users should not call this script directly from the command line.
 
     We must launch this script via subprocess in order to support parallel processing from an ArcGIS Pro script tool,
     which cannot do parallel processing directly.
@@ -622,20 +622,24 @@ def launch_parallel_od():
     help_string = "The full catalog path to the feature class containing the origins."
     parser.add_argument("-o", "--origins", action="store", dest="origins", help=help_string, required=True)
 
+    # --origins-id-field parameter
+    help_string = "The name of the unique ID field in origins."
+    parser.add_argument(
+        "-oif", "--origins-id-field", action="store", dest="origin_id_field", help=help_string, required=True)
+
+    # --assigned-dest-field parameter
+    help_string = "The name of the field in origins indicating the assigned destination."
+    parser.add_argument(
+        "-adf", "--assigned-dest-field", action="store", dest="assigned_dest_field", help=help_string, required=True)
+
     # --destinations parameter
     help_string = "The full catalog path to the feature class containing the destinations."
     parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
 
-    # --output-format parameter
-    help_string = ("The desired format for the output Route Lines results. "
-                   f"Choices: {', '.join(helpers.OUTPUT_FORMATS)}")
+    # --destinations-id-field parameter
+    help_string = "The name of the unique ID field in destinations."
     parser.add_argument(
-        "-of", "--output-format", action="store", dest="output_format", help=help_string, required=True)
-
-    # ----output-od-location parameter
-    help_string = "The catalog path to the output feature class or folder that will contain the Route results."
-    parser.add_argument(
-        "-ol", "--output-od-location", action="store", dest="output_od_location", help=help_string, required=True)
+        "-oif", "--destinations-id-field", action="store", dest="dest_id_field", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
@@ -658,42 +662,19 @@ def launch_parallel_od():
     parser.add_argument(
         "-du", "--distance-units", action="store", dest="distance_units", help=help_string, required=True)
 
-    # --max-origins parameter
-    help_string = (
-        "Maximum number of origins that can be in one chunk for parallel processing of Route solves. "
-        "For example, 1000 means that a chunk consists of no more than 1000 origins and max-destination destinations."
-    )
+    # --max-routes parameter
+    help_string = "Maximum number of routes that can be in one chunk for parallel processing of Route solves."
     parser.add_argument(
-        "-mo", "--max-origins", action="store", dest="max_origins", type=int, help=help_string, required=True)
-
-    # --max-destinations parameter
-    help_string = (
-        "Maximum number of destinations that can be in one chunk for parallel processing of Route solves. "
-        "For example, 1000 means that a chunk consists of no more than max-origin origins and 1000 destinations."
-    )
-    parser.add_argument(
-        "-md", "--max-destinations", action="store", dest="max_destinations", type=int, help=help_string, required=True)
+        "-mr", "--max-routes", action="store", dest="max_routes", type=int, help=help_string, required=True)
 
     # --max-processes parameter
     help_string = "Maximum number parallel processes to use for the Route solves."
     parser.add_argument(
         "-mp", "--max-processes", action="store", dest="max_processes", type=int, help=help_string, required=True)
 
-    # --cutoff parameter
-    help_string = (
-        "Impedance cutoff to limit the Route search distance. Should be specified in the same units as the "
-        "time-units parameter if the travel mode's impedance is in units of time or in the same units as the "
-        "distance-units parameter if the travel mode's impedance is in units of distance. Otherwise, specify this in "
-        "the units of the travel mode's impedance attribute."
-    )
-    parser.add_argument(
-        "-co", "--cutoff", action="store", dest="cutoff", type=float, help=help_string, required=False)
-
-    # --num-destinations parameter
-    help_string = "The number of destinations to find for each origin. Set to None to find all destinations."
-    parser.add_argument(
-        "-nd", "--num-destinations", action="store", dest="num_destinations", type=int, help=help_string,
-        required=False)
+    # --out-routes parameter
+    help_string = "The full catalog path to the output routes feature class."
+    parser.add_argument("-r", "--out-routes", action="store", dest="out_routes", help=help_string, required=True)
 
     # --time-of-day parameter
     help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "
@@ -709,13 +690,13 @@ def launch_parallel_od():
     args = vars(parser.parse_args())
 
     # Initialize a parallel Route calculator class
-    od_calculator = ParallelODCalculator(**args)
+    rt_calculator = ParallelRoutePairCalculator(**args)
     # Solve the Route in parallel chunks
     start_time = time.time()
-    od_calculator.solve_od_in_parallel()
+    rt_calculator.solve_route_in_parallel()
     LOGGER.info(f"Parallel Route calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
 
 
 if __name__ == "__main__":
     # This script should always be launched via subprocess as if it were being called from the command line.
-    launch_parallel_od()
+    launch_parallel_rt_pairs()
