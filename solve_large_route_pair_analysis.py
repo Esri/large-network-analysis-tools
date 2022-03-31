@@ -177,7 +177,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         # Check if the field exists
         field_names = [f.name for f in arcpy.ListFields(input_features, wild_card=id_field)]
         if id_field not in field_names:
-            err = f"Unique ID field {id_field} does not exist in Destinations dataset {input_features}."
+            err = f"Unique ID field {id_field} does not exist in dataset {input_features}."
             arcpy.AddError(err)
             raise ValueError(err)
         # Populate a list of destination IDs and verify that they are unique
@@ -210,7 +210,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         # Check if there are any origins whose destination IDs don't match up with a known destination
         num_invalid = 0
         num_total = 0
-        for row in arcpy.da.SearchCursor(self.origins, [self.assigned_dest_field]):
+        for row in arcpy.da.SearchCursor(self.origins, [self.assigned_dest_field]):  # pylint: disable=no-member
             num_total += 1
             if row[0] not in self.destination_ids:
                 num_invalid += 1
