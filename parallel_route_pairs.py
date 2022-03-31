@@ -576,22 +576,32 @@ class ParallelRoutePairCalculator:
         LOGGER.info("Finished calculating Routes.")
 
     def _post_process_route_fcs(self):
-        """Merge and post-process the OD Lines calculated in each separate process.
+        """Merge the routes calculated in each separate process into a single feature class.
 
-        Create an empty final output feature class and populate it from each of the intermediate OD Lines feature
-        classes. Do this instead of simply using the Merge tool in order to correctly calculate the DestinationRank
-        field and eliminate extra records when only the k closest destinations should be found.
-
-        For the case where we wanted to find only the k closest destinations for each origin, calculating the OD in
-        chunks means our combined output may have more than k destinations for each origin because each individual chunk
-        found the closest k for that chunk. We need to eliminate all extra rows beyond the first k.
-
-        Calculating the OD in chunks also means the DestinationRank field calculated by each chunk is not correct for
-        the entire analysis. DestinationRank refers to the rank within the chunk, not the overall rank. We need to
-        recalculate DestinationRank considering the entire dataset.
+        Create an empty final output feature class and populate it using InsertCursor, as this tends to be faster than
+        using the Merge geoprocessing tool.
         """
-        # Merge the individual output route feature classes into one
-        helpers.run_gp_tool(LOGGER, arcpy.management.Merge, [self.route_fcs, self.out_routes])
+        # Create the final output feature class
+        desc = arcpy.Describe(self.route_fcs[0])
+        helpers.run_gp_tool(
+            LOGGER,
+            arcpy.management.CreateFeatureclass, [
+                os.path.dirname(self.out_routes),
+                os.path.basename(self.out_routes),
+                "POLYLINE",
+                self.route_fcs[0],  # template feature class to transfer full schema
+                "SAME_AS_TEMPLATE",
+                "SAME_AS_TEMPLATE",
+                desc.spatialReference
+            ]
+        )
+
+        # Insert the rows from all the individual output feature classes into the final output
+        fields = ["SHAPE@"] + [f.name for f in desc.fields]
+        with arcpy.da.InsertCursor(self.out_routes, fields) as cur:  # pylint: disable=no-member
+            for fc in self.route_fcs:
+                for row in arcpy.da.SearchCursor(fc, fields):  # pylint: disable=no-member
+                    cur.insertRow(row)
 
 
 def launch_parallel_od():
