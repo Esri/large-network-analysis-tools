@@ -1,4 +1,4 @@
-"""Unit tests for the parallel_route_pairs.py module.'
+"""Unit tests for the parallel_route_pairs.py module.
 
 Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
