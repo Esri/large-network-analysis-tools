@@ -79,6 +79,26 @@ def get_tool_limits_and_is_agol(network_data_source, service_name, tool_name):
         raise
 
 
+def update_agol_max_processes(max_processes):
+    """Update the maximum allowed parallel processes for AGOL if necessary.
+
+    Args:
+        max_processes (int): User's desired max parallel processes
+
+    Returns:
+        int: Updated max processes <= max allowed for AGOL.
+    """
+    if max_processes > MAX_AGOL_PROCESSES:
+        arcpy.AddWarning((
+            f"The specified maximum number of parallel processes, {max_processes}, exceeds the limit of "
+            f"{MAX_AGOL_PROCESSES} allowed when using as the network data source the ArcGIS Online "
+            "services or a hybrid portal whose network analysis services fall back to the ArcGIS Online "
+            "services. The maximum number of parallel processes has been reduced to "
+            f"{MAX_AGOL_PROCESSES}."))
+        max_processes = MAX_AGOL_PROCESSES
+    return max_processes
+
+
 def convert_time_units_str_to_enum(time_units):
     """Convert a string representation of time units to an arcpy.nax enum.
 

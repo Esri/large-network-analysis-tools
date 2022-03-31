@@ -182,14 +182,8 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         if self.is_service:
             self.service_limits, self.is_agol = helpers.get_tool_limits_and_is_agol(
                 self.network_data_source, "asyncODCostMatrix", "GenerateOriginDestinationCostMatrix")
-            if self.is_agol and self.max_processes > helpers.MAX_AGOL_PROCESSES:
-                arcpy.AddWarning((
-                    f"The specified maximum number of parallel processes, {self.max_processes}, exceeds the limit of "
-                    f"{helpers.MAX_AGOL_PROCESSES} allowed when using as the network data source the ArcGIS Online "
-                    "services or a hybrid portal whose network analysis services fall back to the ArcGIS Online "
-                    "services. The maximum number of parallel processes has been reduced to "
-                    f"{helpers.MAX_AGOL_PROCESSES}."))
-                self.max_processes = helpers.MAX_AGOL_PROCESSES
+            if self.is_agol:
+                self.max_processes = helpers.update_agol_max_processes(self.max_processes)
             self._update_max_inputs_for_service()
             if self.should_precalc_network_locations:
                 arcpy.AddWarning(

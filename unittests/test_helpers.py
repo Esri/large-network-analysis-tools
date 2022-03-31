@@ -73,6 +73,10 @@ class TestHelpers(unittest.TestCase):
                     # Note: If testing with some other portal, this test would need to be updated.
                     self.assertTrue(is_agol)
 
+    def test_update_agol_max_processes(self):
+        """Test the update_agol_max_processes function."""
+        self.assertEqual(helpers.MAX_AGOL_PROCESSES, helpers.update_agol_max_processes(5000))
+
     def test_convert_time_units_str_to_enum(self):
         """Test the convert_time_units_str_to_enum function."""
         # Test all valid units
