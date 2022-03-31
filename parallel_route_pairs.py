@@ -670,6 +670,11 @@ def launch_parallel_rt_pairs():
     help_string = "The full catalog path to the output routes feature class."
     parser.add_argument("-r", "--out-routes", action="store", dest="out_routes", help=help_string, required=True)
 
+    # --scratch-folder parameter
+    help_string = "The full catalog path to the scratch folder where intermediate outputs will be stored."
+    parser.add_argument(
+        "-sf", "--scratch-folder", action="store", dest="scratch_folder", help=help_string, required=True)
+
     # --time-of-day parameter
     help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "
                    "time neutral.")
