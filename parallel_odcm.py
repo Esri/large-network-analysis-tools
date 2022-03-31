@@ -1054,7 +1054,7 @@ def launch_parallel_od():
     """Read arguments passed in via subprocess and run the parallel OD Cost Matrix.
 
     This script is intended to be called via subprocess via the solve_large_odcm.py module, which does essential
-    preprocessing and validation. Users should not call this script directly from the command line
+    preprocessing and validation. Users should not call this script directly from the command line.
 
     We must launch this script via subprocess in order to support parallel processing from an ArcGIS Pro script tool,
     which cannot do parallel processing directly.
