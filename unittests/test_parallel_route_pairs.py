@@ -16,6 +16,7 @@ Copyright 2022 Esri
 import sys
 import os
 import datetime
+import subprocess
 import unittest
 from copy import deepcopy
 import arcpy
@@ -140,6 +141,31 @@ class TestParallelRoutePairs(unittest.TestCase):
         self.assertTrue(arcpy.Exists(out_routes))
         # There are 208 tract centroids, but three of them have null or invalid assigned destinations
         self.assertEqual(205, int(arcpy.management.GetCount(out_routes).getOutput(0)))
+
+    def test_cli(self):
+        """Test the command line interface of and launch_parallel_rt_pairs function."""
+        out_folder = os.path.join(self.output_folder, "CLI_Output")
+        os.mkdir(out_folder)
+        rt_inputs = [
+            os.path.join(sys.exec_prefix, "python.exe"),
+            os.path.join(os.path.dirname(CWD), "parallel_route_pairs.py"),
+            "--origins", self.origins,
+            "--origins-id-field", "ID",
+            "--assigned-dest-field", "StoreID",
+            "--destinations", self.destinations,
+            "--destinations-id-field", "NAME",
+            "--network-data-source", self.local_nd,
+            "--travel-mode", self.local_tm_dist,
+            "--time-units", "Minutes",
+            "--distance-units", "Miles",
+            "--max-routes", "15",
+            "--max-processes", "4",
+            "--out-routes", os.path.join(self.output_gdb, "OutCLIRoutes"),
+            "--scratch-folder", out_folder,
+            "--time-of-day", "20220329 16:45"
+        ]
+        result = subprocess.run(rt_inputs, check=True)
+        self.assertEqual(result.returncode, 0)
 
 
 if __name__ == '__main__':
