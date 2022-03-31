@@ -409,17 +409,17 @@ def solve_route(inputs, chunk):
     return rt.job_result
 
 
-class ParallelODCalculator:
+class ParallelRoutePairCalculator:
     """Solves a large Route by chunking the problem, solving in parallel, and combining results."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, assigned_dest_field, destinations, dest_id_field, network_data_source, travel_mode,
-        max_routes, max_processes, time_units, distance_units,
-        time_of_day=None, barriers=None
+        self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
+        network_data_source, travel_mode, time_units, distance_units,
+        max_routes, max_processes, out_routes, time_of_day=None, barriers=None
     ):
-        """Compute Routes between Origins and Destinations in parallel and combine results.
-
-        Compute OD cost matrices in parallel and combine and post-process the results.
+        """Compute Routes between origins and their assigned destinations in parallel and combine results.
+        TODO
+        Compute Routes in parallel and combine and post-process the results.
         This class assumes that the inputs have already been pre-processed and validated.
 
         Args:
@@ -438,20 +438,16 @@ class ParallelODCalculator:
             barriers (list(str), optional): List of catalog paths to point, line, and polygon barriers to use.
                 Defaults to None.
         """
-        self.origins = origins
-        self.assigned_dest_field = assigned_dest_field
-        self.destinations = destinations
-        self.dest_id_field = dest_id_field
-        self.max_routes = max_routes
+        self.out_routes = out_routes
         time_units = helpers.convert_time_units_str_to_enum(time_units)
         distance_units = helpers.convert_distance_units_str_to_enum(distance_units)
         if not barriers:
             barriers = []
         self.max_processes = max_processes
         if not time_of_day:
-            self.time_of_day = None
+            time_of_day = None
         else:
-            self.time_of_day = datetime.datetime.strptime(time_of_day, helpers.DATETIME_FORMAT)
+            time_of_day = datetime.datetime.strptime(time_of_day, helpers.DATETIME_FORMAT)
 
         # Scratch folder to store intermediate outputs from the Route processes
         unique_id = uuid.uuid4().hex
@@ -461,24 +457,25 @@ class ParallelODCalculator:
 
         # Initialize the dictionary of inputs to send to each OD solve
         self.rt_inputs = {
-            "origins": self.origins,
-            "destinations": self.destinations,
-            "output_format": self.output_format,
-            "output_od_location": self.output_od_location,
+            "origins": origins,
+            "origin_id_field": origin_id_field,
+            "assigned_dest_field": assigned_dest_field,
+            "destinations": destinations,
+            "dest_id_field": dest_id_field,
             "network_data_source": network_data_source,
             "travel_mode": travel_mode,
-            "scratch_folder": self.scratch_folder,
             "time_units": time_units,
             "distance_units": distance_units,
-            "time_of_day": self.time_of_day,
+            "time_of_day": time_of_day,
+            "scratch_folder": self.scratch_folder,
             "barriers": barriers
         }
 
         # List of intermediate output OD Line files created by each process
-        self.od_line_files = []
+        self.route_fcs = []
 
         # Construct OID ranges for chunks of origins and destinations
-        self.origin_ranges = helpers.get_oid_ranges_for_input(self.origins, self.max_routes)
+        self.origin_ranges = helpers.get_oid_ranges_for_input(origins, max_routes)
 
         # Calculate the total number of jobs to use in logging
         self.total_jobs = len(self.origin_ranges)
@@ -491,13 +488,13 @@ class ParallelODCalculator:
         Also check which field name in the output OD Lines will store the optimized cost values. This depends on the
         travel mode being used by the analysis, and we capture it here to use in later steps.
         """
-        # Create a dummy Route object, initialize an OD solver object, and set properties. This allows us to
+        # Create a dummy Route object and set properties. This allows us to
         # detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
         LOGGER.debug("Validating Route settings...")
         rt = None
         try:
             rt = Route(**self.rt_inputs)
-            rt.initialize_od_solver()
+            rt.initialize_rt_solver()
             LOGGER.debug("Route settings successfully validated.")
         except Exception:
             LOGGER.error("Error initializing Route analysis.")
@@ -525,10 +522,10 @@ class ParallelODCalculator:
 
         # Compute Route in parallel
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
-        # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
+        # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the routes
         with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
-            # Each parallel process calls the solve_od_cost_matrix() function with the od_inputs dictionary for the
-            # given origin and destination OID ranges.
+            # Each parallel process calls the solve_route() function with the rt_inputs dictionary for the
+            # given origin ranges and their assigned destinations.
             jobs = {executor.submit(solve_route, self.rt_inputs, range): range for range in self.origin_ranges}
             # As each job is completed, add some logging information and store the results to post-process later
             for future in futures.as_completed(jobs):
@@ -548,7 +545,7 @@ class ParallelODCalculator:
 
                 # Parse the results dictionary and store components for post-processing.
                 if result["solveSucceeded"]:
-                    self.od_line_files.append(result["outputLines"])
+                    self.route_fcs.append(result["outputRoutes"])
                 else:
                     # Typically, a solve fails because no destinations were found for any of the origins in the chunk,
                     # and this is a perfectly legitimate failure. It is not an error. However, they may be other, less
@@ -559,10 +556,10 @@ class ParallelODCalculator:
                     LOGGER.debug(result["solveMessages"])
 
         # Post-process outputs
-        if self.od_line_files:
+        if self.route_fcs:
             LOGGER.info("Post-processing Route results...")
-            self.od_line_files = sorted(self.od_line_files)
-            self._post_process_od_line_fcs()
+            self.route_fcs = sorted(self.route_fcs)
+            self._post_process_route_fcs()
         else:
             LOGGER.warning("All Route solves failed, so no output was produced.")
 
@@ -578,7 +575,7 @@ class ParallelODCalculator:
 
         LOGGER.info("Finished calculating Routes.")
 
-    def _post_process_od_line_fcs(self):
+    def _post_process_route_fcs(self):
         """Merge and post-process the OD Lines calculated in each separate process.
 
         Create an empty final output feature class and populate it from each of the intermediate OD Lines feature
@@ -593,17 +590,9 @@ class ParallelODCalculator:
         the entire analysis. DestinationRank refers to the rank within the chunk, not the overall rank. We need to
         recalculate DestinationRank considering the entire dataset.
         """
-        # Create the final output feature class
-        desc = arcpy.Describe(self.od_line_files[0])
-        # run_gp_tool(arcpy.management.CreateFeatureclass, [
-        #     os.path.dirname(self.output_od_location),
-        #     os.path.basename(self.output_od_location),
-        #     "POLYLINE",
-        #     self.od_line_files[0],  # template feature class to transfer full schema
-        #     "SAME_AS_TEMPLATE",
-        #     "SAME_AS_TEMPLATE",
-        #     desc.spatialReference
-        # ])
+        # Merge the individual output route feature classes into one
+        helpers.run_gp_tool(LOGGER, arcpy.management.Merge, [self.route_fcs, self.out_routes])
+
 
 def launch_parallel_od():
     """Read arguments passed in via subprocess and run the parallel Route.
