@@ -68,7 +68,7 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
         out_routes = os.path.join(self.output_gdb, "OutRoutesLocal")
         arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
             self.origins,
-            "ID",
+            "ObjectID",
             "StoreID",
             self.destinations,
             "NAME",
