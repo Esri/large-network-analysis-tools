@@ -362,7 +362,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Input"
         )
         param_origin_id_field.parameterDependencies = [param_origins.name]
-        param_origin_id_field.filter = ["Short", "Long", "Double", "Single", "Text", "OID"]
+        param_origin_id_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
 
         param_assigned_dest_field = arcpy.Parameter(
             displayName="Assigned Destination Field",
@@ -372,7 +372,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Input"
         )
         param_assigned_dest_field.parameterDependencies = [param_origins.name]
-        param_assigned_dest_field.filter = ["Short", "Long", "Double", "Single", "Text", "OID"]
+        param_assigned_dest_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
 
         param_destinations = arcpy.Parameter(
             displayName="Destinations",
@@ -390,7 +390,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Input"
         )
         param_dest_id_field.parameterDependencies = [param_destinations.name]
-        param_dest_id_field.filter = ["Short", "Long", "Double", "Single", "Text", "OID"]
+        param_dest_id_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
 
         param_network = arcpy.Parameter(
             displayName="Network Data Source",
