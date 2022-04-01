@@ -307,11 +307,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
             self.logger.debug(f"Loading barriers feature class {barrier_fc}...")
             shape_type = arcpy.Describe(barrier_fc).shapeType
             if shape_type == "Polygon":
-                class_type = arcpy.nax.OriginDestinationCostMatrixInputDataType.PolygonBarriers
+                class_type = arcpy.nax.RouteInputDataType.PolygonBarriers
             elif shape_type == "Polyline":
-                class_type = arcpy.nax.OriginDestinationCostMatrixInputDataType.LineBarriers
+                class_type = arcpy.nax.RouteInputDataType.LineBarriers
             elif shape_type == "Point":
-                class_type = arcpy.nax.OriginDestinationCostMatrixInputDataType.PointBarriers
+                class_type = arcpy.nax.RouteInputDataType.PointBarriers
             else:
                 self.logger.warning(
                     f"Barrier feature class {barrier_fc} has an invalid shape type and will be ignored."
