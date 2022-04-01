@@ -27,8 +27,8 @@ sys.path.append(os.path.dirname(CWD))
 import helpers  # noqa: E402, pylint: disable=wrong-import-position
 
 
-class TestSolveLargeODCostMatrixTool(unittest.TestCase):
-    """Test cases for the SolveLargeODCostMatrix script tool."""
+class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
+    """Test cases for the SolveLargeAnalysisWithKnownPairs script tool."""
 
     @classmethod
     def setUpClass(self):  # pylint: disable=bad-classmethod-argument
@@ -51,7 +51,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
 
         # Create a unique output directory and gdb for this test
         self.scratch_folder = os.path.join(
-            CWD, "TestOutput", "Output_Tool_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
+            CWD, "TestOutput",
+            "Output_SolveLargeAnalysisWithKnownPairs_Tool_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
         os.makedirs(self.scratch_folder)
         self.output_gdb = os.path.join(self.scratch_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
