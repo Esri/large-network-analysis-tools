@@ -282,12 +282,23 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.output_origins = sorted_origins
 
     def _make_field_mappings(self, input_fc, oid_field_name):
-        """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID."""
+        """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID.
+
+        Args:
+            input_fc (str, layer): Input feature class or layer
+            oid_field_name (str): ObjectID field name of the input_fc
+
+        Returns:
+            (arcpy.FieldMappings, str): Field mappings for use in FeatureClassToFeatureClass that maps the ObjectID
+                field to a unique new field name so its values will be preserved after copying the feature class. The
+                new unique field name.
+        """
         field_mappings = arcpy.FieldMappings()
         field_mappings.addTable(input_fc)
         # Create a new output field with a unique name to store the original OID
         new_field = arcpy.Field()
-        new_field.name = f"OID_{self.unique_id}"
+        new_field_name = f"OID_{self.unique_id}"
+        new_field.name = new_field_name
         new_field.aliasName = "Original Unique ID"
         new_field.type = "Integer"
         # Create a new field map object and map the ObjectID to the new output field
@@ -296,7 +307,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         new_fm.outputField = new_field
         # Add the new field map
         field_mappings.addFieldMap(new_fm)
-        return field_mappings
+        return field_mappings, new_field_name
 
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
@@ -310,7 +321,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         origins_oid_field = arcpy.Describe(self.origins).oidFieldName
         field_mappings = None
         if self.origin_id_field == origins_oid_field:
-            field_mappings = self._make_field_mappings(self.origins, origins_oid_field)
+            field_mappings, self.origin_id_field = self._make_field_mappings(self.origins, origins_oid_field)
         arcpy.conversion.FeatureClassToFeatureClass(
             self.origins,
             os.path.dirname(self.output_origins),
@@ -319,14 +330,15 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         )
 
         # Copy Destinations to output
-        origins_oid_field = arcpy.Describe(self.origins).oidFieldName
+        dest_oid_field = arcpy.Describe(self.destinations).oidFieldName
         field_mappings = None
-        if self.origin_id_field == origins_oid_field:
-            field_mappings = self._make_field_mappings(self.origins, origins_oid_field)
+        if self.dest_id_field == dest_oid_field:
+            field_mappings, self.dest_id_field = self._make_field_mappings(self.destinations, dest_oid_field)
         arcpy.conversion.FeatureClassToFeatureClass(
             self.destinations,
             os.path.dirname(self.output_destinations),
-            os.path.basename(self.output_destinations)
+            os.path.basename(self.output_destinations),
+            field_mapping=field_mappings
         )
 
         # Sort origins by assigned destination
