@@ -121,15 +121,15 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 "StoreID",
                 self.destinations,
                 "NAME",
-                self.local_nd,
-                self.local_tm_time,
+                self.portal_nd,
+                self.portal_tm,
                 "Minutes",
                 "Miles",
                 50,  # chunk size
                 2000,  # max processes
                 out_routes,
-                datetime.datetime(2022, 3, 29, 16, 45, 0),  # time of day
-                self.barriers,  # barriers
+                None,  # time of day
+                None,  # barriers
                 True,  # precalculate network locations
                 True  # Sort origins
             )
