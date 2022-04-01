@@ -19,9 +19,9 @@ import datetime
 import subprocess
 import unittest
 from copy import deepcopy
-from glob import glob
 import arcpy
 import portal_credentials  # Contains log-in for an ArcGIS Online account to use as a test portal
+import input_data_helper
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
@@ -38,7 +38,7 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
 
         self.input_data_folder = os.path.join(CWD, "TestInput")
         self.sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
-        self.origins = os.path.join(self.sf_gdb, "Analysis", "TractCentroids_wStoreID")
+        self.origins = input_data_helper.get_tract_centroids_with_store_id_fc(sf_gdb)
         self.destinations = os.path.join(self.sf_gdb, "Analysis", "Stores")
         self.local_nd = os.path.join(self.sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"

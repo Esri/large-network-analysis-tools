@@ -17,10 +17,10 @@ Copyright 2022 Esri
 import sys
 import os
 import datetime
-from glob import glob
 import unittest
 import arcpy
 import portal_credentials
+import input_data_helper
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
@@ -32,6 +32,7 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
 
     @classmethod
     def setUpClass(self):  # pylint: disable=bad-classmethod-argument
+        """Set up shared inputs for tests."""
         self.maxDiff = None
 
         tbx_path = os.path.join(os.path.dirname(CWD), "LargeNetworkAnalysisTools.pyt")
@@ -39,7 +40,7 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
 
         self.input_data_folder = os.path.join(CWD, "TestInput")
         sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
-        self.origins = os.path.join(sf_gdb, "Analysis", "TractCentroids_wStoreID")
+        self.origins = input_data_helper.get_tract_centroids_with_store_id_fc(sf_gdb)
         self.destinations = os.path.join(sf_gdb, "Analysis", "Stores")
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         tms = arcpy.nax.GetTravelModes(self.local_nd)

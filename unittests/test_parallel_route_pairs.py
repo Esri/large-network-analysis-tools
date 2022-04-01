@@ -20,11 +20,12 @@ import subprocess
 import unittest
 from copy import deepcopy
 import arcpy
+import portal_credentials
+import input_data_helper
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import parallel_route_pairs  # noqa: E402, pylint: disable=wrong-import-position
-import portal_credentials  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestParallelRoutePairs(unittest.TestCase):
@@ -37,7 +38,7 @@ class TestParallelRoutePairs(unittest.TestCase):
 
         self.input_data_folder = os.path.join(CWD, "TestInput")
         sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
-        self.origins = os.path.join(sf_gdb, "Analysis", "TractCentroids_wStoreID")
+        self.origins = input_data_helper.get_tract_centroids_with_store_id_fc(sf_gdb)
         self.destinations = os.path.join(sf_gdb, "Analysis", "Stores")
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"
