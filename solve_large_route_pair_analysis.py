@@ -102,8 +102,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.output_routes = output_routes
 
         # Scratch folder to store intermediate outputs from the Route processes
-        unique_id = uuid.uuid4().hex
-        self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "rt_" + unique_id)  # pylint: disable=no-member
+        self.unique_id = uuid.uuid4().hex
+        self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "rt_" + self.unique_id)  # pylint: disable=no-member
         arcpy.AddMessage(f"Intermediate outputs will be written to {self.scratch_folder}.")
         self.scratch_gdb = os.path.join(self.scratch_folder, "Inputs.gdb")
         self.output_origins = os.path.join(self.scratch_gdb, "Origins")  # pylint: disable=no-member
@@ -276,31 +276,27 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         """
         arcpy.AddMessage("Sorting origins by assigned destination...")
 
-        # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
-        # Note: This can be implemented in a simpler way in ArcGIS Pro 2.9 and later because the Sort tool was
-        # enhanced to include an ORIG_FID field in the output tracking the original ObjectID. However, since we want
-        # this code sample to be compatible with older versions of ArcGIS Pro, this more complicated implementation of
-        # ObjectID field tracking has been maintained.
-        # Note that if the original input was a shapefile, these IDs will likely be wrong because copying the original
-        # input to the output geodatabase will have altered the original ObjectIDs.
-        # Consequently, don't use shapefiles as inputs.
-        desc = arcpy.Describe(self.output_origins)
-        tracked_oid_name = "OriginOID"
-        if tracked_oid_name in [f.name for f in desc.fields]:
-            arcpy.management.DeleteField(self.output_origins, tracked_oid_name)
-        arcpy.management.AddField(self.output_origins, tracked_oid_name, "LONG")
-        arcpy.management.CalculateField(self.output_origins, tracked_oid_name, f"!{desc.oidFieldName}!")
-
-        # Make a temporary copy of the inputs so the Sort tool can write its output to the self.output_origins path,
-        # which is the ultimate desired location
-        temp_inputs = arcpy.CreateUniqueName("TempODInputs", arcpy.env.scratchGDB)  # pylint:disable = no-member
-        arcpy.management.Copy(self.output_origins, temp_inputs)
-
         # Sort input features
-        arcpy.management.Sort(temp_inputs, self.output_origins, [[self.assigned_dest_field, "ASCENDING"]])
+        sorted_origins = self.output_origins + "_Sorted"
+        arcpy.management.Sort(self.output_origins, sorted_origins, [[self.assigned_dest_field, "ASCENDING"]])
+        self.output_origins = sorted_origins
 
-        # Clean up. Delete temporary copy of inputs
-        arcpy.management.Delete([temp_inputs])
+    def _make_field_mappings(self, input_fc, oid_field_name):
+        """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID."""
+        field_mappings = arcpy.FieldMappings()
+        field_mappings.addTable(input_fc)
+        # Create a new output field with a unique name to store the original OID
+        new_field = arcpy.Field()
+        new_field.name = f"OID_{self.unique_id}"
+        new_field.aliasName = "Original Unique ID"
+        new_field.type = "Integer"
+        # Create a new field map object and map the ObjectID to the new output field
+        new_fm = arcpy.FieldMap()
+        new_fm.addInputField(input_fc, oid_field_name)
+        new_fm.outputField = new_field
+        # Add the new field map
+        field_mappings.addFieldMap(new_fm)
+        return field_mappings
 
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
@@ -308,13 +304,25 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         os.mkdir(self.scratch_folder)
         arcpy.management.CreateFileGDB(os.path.dirname(self.scratch_gdb), os.path.basename(self.scratch_gdb))
 
-        # Copy Origins and Destinations to output
         arcpy.AddMessage("Copying input origins and destinations to outputs...")
+
+        # Copy Origins to output
+        origins_oid_field = arcpy.Describe(self.origins).oidFieldName
+        field_mappings = None
+        if self.origin_id_field == origins_oid_field:
+            field_mappings = self._make_field_mappings(self.origins, origins_oid_field)
         arcpy.conversion.FeatureClassToFeatureClass(
             self.origins,
             os.path.dirname(self.output_origins),
-            os.path.basename(self.output_origins)
+            os.path.basename(self.output_origins),
+            field_mapping=field_mappings
         )
+
+        # Copy Destinations to output
+        origins_oid_field = arcpy.Describe(self.origins).oidFieldName
+        field_mappings = None
+        if self.origin_id_field == origins_oid_field:
+            field_mappings = self._make_field_mappings(self.origins, origins_oid_field)
         arcpy.conversion.FeatureClassToFeatureClass(
             self.destinations,
             os.path.dirname(self.output_destinations),
