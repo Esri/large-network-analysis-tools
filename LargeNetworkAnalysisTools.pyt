@@ -258,12 +258,7 @@ class SolveLargeODCostMatrix(object):
                 pass
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
-        if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
-            if helpers.is_nds_service(param_network.valueAsText):
-                param_precalculate.value = False
-                param_precalculate.enabled = False
-            else:
-                param_precalculate.enabled = True
+        update_precalculate_parameter(param_network, param_precalculate)
 
         return
 
@@ -278,14 +273,9 @@ class SolveLargeODCostMatrix(object):
 
         # If the network data source is arcgis.com:
         # - Cap max processes
+        cap_max_processes_for_agol(param_network, param_max_processes)
         # - Show an error if attempting to use Arrow output, which is not supported at this time
         if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
-            if param_max_processes.altered and param_max_processes.valueAsText:
-                if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
-                    param_max_processes.setErrorMessage((
-                        f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
-                        "ArcGIS Online services are used as the network data source."
-                    ))
             if param_output_format.altered and param_output_format.valueAsText:
                 output_format = helpers.convert_output_format_str_to_enum(param_output_format.valueAsText)
                 if output_format is helpers.OutputFormat.arrow:
@@ -355,8 +345,6 @@ class SolveLargeAnalysisWithKnownPairs(object):
 
     def getParameterInfo(self):
         """Define parameter definitions"""
-
-        ## TODO: Add direction of travel option?
 
         param_origins = arcpy.Parameter(
             displayName="Origins",
@@ -450,7 +438,6 @@ class SolveLargeAnalysisWithKnownPairs(object):
         )
         param_chunk_size.value = 1000
 
-        ## TODO: Share code?
         param_max_processes = arcpy.Parameter(
             displayName="Maximum Number of Parallel Processes",
             name="Max_Processes",
@@ -539,13 +526,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         param_precalculate = parameters[14]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
-        ## TODO: Share code
-        if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
-            if helpers.is_nds_service(param_network.valueAsText):
-                param_precalculate.value = False
-                param_precalculate.enabled = False
-            else:
-                param_precalculate.enabled = True
+        update_precalculate_parameter(param_network, param_precalculate)
 
         return
 
@@ -556,14 +537,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         param_max_processes = parameters[10]
 
         # If the network data source is arcgis.com, cap max processes
-        ##TODO: Share code
-        if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
-            if param_max_processes.altered and param_max_processes.valueAsText:
-                if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
-                    param_max_processes.setErrorMessage((
-                        f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
-                        "ArcGIS Online services are used as the network data source."
-                    ))
+        cap_max_processes_for_agol(param_network, param_max_processes)
 
         return
 
@@ -642,3 +616,24 @@ def get_catalog_path_multivalue(param):
         else:
             catalog_paths.append(string_values[idx])
     return catalog_paths
+
+
+def update_precalculate_parameter(param_network, param_precalculate):
+    """Turn off and hide Precalculate Network Locations parameter if the network data source is a service."""
+    if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
+        if helpers.is_nds_service(param_network.valueAsText):
+            param_precalculate.value = False
+            param_precalculate.enabled = False
+        else:
+            param_precalculate.enabled = True
+
+
+def cap_max_processes_for_agol(param_network, param_max_processes):
+    """If the network data source is arcgis.com, cap max processes."""
+    if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
+        if param_max_processes.altered and param_max_processes.valueAsText:
+            if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
+                param_max_processes.setErrorMessage((
+                    f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
+                    "ArcGIS Online services are used as the network data source."
+                ))
