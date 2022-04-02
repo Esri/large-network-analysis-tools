@@ -83,13 +83,14 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
             datetime.datetime(2022, 3, 29, 16, 45, 0),  # time of day
             self.barriers,  # barriers
             True,  # precalculate network locations
-            True  # Sort origins
+            True,  # Sort origins
+            False  # Reverse direction of travel
         )
         # Check results
         self.assertTrue(arcpy.Exists(out_routes))
 
     def test_run_tool_service(self):
-        """Test that the tool runs with a service as a network data source."""
+        """Test that the tool runs with a service as a network data source. Use reverse order"""
         out_routes = os.path.join(self.output_gdb, "OutRoutesService")
         arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
             self.origins,
@@ -107,7 +108,8 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
             None,  # time of day
             None,  # barriers
             False,  # precalculate network locations
-            False  # Sort origins
+            False,  # Sort origins
+            True  # Reverse direction of travel
         )
         # Check results
         self.assertTrue(arcpy.Exists(out_routes))
@@ -133,7 +135,8 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
                 None,  # time of day
                 None,  # barriers
                 True,  # precalculate network locations
-                True  # Sort origins
+                True,  # Sort origins
+                False  # Reverse direction of travel
             )
         expected_messages = [
             "Failed to execute. Parameters are not valid.",

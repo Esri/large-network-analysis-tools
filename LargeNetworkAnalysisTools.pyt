@@ -493,6 +493,16 @@ class SolveLargeAnalysisWithKnownPairs(object):
         )
         param_sort_origins.value = True
 
+        param_reverse_direction = arcpy.Parameter(
+            displayName="Reverse Direction of Travel",
+            name="Reverse_Direction",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input",
+            category="Advanced"
+        )
+        param_reverse_direction.value = False
+
         params = [
             param_origins,  # 0
             param_origin_id_field,  # 1
@@ -510,6 +520,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
             param_barriers,  # 13
             param_precalculate_network_locations,  # 14
             param_sort_origins,  # 15
+            param_reverse_direction  # 16
         ]
 
         return params
@@ -563,7 +574,8 @@ class SolveLargeAnalysisWithKnownPairs(object):
             time_of_day,  # time of day
             get_catalog_path_multivalue(parameters[13]),  # barriers
             parameters[14].value,  # Should precalculate network locations
-            parameters[15].value  # Should sort origins
+            parameters[15].value,  # Should sort origins
+            parameters[16].value  # Reverse direction of travel
         )
 
         # Solve the OD Cost Matrix analysis

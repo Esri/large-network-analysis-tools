@@ -50,8 +50,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
         network_data_source, travel_mode, time_units, distance_units,
-        chunk_size, max_processes, output_routes,
-        time_of_day=None, barriers=None, precalculate_network_locations=True, sort_origins=True
+        chunk_size, max_processes, output_routes, time_of_day=None, barriers=None,
+        precalculate_network_locations=True, sort_origins=True, reverse_direction=False
     ):
         """Initialize the RoutePairSolver class.
 
@@ -99,6 +99,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.barriers = barriers if barriers else []
         self.should_precalc_network_locations = precalculate_network_locations
         self.should_sort_origins = sort_origins
+        self.reverse_direction = reverse_direction
         self.output_routes = output_routes
 
         # Scratch folder to store intermediate outputs from the Route processes
@@ -372,6 +373,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             "--distance-units", self.distance_units,
             "--max-routes", str(self.chunk_size),
             "--max-processes", str(self.max_processes),
+            "--reverse-direction", str(self.reverse_direction),
             "--out-routes", str(self.output_routes),
             "--scratch-folder", self.scratch_folder
         ]
@@ -520,6 +522,12 @@ def _run_from_command_line():
     parser.add_argument(
         "-so", "--sort-origins", action="store", type=lambda x: bool(strtobool(x)),
         dest="sort_origins", help=help_string, required=True)
+
+    # --reverse-direction parameter
+    help_string = "Whether to reverse the direction of travel (destination to origin)."
+    parser.add_argument(
+        "-rd", "--reverse-direction", action="store", type=lambda x: bool(strtobool(x)),
+        dest="reverse_direction", help=help_string, required=True)
 
     # Get arguments as dictionary.
     args = vars(parser.parse_args())

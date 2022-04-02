@@ -66,6 +66,7 @@ class TestParallelRoutePairs(unittest.TestCase):
             "time_units": arcpy.nax.TimeUnits.Minutes,
             "distance_units": arcpy.nax.DistanceUnits.Miles,
             "time_of_day": None,
+            "reverse_direction": False,
             "scratch_folder": self.output_folder,
             "barriers": []
         }
@@ -83,6 +84,7 @@ class TestParallelRoutePairs(unittest.TestCase):
             "max_routes": 15,
             "max_processes": 4,
             "out_routes": os.path.join(self.output_gdb, "OutRoutes"),
+            "reverse_direction": False,
             "scratch_folder": self.output_folder,  # Should be set within test if real output will be written
             "time_of_day": "20220329 16:45",
             "barriers": ""
@@ -162,6 +164,7 @@ class TestParallelRoutePairs(unittest.TestCase):
             "--max-routes", "15",
             "--max-processes", "4",
             "--out-routes", os.path.join(self.output_gdb, "OutCLIRoutes"),
+            "--reverse-direction", "false",
             "--scratch-folder", out_folder,
             "--time-of-day", "20220329 16:45"
         ]

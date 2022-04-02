@@ -77,7 +77,8 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
             "time_of_day": self.time_of_day_str,
             "barriers": "",
             "precalculate_network_locations": True,
-            "sort_origins": True
+            "sort_origins": True,
+            "reverse_direction": False
         }
 
     def test_validate_inputs(self):
@@ -192,7 +193,8 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
             "--out-routes", os.path.join(self.output_gdb, "OutCLIRoutes"),
             "--time-of-day", self.time_of_day_str,
             "--precalculate-network-locations", "true",
-            "--sort-origins", "true"
+            "--sort-origins", "true",
+            "--reverse-direction", "false"
         ]
         result = subprocess.run(rt_inputs, check=True)
         self.assertEqual(result.returncode, 0)

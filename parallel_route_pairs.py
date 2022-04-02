@@ -34,6 +34,7 @@ import time
 import datetime
 import traceback
 import argparse
+from distutils.util import strtobool
 
 import arcpy
 
@@ -89,6 +90,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.time_units = kwargs["time_units"]
         self.distance_units = kwargs["distance_units"]
         self.time_of_day = kwargs["time_of_day"]
+        self.reverse_direction = kwargs["reverse_direction"]
         self.scratch_folder = kwargs["scratch_folder"]
         self.barriers = []
         if "barriers" in kwargs:
@@ -248,11 +250,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
                 location_fields
         ) as icur:
             # Loop through origins and insert them into Stops along with their assigned destinations
-            for origin_row in arcpy.da.SearchCursor(  # pylint: disable=no-member
+            for origin in arcpy.da.SearchCursor(  # pylint: disable=no-member
                 self.input_origins_layer,
                 ["SHAPE@", self.origin_id_field, self.assigned_dest_field]
             ):
-                dest_id = origin_row[2]
+                dest_id = origin[2]
                 if dest_id is None:
                     continue
                 if dest_id not in destinations:
@@ -269,13 +271,25 @@ class Route:  # pylint:disable = too-many-instance-attributes
                             continue
                 # Insert origin and destination
                 destination_row = destinations[dest_id]
-                route_name = f"{origin_row[1]} - {dest_id}"
-                origin_row = [route_name, 1, origin_row[1], origin_row[0], None]
+                if self.reverse_direction:
+                    route_name = f"{dest_id} - {origin[1]}"
+                    origin_sequence = 2
+                    destination_sequence = 1
+                else:
+                    route_name = f"{origin[1]} - {dest_id}"
+                    origin_sequence = 1
+                    destination_sequence = 2
+                origin_row = [route_name, origin_sequence, origin[1], origin[0], None]
                 if location_fields:
                     # Include invalid location fields as a placeholder so they'll be calculated at solve time
                     origin_row += [-1, -1, -1, -1]
-                icur.insertRow(origin_row)
-                icur.insertRow([route_name, 2, None] + list(destination_row))
+                destination_row = [route_name, destination_sequence, None] + list(destination_row)
+                if self.reverse_direction:
+                    icur.insertRow(destination_row)
+                    icur.insertRow(origin_row)
+                else:
+                    icur.insertRow(origin_row)
+                    icur.insertRow(destination_row)
 
     def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
         """Create and solve an Route analysis for the designated chunk of origins and their assigned destinations.
@@ -367,15 +381,21 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
 
         # Join the input ID fields to Routes
+        if self.reverse_direction:
+            first_stop_field = self.dest_unique_id_field_name
+            second_stop_field = self.origin_unique_id_field_name
+        else:
+            first_stop_field = self.origin_unique_id_field_name
+            second_stop_field = self.dest_unique_id_field_name
         helpers.run_gp_tool(
             self.logger,
             arcpy.management.JoinField,
-            [output_routes, "FirstStopOID", output_stops, "ObjectID", [self.origin_unique_id_field_name]]
+            [output_routes, "FirstStopOID", output_stops, "ObjectID", [first_stop_field]]
         )
         helpers.run_gp_tool(
             self.logger,
             arcpy.management.JoinField,
-            [output_routes, "LastStopOID", output_stops, "ObjectID", [self.dest_unique_id_field_name]]
+            [output_routes, "LastStopOID", output_stops, "ObjectID", [second_stop_field]]
         )
 
         self.job_result["outputRoutes"] = output_routes
@@ -418,7 +438,7 @@ class ParallelRoutePairCalculator:
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
         network_data_source, travel_mode, time_units, distance_units,
-        max_routes, max_processes, out_routes, scratch_folder, time_of_day=None, barriers=None
+        max_routes, max_processes, out_routes, reverse_direction, scratch_folder, time_of_day=None, barriers=None
     ):
         """Compute Routes between origins and their assigned destinations in parallel and combine results.
         TODO
@@ -465,6 +485,7 @@ class ParallelRoutePairCalculator:
             "time_units": time_units,
             "distance_units": distance_units,
             "time_of_day": time_of_day,
+            "reverse_direction": reverse_direction,
             "scratch_folder": self.scratch_folder,
             "barriers": barriers
         }
@@ -669,6 +690,12 @@ def launch_parallel_rt_pairs():
     help_string = "Maximum number parallel processes to use for the Route solves."
     parser.add_argument(
         "-mp", "--max-processes", action="store", dest="max_processes", type=int, help=help_string, required=True)
+
+    # --reverse-direction parameter
+    help_string = "Whether to reverse the direction of travel (destination to origin)."
+    parser.add_argument(
+        "-rd", "--reverse-direction", action="store", type=lambda x: bool(strtobool(x)),
+        dest="reverse_direction", help=help_string, required=True)
 
     # --out-routes parameter
     help_string = "The full catalog path to the output routes feature class."
