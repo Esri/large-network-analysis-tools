@@ -24,9 +24,7 @@ import arcpy
 
 # These properties are set by the tool dialog or can be specified as command line arguments. Do not set the values for
 # these properties in the RT_PROPS dictionary below because they will be ignored.
-RT_PROPS_SET_BY_TOOL = [
-    # TODO
-    "travelMode", "timeUnits", "distanceUnits", "timeOfDay"]
+RT_PROPS_SET_BY_TOOL = ["travelMode", "timeUnits", "distanceUnits", "timeOfDay"]
 
 # You can customize these properties to your needs, and the parallel Route calculations will use them.
 RT_PROPS = {
