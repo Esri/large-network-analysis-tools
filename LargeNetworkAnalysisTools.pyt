@@ -591,7 +591,7 @@ def get_catalog_path(param):
         param (arcpy.Parameter): Parameter from which to retrieve the catalog path.
 
     Returns:
-        list(str): List of catalog paths to the data
+        str: Catalog path to the data
     """
     param_value = param.value
     if not param_value:
@@ -631,7 +631,12 @@ def get_catalog_path_multivalue(param):
 
 
 def update_precalculate_parameter(param_network, param_precalculate):
-    """Turn off and hide Precalculate Network Locations parameter if the network data source is a service."""
+    """Turn off and hide Precalculate Network Locations parameter if the network data source is a service.
+
+    Args:
+        param_network (arcpy.Parameter): Parameter for the network data source
+        param_precalculate (arcpy.Parameter): Parameter for precalculate network locations
+    """
     if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
         if helpers.is_nds_service(param_network.valueAsText):
             param_precalculate.value = False
@@ -641,7 +646,12 @@ def update_precalculate_parameter(param_network, param_precalculate):
 
 
 def cap_max_processes_for_agol(param_network, param_max_processes):
-    """If the network data source is arcgis.com, cap max processes."""
+    """If the network data source is arcgis.com, cap max processes.
+
+    Args:
+        param_network (arcpy.Parameter): Parameter for the network data source
+        param_max_processes (arcpy.Parameter): Parameter for the max processes
+    """
     if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
         if param_max_processes.altered and param_max_processes.valueAsText:
             if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:

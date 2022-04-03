@@ -1,13 +1,13 @@
-"""TODO: Compute a large Origin Destination (OD) cost matrix by chunking the
-inputs and solving in parallel. Write outputs into a single combined
-feature class, a collection of CSV files, or a collection of Apache
-Arrow files.
+"""Compute a large multi-route analysis by chunking the input origins
+and their assigned destinations and solving in parallel. Write outputs to
+a single combined feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
-This script is intended to be called as a subprocess from the solve_large_rt.py script
-so that it can launch parallel processes with concurrent.futures. It must be
-called as a subprocess because the main script tool process, when running
+This script is intended to be called as a subprocess from the
+solve_large_route_pair_analysis.py script so that it can launch parallel
+processes with concurrent.futures. It must be called as a subprocess
+because the main script tool process, when running
 within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
@@ -61,22 +61,23 @@ DELETE_INTERMEDIATE_OUTPUTS = True  # Set to False for debugging purposes
 
 
 class Route:  # pylint:disable = too-many-instance-attributes
-    """Used for solving an Route problem in parallel for a designated chunk of the input datasets."""
+    """Used for solving a Route problem in parallel for a designated chunk of the input datasets."""
 
     def __init__(self, **kwargs):
         """Initialize the Route analysis for the given inputs.
 
-        Expected arguments:  TODO
+        Expected arguments:
         - origins
+        - origin_id_field
+        - assigned_dest_field
         - destinations
-        - output_format
-        - output_od_location
+        - dest_id_field
         - network_data_source
         - travel_mode
         - time_units
         - distance_units
-        - cutoff
-        - num_destinations
+        - time_of_day
+        - reverse_direction
         - scratch_folder
         - barriers
         """
@@ -217,7 +218,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.logger.debug(f"timeOfDay: {self.time_of_day}")
 
     def _insert_stops(self):
-        """Insert the origins and destinations as stops for the analysis."""
+        """Insert the origins and destinations as stops for the Route analysis."""
         # Make a layer for destinations for quicker access
         helpers.run_gp_tool(
             self.logger,
@@ -234,7 +235,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
             origin_field_def += [self.origin_unique_id_field_name, origin_id_field.length]
         dest_fields = arcpy.ListFields(self.input_destinations_layer)
         location_fields = ["SourceID", "SourceOID", "PosAlong", "SideOfEdge"]
-        if not set(location_fields).issubset(set([f.name for f in dest_fields])):
+        if not set(location_fields).issubset({f.name for f in dest_fields}):
             location_fields = []  # Do not use location fields for this analysis
         dest_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.dest_id_field)[0]
         dest_field_def = [self.dest_unique_id_field_name, field_types[dest_id_field.type]]
@@ -292,7 +293,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
                     icur.insertRow(destination_row)
 
     def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
-        """Create and solve an Route analysis for the designated chunk of origins and their assigned destinations.
+        """Create and solve a Route analysis for the designated chunk of origins and their assigned destinations.
 
         Args:
             origins_criteria (list): ObjectID range to select from the input origins
@@ -417,7 +418,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
 
 def solve_route(inputs, chunk):
-    """Solve an Route analysis for the given inputs for the given chunk of ObjectIDs.
+    """Solve a Route analysis for the given inputs for the given chunk of ObjectIDs.
 
     Args:
         inputs (dict): Dictionary of keyword inputs suitable for initializing the Route class
@@ -441,25 +442,29 @@ class ParallelRoutePairCalculator:
         max_routes, max_processes, out_routes, reverse_direction, scratch_folder, time_of_day=None, barriers=None
     ):
         """Compute Routes between origins and their assigned destinations in parallel and combine results.
-        TODO
-        Compute Routes in parallel and combine and post-process the results.
+
+        Compute Routes in parallel and combine the results.
         This class assumes that the inputs have already been pre-processed and validated.
 
         Args:
-            origins (str): Catalog path to origins
-            destinations (str): Catalog path to destinations
-            network_data_source (str): Network data source catalog path or URL
-            travel_mode (str): String-based representation of a travel mode (name or JSON)
-            output_format (str): String representation of the output format
-            output_od_location (str): Catalog path to the output feature class or folder where the OD Lines output will
-                be stored.
-            max_origins (int): Maximum origins allowed in a chunk
-            max_destinations (int): Maximum destinations allowed in a chunk
-            max_processes (int): Maximum number of parallel processes allowed
+            origins (str, layer): Catalog path or layer for the input origins
+            origin_id_field (str): Unique ID field of the input origins
+            assigned_dest_field (str): Field in the input origins with the assigned destination ID
+            destinations (str, layer): Catalog path or layer for the input destinations
+            dest_id_field: (str): Unique ID field of the input destinations
+            network_data_source (str, layer): Catalog path, layer, or URL for the input network dataset
+            travel_mode (str, travel mode): Travel mode object, name, or json string representation
             time_units (str): String representation of time units
             distance_units (str): String representation of distance units
-            barriers (list(str), optional): List of catalog paths to point, line, and polygon barriers to use.
-                Defaults to None.
+            max_routes (int): Maximum number of origin-destination pairs that can be in one chunk
+            max_processes (int): Maximum number of allowed parallel processes
+            out_routes (str): Catalog path to the output routes feature class
+            reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
+                destination to origin instead of origin to destination. Defaults to False.
+            scratch_folder (str): Catalog path to the folder where intermediate outputs will be written.
+            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
+            barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
+                 to use. Defaults to None.
         """
         self.out_routes = out_routes
         self.scratch_folder = scratch_folder

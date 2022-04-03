@@ -86,6 +86,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         - distance_units
         - cutoff
         - num_destinations
+        - time_of_day
         - scratch_folder
         - barriers
         """
@@ -722,6 +723,7 @@ class ParallelODCalculator:
                 Defaults to None. When None, do not use a cutoff.
             num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
                 which means to find all destinations.
+            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             barriers (list(str), optional): List of catalog paths to point, line, and polygon barriers to use.
                 Defaults to None.
         """

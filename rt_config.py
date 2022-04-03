@@ -5,9 +5,8 @@ A list of Route solver properties is documented here:
 https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route.htm
 
 You can include any of them in the dictionary in this file, and the tool will
-use them. However, travelMode, timeUnits, distanceUnits, defaultImpedanceCutoff,
-and defaultDestinationCount will be ignored because they are specified in the
-tool dialog.  TODO
+use them. However, travelMode, timeUnits, distanceUnits, and timeOfDay
+will be ignored because they are specified in the tool dialog.
 
 Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");

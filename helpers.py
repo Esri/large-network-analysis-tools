@@ -102,8 +102,14 @@ def update_agol_max_processes(max_processes):
 def convert_time_units_str_to_enum(time_units):
     """Convert a string representation of time units to an arcpy.nax enum.
 
+    Args:
+        time_units (str): String representation of time units
+
     Raises:
         ValueError: If the string cannot be parsed as a valid arcpy.nax.TimeUnits enum value.
+
+    Returns:
+        arcpy.nax.TimeUnits: Time units enum for use in arcpy.nax solver objects
     """
     if time_units.lower() == "minutes":
         return arcpy.nax.TimeUnits.Minutes
@@ -122,8 +128,14 @@ def convert_time_units_str_to_enum(time_units):
 def convert_distance_units_str_to_enum(distance_units):
     """Convert a string representation of distance units to an arcpy.nax.DistanceUnits enum.
 
+    Args:
+        distance_units (str): String representation of distance units
+
     Raises:
         ValueError: If the string cannot be parsed as a valid arcpy.nax.DistanceUnits enum value.
+
+    Returns:
+        arcpy.nax.DistanceUnits: Distance units enum for use in arcpy.nax solver objects
     """
     if distance_units.lower() == "miles":
         return arcpy.nax.DistanceUnits.Miles
@@ -154,8 +166,14 @@ class OutputFormat(enum.Enum):
 def convert_output_format_str_to_enum(output_format):
     """Convert a string representation of the desired output format to an enum.
 
+    Args:
+        output_format (str): String representation of the output format
+
     Raises:
         ValueError: If the string cannot be parsed as a valid arcpy.nax.DistanceUnits enum value.
+
+    Returns:
+        OutputFormat: Output format enum value
     """
     if output_format.lower() == "feature class":
         return OutputFormat.featureclass

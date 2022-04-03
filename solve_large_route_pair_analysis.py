@@ -1,6 +1,6 @@
 """Compute a large analysis with origins preassigned to specific destinations
 by chunking the inputs and solving in parallel. Write outputs into a single
-combined feature class.  TODO
+combined feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
@@ -56,32 +56,26 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         """Initialize the RoutePairSolver class.
 
         Args:
-        TODO
             origins (str, layer): Catalog path or layer for the input origins
+            origin_id_field (str): Unique ID field of the input origins
+            assigned_dest_field (str): Field in the input origins with the assigned destination ID
             destinations (str, layer): Catalog path or layer for the input destinations
+            dest_id_field: (str): Unique ID field of the input destinations
             network_data_source (str, layer): Catalog path, layer, or URL for the input network dataset
             travel_mode (str, travel mode): Travel mode object, name, or json string representation
-            output_origins (str): Catalog path to the output Origins feature class
-            output_destinations (str): Catalog path to the output Destinations feature class
-            chunk_size (int): Maximum number of origins and destinations that can be in one chunk
-            max_processes (int): Maximum number of allowed parallel processes
             time_units (str): String representation of time units
             distance_units (str): String representation of distance units
-            output_format (str): String representation of the output format
-            output_od_lines (str, optional): Catalog path to the output OD Lines feature class. Required if
-                output_format is "Feature class".
-            output_data_folder (str, optional): Catalog path to the output folder where CSV or Arrow files will be
-                stored. Required if output_format is "CSV files" or "Apache Arrow files".
-            cutoff (float, optional): Impedance cutoff to limit the Route solve. Interpreted in the time_units
-                if the travel mode is time-based. Interpreted in the distance-units if the travel mode is distance-
-                based. Interpreted in the impedance units if the travel mode is neither time- nor distance-based.
-                Defaults to None. When None, do not use a cutoff.
-            num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
-                which means to find all destinations.
-            precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
-                inputs. Defaults to True. Should be false if the network_data_source is a service.
+            chunk_size (int): Maximum number of origin-destination pairs that can be in one chunk
+            max_processes (int): Maximum number of allowed parallel processes
+            output_routes (str): Catalog path to the output routes feature class
+            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                  to use. Defaults to None.
+            precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
+                inputs. Defaults to True. Should be false if the network_data_source is a service.
+            sort_origins (bool, optional): Whether to sort the origins by assigned destination ID. Defaults to True.
+            reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
+                destination to origin instead of origin to destination. Defaults to False.
         """
         self.origins = origins
         self.origin_id_field = origin_id_field
@@ -271,10 +265,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                     f"Max OD pairs per chunk has been updated to {self.chunk_size} to accommodate service limits.")
 
     def _sort_origins_by_assigned_destination(self):
-        """Sort the origins by the assigned destination field.
-
-        Also adds a field called "OriginOID" to the input feature class to preserve the original OID values.
-        """
+        """Sort the origins by the assigned destination field."""
         arcpy.AddMessage("Sorting origins by assigned destination...")
 
         # Sort input features
@@ -355,7 +346,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                     barrier_fc, self.network_data_source, self.travel_mode, RT_PROPS)
 
     def _execute_solve(self):
-        """Solve the multi-route analysis."""
+        """Execute the solve in a subprocess."""
         # Launch the parallel_route_pairs script as a subprocess so it can spawn parallel processes. We have to do this
         # because a tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
         cwd = os.path.dirname(os.path.abspath(__file__))
@@ -366,7 +357,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             "--origins-id-field", self.origin_id_field,
             "--assigned-dest-field", self.assigned_dest_field,
             "--destinations", self.output_destinations,
-            "--destinations-id-field", self.dest_id_field,  ## TODO: If ID field is ObjectID, transfer it
+            "--destinations-id-field", self.dest_id_field,
             "--network-data-source", self.network_data_source,
             "--travel-mode", self.travel_mode,
             "--time-units", self.time_units,

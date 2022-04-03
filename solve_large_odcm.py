@@ -75,6 +75,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
                 Defaults to None. When None, do not use a cutoff.
             num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
                 which means to find all destinations.
+            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
                 inputs. Defaults to True. Should be false if the network_data_source is a service.
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
