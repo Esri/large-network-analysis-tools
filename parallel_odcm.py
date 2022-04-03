@@ -69,78 +69,6 @@ LOGGER.addHandler(console_handler)
 DELETE_INTERMEDIATE_OD_OUTPUTS = True  # Set to False for debugging purposes
 
 
-def run_gp_tool(tool, tool_args=None, tool_kwargs=None, log_to_use=LOGGER):
-    """Run a geoprocessing tool with nice logging.
-
-    The purpose of this function is simply to wrap the call to a geoprocessing tool in a way that we can log errors,
-    warnings, and info messages as well as tool run time into our logging. This helps pipe the messages back to our
-    script tool dialog.
-
-    Args:
-        tool (arcpy geoprocessing tool class): GP tool class command, like arcpy.management.CreateFileGDB
-        tool_args (list, optional): Ordered list of values to use as tool arguments. Defaults to None.
-        tool_kwargs (dictionary, optional): Dictionary of tool parameter names and values that can be used as named
-            arguments in the tool command. Defaults to None.
-        log_to_use (logging.logger, optional): logger class to use for messages. Defaults to LOGGER. When calling this
-            from the ODCostMatrix class, use self.logger instead so the messages go to the processes's log file instead
-            of stdout.
-
-    Returns:
-        GP result object: GP result object returned from the tool run.
-
-    Raises:
-        arcpy.ExecuteError if the tool fails
-    """
-    # Try to retrieve and log the name of the tool
-    tool_name = repr(tool)
-    try:
-        tool_name = tool.__esri_toolname__
-    except Exception:  # pylint: disable=broad-except
-        try:
-            tool_name = tool.__name__
-        except Exception:  # pylint: disable=broad-except
-            # Probably the tool didn't have an __esri_toolname__ property or __name__. Just don't worry about it.
-            pass
-    log_to_use.debug(f"Running geoprocessing tool {tool_name}...")
-
-    # Try running the tool, and log all messages
-    try:
-        if tool_args is None:
-            tool_args = []
-        if tool_kwargs is None:
-            tool_kwargs = {}
-        result = tool(*tool_args, **tool_kwargs)
-        info_msgs = [msg for msg in result.getMessages(0).splitlines() if msg]
-        warning_msgs = [msg for msg in result.getMessages(1).splitlines() if msg]
-        for msg in info_msgs:
-            log_to_use.debug(msg)
-        for msg in warning_msgs:
-            log_to_use.warning(msg)
-    except arcpy.ExecuteError:
-        log_to_use.error(f"Error running geoprocessing tool {tool_name}.")
-        # First check if it's a tool error and if so, handle warning and error messages.
-        info_msgs = [msg for msg in arcpy.GetMessages(0).strip("\n").splitlines() if msg]
-        warning_msgs = [msg for msg in arcpy.GetMessages(1).strip("\n").splitlines() if msg]
-        error_msgs = [msg for msg in arcpy.GetMessages(2).strip("\n").splitlines() if msg]
-        for msg in info_msgs:
-            log_to_use.debug(msg)
-        for msg in warning_msgs:
-            log_to_use.warning(msg)
-        for msg in error_msgs:
-            log_to_use.error(msg)
-        raise
-    except Exception:
-        # Unknown non-tool error
-        log_to_use.error(f"Error running geoprocessing tool {tool_name}.")
-        errs = traceback.format_exc().splitlines()
-        for err in errs:
-            log_to_use.error(err)
-        raise
-
-    log_to_use.debug(f"Finished running geoprocessing tool {tool_name}.")
-    return result
-
-
 class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
     """Used for solving an OD Cost Matrix problem in parallel for a designated chunk of the input datasets."""
 
@@ -158,6 +86,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         - distance_units
         - cutoff
         - num_destinations
+        - time_of_day
         - scratch_folder
         - barriers
         """
@@ -242,10 +171,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         else:
             # The network dataset layer does not exist in this process, so create the layer.
             self.logger.debug("Creating network dataset layer...")
-            run_gp_tool(
+            helpers.run_gp_tool(
+                self.logger,
                 arcpy.na.MakeNetworkDatasetLayer,
                 [self.network_data_source, nds_layer_name],
-                log_to_use=self.logger
             )
         self.network_data_source = nds_layer_name
 
@@ -387,7 +316,7 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         solve_start = time.time()
         self.solve_result = self.od_solver.solve()
         solve_end = time.time()
-        self.logger.debug(f"Solving OD cost matrix completed in {round(solve_end - solve_start, 3)} (seconds).")
+        self.logger.debug(f"Solving OD cost matrix completed in {round(solve_end - solve_start, 3)} seconds.")
 
         # Handle solve messages
         solve_msgs = [msg[-1] for msg in self.solve_result.solverMessages(arcpy.nax.MessageSeverity.All)]
@@ -434,10 +363,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Make output gdb
         self.logger.debug("Creating output geodatabase for OD cost matrix results...")
         od_workspace = os.path.join(self.job_folder, "scratch.gdb")
-        run_gp_tool(
+        helpers.run_gp_tool(
+            self.logger,
             arcpy.management.CreateFileGDB,
             [os.path.dirname(od_workspace), os.path.basename(od_workspace)],
-            log_to_use=self.logger
         )
 
         output_od_lines = os.path.join(od_workspace, out_fc_name)
@@ -460,32 +389,36 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             lines_layer_name = "Out_Lines"
             origins_layer_name = "Out_Origins"
             destinations_layer_name = "Out_Destinations"
-            run_gp_tool(arcpy.management.MakeFeatureLayer, [output_od_lines, lines_layer_name], log_to_use=self.logger)
-            run_gp_tool(arcpy.management.MakeFeatureLayer, [output_origins, origins_layer_name], log_to_use=self.logger)
-            run_gp_tool(arcpy.management.MakeFeatureLayer,
-                        [output_destinations, destinations_layer_name], log_to_use=self.logger)
+            helpers.run_gp_tool(self.logger, arcpy.management.MakeFeatureLayer, [output_od_lines, lines_layer_name])
+            helpers.run_gp_tool(self.logger, arcpy.management.MakeFeatureLayer, [output_origins, origins_layer_name])
+            helpers.run_gp_tool(
+                self.logger, arcpy.management.MakeFeatureLayer, [output_destinations, destinations_layer_name])
             # Update OriginOID values
-            run_gp_tool(
+            helpers.run_gp_tool(
+                self.logger,
                 arcpy.management.AddJoin,
                 [lines_layer_name, "OriginOID", origins_layer_name, "ObjectID", "KEEP_ALL"]
             )
-            run_gp_tool(
+            helpers.run_gp_tool(
+                self.logger,
                 arcpy.management.CalculateField,
                 [lines_layer_name, f"{os.path.basename(output_od_lines)}.OriginOID",
                  f"!{os.path.basename(output_origins)}.{self.orig_origin_oid_field}!", "PYTHON3"]
             )
-            run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
+            helpers.run_gp_tool(self.logger, arcpy.management.RemoveJoin, [lines_layer_name])
             # Update DestinationOID values
-            run_gp_tool(
+            helpers.run_gp_tool(
+                self.logger,
                 arcpy.management.AddJoin,
                 [lines_layer_name, "DestinationOID", destinations_layer_name, "ObjectID", "KEEP_ALL"]
             )
-            run_gp_tool(
+            helpers.run_gp_tool(
+                self.logger,
                 arcpy.management.CalculateField,
                 [lines_layer_name, f"{os.path.basename(output_od_lines)}.DestinationOID",
                  f"!{os.path.basename(output_destinations)}.{self.orig_dest_oid_field}!", "PYTHON3"]
             )
-            run_gp_tool(arcpy.management.RemoveJoin, [lines_layer_name])
+            helpers.run_gp_tool(self.logger, arcpy.management.RemoveJoin, [lines_layer_name])
 
     def _export_to_csv(self, out_csv_file):
         """Save the OD Lines result to a CSV file."""
@@ -636,10 +569,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             f"And {self.origins_oid_field_name} <= {origins_criteria[1]}"
         )
         self.logger.debug(f"Origins where clause: {origins_where_clause}")
-        self.input_origins_layer_obj = run_gp_tool(
+        self.input_origins_layer_obj = helpers.run_gp_tool(
+            self.logger,
             arcpy.management.MakeFeatureLayer,
             [self.origins, self.input_origins_layer, origins_where_clause],
-            log_to_use=self.logger
         ).getOutput(0)
         num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
         self.logger.debug(f"Number of origins selected: {num_origins}")
@@ -651,10 +584,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             f"And {self.destinations_oid_field_name} <= {destinations_criteria[1]} "
         )
         self.logger.debug(f"Destinations where clause: {destinations_where_clause}")
-        self.input_destinations_layer_obj = run_gp_tool(
+        self.input_destinations_layer_obj = helpers.run_gp_tool(
+            self.logger,
             arcpy.management.MakeFeatureLayer,
             [self.destinations, self.input_destinations_layer, destinations_where_clause],
-            log_to_use=self.logger
         ).getOutput(0)
         num_destinations = int(arcpy.management.GetCount(self.input_destinations_layer_obj).getOutput(0))
         self.logger.debug(f"Number of destinations selected: {num_destinations}")
@@ -681,12 +614,15 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # Use SelectLayerByLocation to select those within a straight-line distance
         self.logger.debug(
             f"Eliminating destinations outside of distance threshold {cutoff_dist} {self.distance_units.name}...")
-        self.input_destinations_layer_obj = run_gp_tool(arcpy.management.SelectLayerByLocation, [
-            self.input_destinations_layer,
-            "WITHIN_A_DISTANCE_GEODESIC",
-            self.input_origins_layer,
-            f"{cutoff_dist} {self.distance_units.name}",
-        ], log_to_use=self.logger).getOutput(0)
+        self.input_destinations_layer_obj = helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.SelectLayerByLocation, [
+                self.input_destinations_layer,
+                "WITHIN_A_DISTANCE_GEODESIC",
+                self.input_origins_layer,
+                f"{cutoff_dist} {self.distance_units.name}",
+            ]
+        ).getOutput(0)
 
         # If no destinations are within the cutoff, reset the destinations layer object
         # so the iteration will be skipped
@@ -787,6 +723,7 @@ class ParallelODCalculator:
                 Defaults to None. When None, do not use a cutoff.
             num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
                 which means to find all destinations.
+            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             barriers (list(str), optional): List of catalog paths to point, line, and polygon barriers to use.
                 Defaults to None.
         """
@@ -839,8 +776,8 @@ class ParallelODCalculator:
         self.od_line_files = []
 
         # Construct OID ranges for chunks of origins and destinations
-        self.origin_ranges = self._get_oid_ranges_for_input(origins, max_origins)
-        destination_ranges = self._get_oid_ranges_for_input(destinations, max_destinations)
+        self.origin_ranges = helpers.get_oid_ranges_for_input(origins, max_origins)
+        destination_ranges = helpers.get_oid_ranges_for_input(destinations, max_destinations)
 
         # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
         self.ranges = itertools.product(self.origin_ranges, destination_ranges)
@@ -858,7 +795,7 @@ class ParallelODCalculator:
         Returns:
             str: The name of the field in the output OD Lines table containing the optimized costs for the analysis
         """
-        # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties. This allows us to
+        # Create a dummy ODCostMatrix object and set properties. This allows us to
         # detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
         LOGGER.debug("Validating OD Cost Matrix settings...")
         optimized_cost_field = None
@@ -887,44 +824,6 @@ class ParallelODCalculator:
                 del odcm
 
         return optimized_cost_field
-
-    @staticmethod
-    def _get_oid_ranges_for_input(input_fc, max_chunk_size):
-        """Construct ranges of ObjectIDs for use in where clauses to split large data into chunks.
-
-        Args:
-            input_fc (str, layer): Data that needs to be split into chunks
-            max_chunk_size (int): Maximum number of rows that can be in a chunk
-
-        Returns:
-            list: list of ObjectID ranges for the current dataset representing each chunk. For example,
-                [[1, 1000], [1001, 2000], [2001, 2478]] represents three chunks of no more than 1000 rows.
-        """
-        ranges = []
-        num_in_range = 0
-        current_range = [0, 0]
-        # Loop through all OIDs of the input and construct tuples of min and max OID for each chunk
-        # We do it this way and not by straight-up looking at the numerical values of OIDs to account
-        # for definition queries, selection sets, or feature layers with gaps in OIDs
-        for row in arcpy.da.SearchCursor(input_fc, "OID@"):  # pylint: disable=no-member
-            oid = row[0]
-            if num_in_range == 0:
-                # Starting new range
-                current_range[0] = oid
-            # Increase the count of items in this range and set the top end of the range to the current oid
-            num_in_range += 1
-            current_range[1] = oid
-            if num_in_range == max_chunk_size:
-                # Finishing up a chunk
-                ranges.append(current_range)
-                # Reset range trackers
-                num_in_range = 0
-                current_range = [0, 0]
-        # After looping, close out the last range if we still have one open
-        if current_range != [0, 0]:
-            ranges.append(current_range)
-
-        return ranges
 
     def solve_od_in_parallel(self):
         """Solve the OD Cost Matrix in chunks and post-process the results."""
@@ -1011,15 +910,18 @@ class ParallelODCalculator:
         """
         # Create the final output feature class
         desc = arcpy.Describe(self.od_line_files[0])
-        run_gp_tool(arcpy.management.CreateFeatureclass, [
-            os.path.dirname(self.output_od_location),
-            os.path.basename(self.output_od_location),
-            "POLYLINE",
-            self.od_line_files[0],  # template feature class to transfer full schema
-            "SAME_AS_TEMPLATE",
-            "SAME_AS_TEMPLATE",
-            desc.spatialReference
-        ])
+        helpers.run_gp_tool(
+            LOGGER,
+            arcpy.management.CreateFeatureclass, [
+                os.path.dirname(self.output_od_location),
+                os.path.basename(self.output_od_location),
+                "POLYLINE",
+                self.od_line_files[0],  # template feature class to transfer full schema
+                "SAME_AS_TEMPLATE",
+                "SAME_AS_TEMPLATE",
+                desc.spatialReference
+            ]
+        )
 
         # Insert the rows from all the individual output feature classes into the final output
         fields = ["SHAPE@"] + [f.name for f in desc.fields]
@@ -1154,7 +1056,7 @@ def launch_parallel_od():
     """Read arguments passed in via subprocess and run the parallel OD Cost Matrix.
 
     This script is intended to be called via subprocess via the solve_large_odcm.py module, which does essential
-    preprocessing and validation. Users should not call this script directly from the command line
+    preprocessing and validation. Users should not call this script directly from the command line.
 
     We must launch this script via subprocess in order to support parallel processing from an ArcGIS Pro script tool,
     which cannot do parallel processing directly.

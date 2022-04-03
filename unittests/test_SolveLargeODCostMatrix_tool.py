@@ -52,10 +52,16 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
 
         # Create a unique output directory and gdb for this test
         self.scratch_folder = os.path.join(
-            CWD, "TestOutput", "Output_Tool_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
+            CWD, "TestOutput",
+            "Output_SolveLargeODCostMatrix_Tool_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
         os.makedirs(self.scratch_folder)
         self.output_gdb = os.path.join(self.scratch_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
+
+        # Copy some data to the output gdb to serve as barriers. Do not use tutorial data directly as input because
+        # the tests will write network location fields to it, and we don't want to modify the user's original data.
+        self.barriers = os.path.join(self.output_gdb, "Barriers")
+        arcpy.management.Copy(os.path.join(sf_gdb, "Analysis", "CentralDepots"), self.barriers)
 
     def test_run_tool_time_units_feature_class(self):
         """Test that the tool runs with a time-based travel mode. Write output to a feature class."""
@@ -111,7 +117,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             5,  # cutoff
             2,  # number of destinations
             None,  # time of day
-            None,  # barriers
+            self.barriers,  # barriers
             True  # precalculate network locations
         )
         # Check results

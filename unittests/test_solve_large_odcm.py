@@ -1,4 +1,4 @@
-"""Unit tests for the solve_large_odcm.py module.'
+"""Unit tests for the solve_large_odcm.py module.
 
 Copyright 2022 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,33 +84,37 @@ class TestSolveLargeODCM(unittest.TestCase):
 
     def test_validate_inputs(self):
         """Test the validate_inputs function."""
+        does_not_exist = os.path.join(self.sf_gdb, "Analysis", "DoesNotExist")
         invalid_inputs = [
-            ("chunk_size", -5, ValueError),
-            ("max_processes", 0, ValueError),
-            ("cutoff", 0, ValueError),
-            ("cutoff", -5, ValueError),
-            ("num_destinations", 0, ValueError),
-            ("num_destinations", -5, ValueError),
-            ("time_units", "BadUnits", ValueError),
-            ("distance_units", "BadUnits", ValueError),
-            ("origins", os.path.join(self.sf_gdb, "Analysis", "DoesNotExist"), ValueError),
-            ("destinations", os.path.join(self.sf_gdb, "Analysis", "DoesNotExist"), ValueError),
-            ("barriers", [os.path.join(self.sf_gdb, "Analysis", "DoesNotExist")], ValueError),
-            ("network_data_source", os.path.join(self.sf_gdb, "Transportation", "DoesNotExist"), ValueError),
-            ("travel_mode", "BadTM", RuntimeError),
-            ("time_of_day", "3/29/2022 4:45 PM", ValueError),
-            ("time_of_day", "BadDateTime", ValueError)
+            ("chunk_size", -5, ValueError, "Chunk size must be greater than 0."),
+            ("max_processes", 0, ValueError, "Maximum allowed parallel processes must be greater than 0."),
+            ("time_units", "BadUnits", ValueError, "Invalid time units: BadUnits"),
+            ("distance_units", "BadUnits", ValueError, "Invalid distance units: BadUnits"),
+            ("origins", does_not_exist, ValueError, f"Input dataset {does_not_exist} does not exist."),
+            ("destinations", does_not_exist, ValueError, f"Input dataset {does_not_exist} does not exist."),
+            ("barriers", [does_not_exist], ValueError, f"Input dataset {does_not_exist} does not exist."),
+            ("network_data_source", does_not_exist, ValueError,
+             f"Input network dataset {does_not_exist} does not exist."),
+            ("travel_mode", "BadTM", RuntimeError, ""),
+            ("time_of_day", "3/29/2022 4:45 PM", ValueError, ""),
+            ("time_of_day", "BadDateTime", ValueError, ""),
+            ("cutoff", 0, ValueError, "Impedance cutoff must be greater than 0."),
+            ("cutoff", -5, ValueError, "Impedance cutoff must be greater than 0."),
+            ("num_destinations", 0, ValueError, "Number of destinations to find must be greater than 0."),
+            ("num_destinations", -5, ValueError, "Number of destinations to find must be greater than 0."),
         ]
         for invalid_input in invalid_inputs:
-            property_name = invalid_input[0]
-            value = invalid_input[1]
-            error_type = invalid_input[2]
-            with self.subTest(property_name=property_name, value=value, error_type=error_type):
+            property_name, value, error_type, expected_message = invalid_input
+            with self.subTest(
+                property_name=property_name, value=value, error_type=error_type, expected_message=expected_message
+            ):
                 inputs = deepcopy(self.od_args)
                 inputs[property_name] = value
                 od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
-                with self.assertRaises(error_type):
+                with self.assertRaises(error_type) as ex:
                     od_solver._validate_inputs()
+                if expected_message:
+                    self.assertEqual(expected_message, str(ex.exception))
 
         # Check validation of missing output feature class or folder location depending on output format
         for output_format in helpers.OUTPUT_FORMATS:
@@ -140,21 +144,6 @@ class TestSolveLargeODCM(unittest.TestCase):
             od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
             with self.assertRaises(ValueError):
                 od_solver._validate_inputs()
-
-    def test_get_tool_limits_and_is_agol(self):
-        """Test the _get_tool_limits_and_is_agol function for a portal network data source."""
-        inputs = deepcopy(self.od_args)
-        inputs["network_data_source"] = self.portal_nd
-        inputs["travel_mode"] = self.portal_tm
-        od_solver = solve_large_odcm.ODCostMatrixSolver(**inputs)
-        od_solver._get_tool_limits_and_is_agol()
-        self.assertIsInstance(od_solver.service_limits, dict)
-        self.assertIsInstance(od_solver.is_agol, bool)
-        self.assertIn("maximumDestinations", od_solver.service_limits)
-        self.assertIn("maximumOrigins", od_solver.service_limits)
-        if "arcgis.com" in self.portal_nd:
-            # Note: If testing with some other portal, this test would need to be updated.
-            self.assertTrue(od_solver.is_agol)
 
     def test_update_max_inputs_for_service(self):
         """Test the update_max_inputs_for_service function."""
@@ -212,21 +201,6 @@ class TestSolveLargeODCM(unittest.TestCase):
         od_solver._spatially_sort_input(fc_to_sort, "DestinationOID")
         self.assertTrue(arcpy.Exists(fc_to_sort))
         self.assertIn("DestinationOID", [f.name for f in arcpy.ListFields(fc_to_sort)])
-
-    def test_precalculate_network_locations(self):
-        """Test the precalculate_network_locations function."""
-        loc_fields = set(["SourceID", "SourceOID", "PosAlong", "SideOfEdge"])
-
-        # Precalculate network locations
-        od_solver = solve_large_odcm.ODCostMatrixSolver(**self.od_args)
-        fc_to_precalculate = os.path.join(self.output_gdb, "Precalculated")
-        arcpy.management.Copy(self.destinations, fc_to_precalculate)
-        od_solver._precalculate_network_locations(fc_to_precalculate)
-        actual_fields = set([f.name for f in arcpy.ListFields(fc_to_precalculate)])
-        self.assertTrue(loc_fields.issubset(actual_fields), "Network location fields not added")
-        for row in arcpy.da.SearchCursor(fc_to_precalculate, list(loc_fields)):  # pylint: disable=no-member
-            for val in row:
-                self.assertIsNotNone(val)
 
     def test_solve_large_od_cost_matrix_featureclass(self):
         """Test the full solve OD Cost Matrix workflow with feature class output."""

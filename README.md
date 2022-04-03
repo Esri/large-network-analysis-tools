@@ -3,11 +3,12 @@
 
 The tools and code samples here help you solve large network analysis problems in ArcGIS Pro.
 
-We have provided a python script that can solve a large origin destination cost matrix problem by splitting the input data into chunks and solving the chunks in parallel. The results can be written to a feature class, a set of CSV files, or a set of Apache Arrow files.
+We have provided two python script tools designed to solve large network analysis problems by splitting the input data into chunks and solving the chunks in parallel. You can use these tools as is, you can modify the provided scripts to suit your needs, or you can use them as an example when writing your own code.
 
 ## Features
-* The LargeNetworkAnalysisTools.pyt toolbox has a geoprocessing tool called "Solve Large OD Cost Matrix" that can be used to solve large origin destination cost matrix problems. You can run this tool as-is out of the box with no changes to the code.
-* You can modify the provided scripts to suit your needs, or you can use them as an example when writing your own script.
+The LargeNetworkAnalysisTools.pyt toolbox has two geoprocessing tools:
+* *Solve Large OD Cost Matrix* - solves a large origin destination cost matrix problem, and the results can be written to a feature class, a set of CSV files, or a set of Apache Arrow files
+* *Solve Large Analysis With Known OD Pairs* - generates routes between origins and preassigned destinations
 
 ## Requirements
 
@@ -24,9 +25,13 @@ We have provided a python script that can solve a large origin destination cost 
 2. Modify the code to suit your needs if desired
 3. Run the code in standalone python, or run the provided geoprocessing tool from within ArcGIS Pro.
 
+## Solve Large OD Cost Matrix tool
+
+The *Solve Large OD Cost Matrix* tool can be used to solve a large [origin-destination cost matrix](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/network-analyst-solver-types.htm#ESRI_SECTION1_A132772FF6C54FA6A594F2F6A1202570), calculating the travel time and distance from a set of origins to a set of destinations.  You can use a time or distance cutoff and a number of destinations to find for each origin to reduce the problem size, and the calculations are optimized by spatially sorting the inputs.  The tool can calculate extremely large OD cost matrices by chunking up the problem and solving in parallel.  You can choose to save the outputs to a feature class, set of CSV files, or set of Apache Arrow tables.
+
 ### Solve Large OD Cost Matrix tool inputs
-- **Origins** (Python: *Origins*) - The feature class or layer containing the origins. Layers are referenced by catalog path, so selection sets and definition queries will be ignored. If you want to subset your data, please copy the subset to a separate feature class before running this tool.
-- **Destinations** (Python: *Destinations*) - The feature class or layer containing the destinations. Layers are referenced by catalog path, so selection sets and definition queries will be ignored. If you want to subset your data, please copy the subset to a separate feature class before running this tool.
+- **Origins** (Python: *Origins*) - The feature class or layer containing the origins.
+- **Destinations** (Python: *Destinations*) - The feature class or layer containing the destinations.
 - **Network Data Source** (Python: *Network_Data_Source*) - Network dataset, network dataset layer, or portal URL to use when calculating the OD Cost Matrix.
 - **Travel Mode** (Python: *Travel_Mode*) - Network travel mode to use when calculating the OD Cost Matrix
 - **Time Units** (Python: *Time_Units*) - The time units the output Total_Time field will be reported in.
@@ -58,7 +63,7 @@ You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You j
 
 If you plan to use ArcGIS Online or a portal as your network data source, make sure you're connected to that portal in your current Pro session.
 
-![Screenshot of tool dialog](./images/ToolDialogScreenshot.png)
+![Screenshot of tool dialog](./images/SolveLargeODCostMatrix_Dialog.png)
 
 ### Running the tool from standalone Python
 
@@ -76,22 +81,91 @@ arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
     Origins, Destinations, Network_Data_Source, Travel_Mode, Time_Units, Distance_Units,
     Max_Inputs_Per_Chunk, Max_Processes, Output_Updated_Origins, Output_Updated_Destinations,
     Output_Format, Output_OD_Lines_Feature_Class, Output_Folder,
-    Cutoff, Num_Destinations, Barriers, Precalculate_Network_Locations
+    Cutoff, Num_Destinations, Time_Of_Day, Barriers, Precalculate_Network_Locations
 )
 ```
 
 You can also run the provided scripts by directly calling solve_large_odcm.py from the command line instead of using the geoprocessing tool as the code's gateway. Call `python solve_large_odcm.py -h` to print the command line help to show you how to do this.
 
-## Technical explanation of how this tool works
+### Technical explanation of how this tool works
 
 The tool consists of several scripts:
 - **LargeNetworkAnalysisTools.pyt**: This defines the python toolbox and the tool as you see it in the ArcGIS Pro UI. It does some minimal parameter validation and calls solve_large_odcm.py to actually run the analysis.
-- **solve_large_odcm.py**: This defines a class, `ODCostMatrixSolver()`, that validates and preprocesses the inputs and then calls parallel_odcm.py as a subprocess to do the parallel solves. The class also parses log messages from the parallel_odcm.py and writes them out as geoprocessing messages.
+- **solve_large_odcm.py**: This defines a class, `ODCostMatrixSolver`, that validates and preprocesses the inputs and then calls parallel_odcm.py as a subprocess to do the parallel solves. The class also parses log messages from the parallel_odcm.py and writes them out as geoprocessing messages.
 - **parallel_odcm.py**: This script chunks the inputs, solves the OD Cost Matrices in parallel, and postprocesses the results.
 - **od_config.py**: In this file, you can override some OD Cost Matrix analysis settings that are not included in the tool dialog. This is provided to make the scripts easier to customize so you don't have to dig through the more complex parts of the code to find these simple settings.
 - **helpers.py**: Contains some helper methods and global variables.
 
 Why do we have both solve_large_odcm.py and parallel_odcm.py? Why do we call parallel_odcm.py as a subprocess? This is necessary to accommodate running this tool from the ArcGIS Pro UI. A script tool running in the ArcGIS Pro UI cannot directly call multiprocessing using concurrent.futures. We must instead spin up a subprocess, and the subprocess must spawn parallel processes for the calculations. Thus, solve_large_odcm.py does all the pre-processing in the main python process, but it passes the inputs to parallel_odcm.py as a separate subprocess, and that subprocess can, in turn, spin up parallel processes for the OD Cost Matrix calculations.
+
+
+## Solve Large Analysis With Known OD Pairs tool
+
+The *Solve Large Analysis With Known OD Pairs* tool can be used to calculate the travel time and distance and generate routes between known origin-destination pairs. It can calculate many routes simultaneously by chunking up the problem and solving in parallel.
+
+### Solve Large Analysis With Known OD Pairs tool inputs
+- **Origins** (Python: *Origins*) - The feature class or layer containing the origins.  Your origins dataset must have a field populated with the ID of the destination the origin is assigned to.
+- **Origin Unique ID Field** (Python: *Origin_Unique_ID_Field*) - A field in origins representing the origin's unique ID.
+- **Assigned Destination Field** (Python: *Assigned_Destination_Field*) - A field in origins indicating the ID of the destination each origin is assigned to. Any origin with a null value or a value that does not match a valid destination ID will be ignored in the analysis.
+- **Destinations** (Python: *Destinations*) - The feature class or layer containing the destinations.
+- **Destination Unique ID Field** (Python: *Destination_Unique_ID_Field*) -  A field in destinations representing the destination's unique ID.  The values in the origins table's Assigned Destination Field should correspond to these unique destination IDs.
+- **Network Data Source** (Python: *Network_Data_Source*) - Network dataset, network dataset layer, or portal URL to use when calculating the Route analysis.
+- **Travel Mode** (Python: *Travel_Mode*) - Network travel mode to use when calculating the Route analysis.
+- **Time Units** (Python: *Time_Units*) - The time units the output travel time will be reported in.
+- **Distance Units** (Python: *Distance_Units*) - The distance units the output travel distance will be reported in.
+- **Maximum OD Pairs per Chunk** (Python: *Max_Pairs_Per_Chunk*) - Defines the chunk size for parallel Route calculations, the number of origin-destination routes to calculate simultaneously. For example, if you want to process a maximum of 1000 origins and 1000 destinations in a single chunk, for a total of 1000 paired routes, set this parameter to 1000.
+- **Maximum Number of Parallel Processes** (Python: *Max_Processes*) - Defines the maximum number of parallel processes to run at once. Do not exceed the number of cores of your machine.
+- **Output Routes** (Python: *Output_Routes*) - Path to the output feature class that will contain the calculated routes between origins and their assigned destinations.  The schema of this feature class is described in the [arcpy documentation](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-output-data-types.htm#ESRI_SECTION1_9FF9489173C741DD95472F21B5AD8374). The feature class's schema matches that described for the Routes table in the documentation, plus two additional fields, "OriginUniqueID" and "DestinationUniqueID", containing the unique ID field values for the origin and destination this route connects.
+- **Time of Day** (Python: *Time_Of_Day*) - The start time of day for the analysis. No value indicates a time neutral analysis.
+- **Barriers** (Python: *Barriers*) - Point, line, or polygon barriers to use in the OD Cost Matrix analysis. This parameter is optional.
+- **Precalculate Network Locations** (Python: *Precalculate_Network_Locations*) - When you solve a network analysis, the input points must "locate" on the network used for the analysis. If multiple origins are assigned to the same destination, it is more efficient to calculate the network location fields for the destinations up front and re-use them.  Set this parameter to True to pre-calculate the network location fields. This is recommended unless:
+  - You are using a portal URL as the network data source. In this case, pre-calculating network locations is not possible, and the parameter is hidden.
+  - You have already pre-calculated the network location fields using the network dataset and travel mode you are using for this analysis. In this case, you can save time by not precalculating them again.
+  - Each destination has only one assigned origin. In this case, there is no efficiency gain in calculating the location fields in advance.
+- **Sort Origins by Assigned Destination** (Python: *Sort_Origins*) - A Boolean indicating whether to sort origins by their assigned destination prior to commencing the parallel solve.  Using sorted day will improve the efficiency of the solve slightly.  If your input data is already sorted, or if no origins are assigned to the same destinations, then sorting is not useful, and you should set this parameter to false.
+- **Reverse Direction of Travel** (Python: *Reverse_Direction*) - A Boolean indicating whether to reverse the direction of travel and calculate the route from the destination to the origin. The default is false.
+
+### Running the tool from ArcGIS Pro
+
+You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You just need to connect to the provided Python toolbox from the Catalog Pane either in the Toolboxes section or the Folders section.
+
+If you plan to use ArcGIS Online or a portal as your network data source, make sure you're connected to that portal in your current Pro session.
+
+![Screenshot of tool dialog](./images/SolveLargeAnalysisWithKnownODPairs_Dialog.png)
+
+### Running the tool from standalone Python
+
+You can call the tool from your own standalone Python script.
+
+As with any custom script tool, you must first import the toolbox within your standalone script:
+`arcpy.ImportToolbox(<full path to LargeNetworkAnalysisTools.pyt>)`
+
+Then, you can call the tool in your script:
+`arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(<tool parameters>)`
+
+Here is the full tool signature:
+```python
+arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
+    Origins, Origin_Unique_ID_Field, Assigned_Destination_Field, Destinations, Destination_Unique_ID_Field,
+    Network_Data_Source, Travel_Mode, Time_Units, Distance_Units,
+    Max_Pairs_Per_Chunk, Max_Processes, Output_Routes,
+    Time_Of_Day, Barriers, Precalculate_Network_Locations, Sort_Origins
+)
+```
+
+You can also run the provided scripts by directly calling solve_large_route_pair_analysis.py from the command line instead of using the geoprocessing tool as the code's gateway. Call `python solve_large_route_pair_analysis.py -h` to print the command line help to show you how to do this.
+
+### Technical explanation of how this tool works
+
+The tool consists of several scripts:
+- **LargeNetworkAnalysisTools.pyt**: This defines the python toolbox and the tool as you see it in the ArcGIS Pro UI. It does some minimal parameter validation and calls solve_large_route_pair_analysis.py to actually run the analysis.
+- **solve_large_route_pair_analysis.py**: This defines a class, `RoutePairSolver`, that validates and preprocesses the inputs and then calls parallel_route_pairs.py as a subprocess to do the parallel solves. The class also parses log messages from the parallel_route_pairs.py and writes them out as geoprocessing messages.
+- **parallel_route_pairs.py**: This script chunks the inputs, solves the Route analyses in parallel, and postprocesses the results.
+- **rt_config.py**: In this file, you can override some Route analysis settings that are not included in the tool dialog. This is provided to make the scripts easier to customize so you don't have to dig through the more complex parts of the code to find these simple settings.
+- **helpers.py**: Contains some helper methods and global variables.
+
+Why do we have both solve_large_route_pair_analysis.py and parallel_route_pairs.py? Why do we call parallel_route_pairs.py as a subprocess? This is necessary to accommodate running this tool from the ArcGIS Pro UI. A script tool running in the ArcGIS Pro UI cannot directly call multiprocessing using concurrent.futures. We must instead spin up a subprocess, and the subprocess must spawn parallel processes for the calculations. Thus, solve_large_route_pair_analysis.py does all the pre-processing in the main python process, but it passes the inputs to parallel_route_pairs.py as a separate subprocess, and that subprocess can, in turn, spin up parallel processes for the Route calculations.
+
 
 ## Resources
 

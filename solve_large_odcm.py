@@ -75,6 +75,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
                 Defaults to None. When None, do not use a cutoff.
             num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
                 which means to find all destinations.
+            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
                 inputs. Defaults to True. Should be false if the network_data_source is a service.
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
@@ -167,67 +168,28 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
                 raise ex
 
         # Validate origins, destinations, and barriers
-        self._validate_input_feature_class(self.origins)
-        self._validate_input_feature_class(self.destinations)
+        helpers.validate_input_feature_class(self.origins)
+        helpers.validate_input_feature_class(self.destinations)
         for barrier_fc in self.barriers:
-            self._validate_input_feature_class(barrier_fc)
+            helpers.validate_input_feature_class(barrier_fc)
 
         # Validate network
-        if not self.is_service and not arcpy.Exists(self.network_data_source):
-            err = f"Input network dataset {self.network_data_source} does not exist."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if not self.is_service:
-            # Try to check out the Network Analyst extension
-            try:
-                arcpy.CheckOutExtension("network")
-            except Exception as ex:
-                err = "Unable to check out Network Analyst extension license."
-                arcpy.AddError(err)
-                raise RuntimeError(err) from ex
-            # If the network dataset is a layer, convert it to a catalog path so we can pass it to the subprocess
-            if hasattr(self.network_data_source, "dataSource"):
-                self.network_data_source = self.network_data_source.dataSource
+        self.network_data_source = helpers.validate_network_data_source(self.network_data_source)
 
         # Validate OD Cost Matrix settings and convert travel mode to a JSON string
         self.travel_mode = self._validate_od_settings()
 
         # For a services solve, get tool limits and validate max processes and chunk size
         if self.is_service:
-            self._get_tool_limits_and_is_agol()
-            if self.is_agol and self.max_processes > helpers.MAX_AGOL_PROCESSES:
-                arcpy.AddWarning((
-                    f"The specified maximum number of parallel processes, {self.max_processes}, exceeds the limit of "
-                    f"{helpers.MAX_AGOL_PROCESSES} allowed when using as the network data source the ArcGIS Online "
-                    "services or a hybrid portal whose network analysis services fall back to the ArcGIS Online "
-                    "services. The maximum number of parallel processes has been reduced to "
-                    f"{helpers.MAX_AGOL_PROCESSES}."))
-                self.max_processes = helpers.MAX_AGOL_PROCESSES
+            self.service_limits, self.is_agol = helpers.get_tool_limits_and_is_agol(
+                self.network_data_source, "asyncODCostMatrix", "GenerateOriginDestinationCostMatrix")
+            if self.is_agol:
+                self.max_processes = helpers.update_agol_max_processes(self.max_processes)
             self._update_max_inputs_for_service()
             if self.should_precalc_network_locations:
                 arcpy.AddWarning(
                     "Cannot precalculate network location fields when the network data source is a service.")
                 self.should_precalc_network_locations = False
-
-    @staticmethod
-    def _validate_input_feature_class(feature_class):
-        """Validate that the designated input feature class exists and is not empty.
-
-        Args:
-            feature_class (str, layer): Input feature class or layer to validate
-
-        Raises:
-            ValueError: The input feature class does not exist.
-            ValueError: The input feature class has no rows.
-        """
-        if not arcpy.Exists(feature_class):
-            err = f"Input dataset {feature_class} does not exist."
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if int(arcpy.management.GetCount(feature_class).getOutput(0)) <= 0:
-            err = f"Input dataset {feature_class} has no rows."
-            arcpy.AddError(err)
-            raise ValueError(err)
 
     def _validate_od_settings(self):
         """Validate OD cost matrix settings by spinning up a dummy OD Cost Matrix object.
@@ -242,7 +204,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         # Validate time and distance units
         time_units = helpers.convert_time_units_str_to_enum(self.time_units)
         distance_units = helpers.convert_distance_units_str_to_enum(self.distance_units)
-        # Create a dummy ODCostMatrix object, initialize an OD solver object, and set properties
+        # Create a dummy ODCostMatrix object and set properties
         try:
             odcm = arcpy.nax.OriginDestinationCostMatrix(self.network_data_source)
             odcm.travelMode = self.travel_mode
@@ -260,34 +222,6 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
 
         # Return a JSON string representation of the travel mode to pass to the subprocess
         return odcm.travelMode._JSON  # pylint: disable=protected-access
-
-    def _get_tool_limits_and_is_agol(
-            self, service_name="asyncODCostMatrix", tool_name="GenerateOriginDestinationCostMatrix"):
-        """Retrieve a dictionary of various limits supported by a portal tool and whether the portal uses AGOL services.
-
-        Assumes that we have already determined that the network data source is a service.
-
-        Args:
-            service_name (str, optional): Name of the service. Defaults to "asyncODCostMatrix".
-            tool_name (str, optional): Tool name for the designated service. Defaults to
-                "GenerateOriginDestinationCostMatrix".
-        """
-        arcpy.AddMessage("Getting tool limits from the portal...")
-        if not self.network_data_source.endswith("/"):
-            self.network_data_source = self.network_data_source + "/"
-        try:
-            tool_info = arcpy.nax.GetWebToolInfo(service_name, tool_name, self.network_data_source)
-            # serviceLimits returns the maximum origins and destinations allowed by the service, among other things
-            self.service_limits = tool_info["serviceLimits"]
-            # isPortal returns True for Enterprise portals and False for AGOL or hybrid portals that fall back to using
-            # the AGOL services
-            self.is_agol = not tool_info["isPortal"]
-        except Exception:
-            arcpy.AddError("Error getting tool limits from the portal.")
-            errs = traceback.format_exc().splitlines()
-            for err in errs:
-                arcpy.AddError(err)
-            raise
 
     def _update_max_inputs_for_service(self):
         """Check the user's specified max origins and destinations and reduce max to portal limits if required."""
@@ -353,39 +287,6 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         # Clean up. Delete temporary copy of inputs
         arcpy.management.Delete([temp_inputs])
 
-    def _precalculate_network_locations(self, input_features):
-        """Precalculate network location fields if possible for faster loading and solving later.
-
-        Cannot be used if the network data source is a service. Uses the searchTolerance, searchToleranceUnits, and
-        searchQuery properties set in the OD config file.
-
-        Args:
-            input_features (feature class catalog path): Feature class to calculate network locations for
-            network_data_source (network dataset catalog path): Network dataset to use to calculate locations
-            travel_mode (travel mode): Travel mode name, object, or json representation to use when calculating
-            locations.
-        """
-        if self.is_service:
-            arcpy.AddMessage(
-                "Skipping precalculating network location fields because the network data source is a service.")
-            return
-
-        arcpy.AddMessage(f"Precalculating network location fields for {input_features}...")
-
-        # Get location settings from config file if present
-        search_tolerance = None
-        if "searchTolerance" in OD_PROPS and "searchToleranceUnits" in OD_PROPS:
-            search_tolerance = f"{OD_PROPS['searchTolerance']} {OD_PROPS['searchToleranceUnits'].name}"
-        search_query = OD_PROPS.get("search_query", None)
-
-        # Calculate network location fields if network data source is local
-        arcpy.na.CalculateLocations(
-            input_features, self.network_data_source,
-            search_tolerance=search_tolerance,
-            search_query=search_query,
-            travel_mode=self.travel_mode
-        )
-
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the OD Cost Matrix."""
         # Copy Origins and Destinations to outputs
@@ -411,11 +312,14 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
-            self._precalculate_network_locations(self.output_origins)
+            helpers.precalculate_network_locations(
+                self.output_origins, self.network_data_source, self.travel_mode, OD_PROPS)
             if not self.same_origins_destinations:
-                self._precalculate_network_locations(self.output_destinations)
+                helpers.precalculate_network_locations(
+                    self.output_destinations, self.network_data_source, self.travel_mode, OD_PROPS)
             for barrier_fc in self.barriers:
-                self._precalculate_network_locations(barrier_fc)
+                helpers.precalculate_network_locations(
+                    barrier_fc, self.network_data_source, self.travel_mode, OD_PROPS)
 
         # If Origins and Destinations were the same, copy the output origins to the output destinations. This saves us
         # from having to spatially sort and precalculate network locations on the same feature class twice.
@@ -614,7 +518,7 @@ def _run_from_command_line():
     parser.add_argument("-tod", "--time-of-day", action="store", dest="time_of_day", help=help_string, required=False)
 
     # --precalculate-network-locations parameter
-    help_string = "Whether or not to precalculate network location fields before solving the OD Cost  Matrix."
+    help_string = "Whether or not to precalculate network location fields before solving the analysis."
     parser.add_argument(
         "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
