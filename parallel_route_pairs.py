@@ -230,6 +230,22 @@ class Route:  # pylint:disable = too-many-instance-attributes
             [self.destinations, self.input_destinations_layer],
         )
 
+        # Get the valid input fields for Stops from the solver so we can transfer values from the user's input
+        # if they are present. Remove fields that are set explicitly by this tool.
+        rt_stops_fields = [
+            f for f in self.rt_solver.fieldNames(arcpy.nax.RouteInputDataType.Stops, use_location_fields=True)
+            if f not in ["RouteName", "Sequence", self.origin_unique_id_field_name, self.dest_unique_id_field_name]
+        ]
+        origin_fields = arcpy.ListFields(self.input_origins_layer)
+        origin_field_names = [f.name for f in origin_fields]
+        dest_fields = arcpy.ListFields(self.input_destinations_layer)
+        dest_field_names = [f.name for f in dest_fields]
+        origin_transfer_fields = [sf for sf in rt_stops_fields if sf in origin_field_names]
+        destination_transfer_fields = [sf for sf in rt_stops_fields if sf in dest_field_names]
+
+        self.logger.debug(f"Route solver fields transferred from Origins: {origin_transfer_fields}")
+        self.logger.debug(f"Route solver fields transferred from Destinations: {destination_transfer_fields}")
+
         # Add fields to input Stops with the origin and destination's original unique IDs
         field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
                        "Integer": "LONG", "OID": "LONG"}
@@ -237,11 +253,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
         origin_field_def = [self.origin_unique_id_field_name, field_types[origin_id_field.type]]
         if origin_id_field.type == "String":
             origin_field_def += [self.origin_unique_id_field_name, origin_id_field.length]
-        dest_fields = arcpy.ListFields(self.input_destinations_layer)
-        location_fields = ["SourceID", "SourceOID", "PosAlong", "SideOfEdge"]
-        if not set(location_fields).issubset({f.name for f in dest_fields}):
-            location_fields = []  # Do not use location fields for this analysis
-        dest_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.dest_id_field)[0]
+        dest_id_field = [f for f in origin_fields if f.name == self.dest_id_field][0]
         dest_field_def = [self.dest_unique_id_field_name, field_types[dest_id_field.type]]
         if dest_id_field.type == "String":
             dest_field_def += [self.dest_unique_id_field_name, dest_id_field.length]
@@ -249,15 +261,16 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
         # Use an insertCursor to insert Stops into the Route analysis
         destinations = {}
+        destination_rows = []
         with self.rt_solver.insertCursor(
             arcpy.nax.RouteInputDataType.Stops,
             ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@", self.dest_unique_id_field_name] +
-                location_fields
+                origin_transfer_fields
         ) as icur:
             # Loop through origins and insert them into Stops along with their assigned destinations
             for origin in arcpy.da.SearchCursor(  # pylint: disable=no-member
                 self.input_origins_layer,
-                ["SHAPE@", self.origin_id_field, self.assigned_dest_field]
+                ["SHAPE@", self.origin_id_field, self.assigned_dest_field] + origin_transfer_fields
             ):
                 dest_id = origin[2]
                 if dest_id is None:
@@ -266,7 +279,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
                     dest_val = f"'{dest_id}'" if isinstance(dest_id, str) else dest_id
                     with arcpy.da.SearchCursor(  # pylint: disable=no-member
                         self.input_destinations_layer,
-                        ["SHAPE@", self.dest_id_field] + location_fields,
+                        ["SHAPE@", self.dest_id_field] + destination_transfer_fields,
                         where_clause=f"{self.dest_id_field} = {dest_val}"
                     ) as cur:
                         try:
@@ -275,7 +288,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
                             # The origin's destination is not present in the destinations table. Just skip the origin.
                             continue
                 # Insert origin and destination
-                destination_row = destinations[dest_id]
+                destination = destinations[dest_id]
                 if self.reverse_direction:
                     route_name = f"{dest_id} - {origin[1]}"
                     origin_sequence = 2
@@ -284,17 +297,21 @@ class Route:  # pylint:disable = too-many-instance-attributes
                     route_name = f"{origin[1]} - {dest_id}"
                     origin_sequence = 1
                     destination_sequence = 2
-                origin_row = [route_name, origin_sequence, origin[1], origin[0], None]
-                if location_fields:
-                    # Include invalid location fields as a placeholder so they'll be calculated at solve time
-                    origin_row += [-1, -1, -1, -1]
-                destination_row = [route_name, destination_sequence, None] + list(destination_row)
-                if self.reverse_direction:
-                    icur.insertRow(destination_row)
-                    icur.insertRow(origin_row)
-                else:
-                    icur.insertRow(origin_row)
-                    icur.insertRow(destination_row)
+                # Define the final origin and destination rows for the input Stops
+                origin_row = [route_name, origin_sequence, origin[1], origin[0], None] + list(origin)[3:]
+                destination_row = [route_name, destination_sequence, None, destination[0], destination[1]] + \
+                    list(destination)[2:]
+                icur.insertRow(origin_row)
+                destination_rows.append(destination_row)
+
+        # Insert destinations
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@", self.dest_unique_id_field_name] +
+                destination_transfer_fields
+        ) as dcur:
+            for row in destination_rows:
+                dcur.insertRow(row)
 
     def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
         """Create and solve a Route analysis for the designated chunk of origins and their assigned destinations.

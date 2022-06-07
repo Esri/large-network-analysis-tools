@@ -104,10 +104,10 @@ Why do we have both solve_large_odcm.py and parallel_odcm.py? Why do we call par
 The *Solve Large Analysis With Known OD Pairs* tool can be used to calculate the travel time and distance and generate routes between known origin-destination pairs. It can calculate many routes simultaneously by chunking up the problem and solving in parallel.
 
 ### Solve Large Analysis With Known OD Pairs tool inputs
-- **Origins** (Python: *Origins*) - The feature class or layer containing the origins.  Your origins dataset must have a field populated with the ID of the destination the origin is assigned to.
+- **Origins** (Python: *Origins*) - The feature class or layer containing the origins.  Your origins dataset must have a field populated with the ID of the destination the origin is assigned to.  If your feature class includes fields in the [Route solver object input Stops schema](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-input-data-types.htm#ESRI_SECTION1_D64F7E7B5196448B9B64CDD603BF8207), these fields will automatically be used in the analysis.
 - **Origin Unique ID Field** (Python: *Origin_Unique_ID_Field*) - A field in origins representing the origin's unique ID.
 - **Assigned Destination Field** (Python: *Assigned_Destination_Field*) - A field in origins indicating the ID of the destination each origin is assigned to. Any origin with a null value or a value that does not match a valid destination ID will be ignored in the analysis.
-- **Destinations** (Python: *Destinations*) - The feature class or layer containing the destinations.
+- **Destinations** (Python: *Destinations*) - The feature class or layer containing the destinations. If your feature class includes fields in the [Route solver object input Stops schema](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-input-data-types.htm#ESRI_SECTION1_D64F7E7B5196448B9B64CDD603BF8207), these fields will automatically be used in the analysis.
 - **Destination Unique ID Field** (Python: *Destination_Unique_ID_Field*) -  A field in destinations representing the destination's unique ID.  The values in the origins table's Assigned Destination Field should correspond to these unique destination IDs.
 - **Network Data Source** (Python: *Network_Data_Source*) - Network dataset, network dataset layer, or portal URL to use when calculating the Route analysis.
 - **Travel Mode** (Python: *Travel_Mode*) - Network travel mode to use when calculating the Route analysis.
