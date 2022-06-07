@@ -28,7 +28,9 @@ def get_tract_centroids_with_store_id_fc(sf_gdb):
         raise ValueError(f"{orig_fc} is missing.")
     arcpy.management.Copy(orig_fc, new_fc)
     # Add and populate the StoreID field
+    # Also add a pre-populated CurbApproach field to test field transfer
     arcpy.management.AddField(new_fc, "StoreID", "TEXT", field_length=8)
+    arcpy.management.AddField(new_fc, "CurbApproach", "SHORT")
     store_ids = [  # Pre-assigned store IDs to add to TractCentroids
         'Store_6', 'Store_6', 'Store_11', 'Store_11', 'Store_11', 'BadStore', 'Store_11', 'Store_11', 'Store_11', '',
         'Store_11', 'Store_11', 'Store_6', 'Store_11', 'Store_11', 'Store_11', 'Store_11', 'Store_1', 'Store_7',
@@ -53,9 +55,9 @@ def get_tract_centroids_with_store_id_fc(sf_gdb):
         'Store_19', 'Store_15', 'Store_19', 'Store_15', 'Store_16', 'Store_19', 'Store_19', 'Store_19', 'Store_18',
         'Store_18', 'Store_15', 'Store_18', 'Store_18', 'Store_18', 'Store_15', 'Store_18', 'Store_17', 'Store_18',
         'Store_15', 'Store_15', 'Store_16', 'Store_19', 'Store_15']
-    with arcpy.da.UpdateCursor(new_fc, ["StoreID"]) as cur:  # pylint: disable=no-member
+    with arcpy.da.UpdateCursor(new_fc, ["StoreID", "CurbApproach"]) as cur:  # pylint: disable=no-member
         idx = 0
         for _ in cur:
-            cur.updateRow([store_ids[idx]])
+            cur.updateRow([store_ids[idx], 2])
             idx += 1
     return new_fc
