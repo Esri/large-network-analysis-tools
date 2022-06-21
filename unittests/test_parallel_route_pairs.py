@@ -68,6 +68,8 @@ class TestParallelRoutePairs(unittest.TestCase):
             "time_of_day": None,
             "reverse_direction": False,
             "scratch_folder": self.output_folder,
+            "origin_transfer_fields": [],
+            "destination_transfer_fields": [],
             "barriers": []
         }
 
