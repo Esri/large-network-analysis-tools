@@ -79,6 +79,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
         - time_of_day
         - reverse_direction
         - scratch_folder
+        - origin_transfer_fields
+        - destination_transfer_fields
         - barriers
         """
         self.origins = kwargs["origins"]
@@ -93,6 +95,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.time_of_day = kwargs["time_of_day"]
         self.reverse_direction = kwargs["reverse_direction"]
         self.scratch_folder = kwargs["scratch_folder"]
+        self.origin_transfer_fields = kwargs["origin_transfer_fields"]
+        self.destination_transfer_fields = kwargs["destination_transfer_fields"]
         self.barriers = []
         if "barriers" in kwargs:
             self.barriers = kwargs["barriers"]
@@ -230,6 +234,9 @@ class Route:  # pylint:disable = too-many-instance-attributes
             [self.destinations, self.input_destinations_layer],
         )
 
+        self.logger.debug(f"Route solver fields transferred from Origins: {self.origin_transfer_fields}")
+        self.logger.debug(f"Route solver fields transferred from Destinations: {self.destination_transfer_fields}")
+
         # Add fields to input Stops with the origin and destination's original unique IDs
         field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
                        "Integer": "LONG", "OID": "LONG"}
@@ -237,11 +244,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
         origin_field_def = [self.origin_unique_id_field_name, field_types[origin_id_field.type]]
         if origin_id_field.type == "String":
             origin_field_def += [self.origin_unique_id_field_name, origin_id_field.length]
-        dest_fields = arcpy.ListFields(self.input_destinations_layer)
-        location_fields = ["SourceID", "SourceOID", "PosAlong", "SideOfEdge"]
-        if not set(location_fields).issubset({f.name for f in dest_fields}):
-            location_fields = []  # Do not use location fields for this analysis
-        dest_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.dest_id_field)[0]
+        dest_id_field = arcpy.ListFields(self.input_destinations_layer, wild_card=self.dest_id_field)[0]
         dest_field_def = [self.dest_unique_id_field_name, field_types[dest_id_field.type]]
         if dest_id_field.type == "String":
             dest_field_def += [self.dest_unique_id_field_name, dest_id_field.length]
@@ -249,15 +252,16 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
         # Use an insertCursor to insert Stops into the Route analysis
         destinations = {}
+        destination_rows = []
         with self.rt_solver.insertCursor(
             arcpy.nax.RouteInputDataType.Stops,
             ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@", self.dest_unique_id_field_name] +
-                location_fields
+                self.origin_transfer_fields
         ) as icur:
             # Loop through origins and insert them into Stops along with their assigned destinations
             for origin in arcpy.da.SearchCursor(  # pylint: disable=no-member
                 self.input_origins_layer,
-                ["SHAPE@", self.origin_id_field, self.assigned_dest_field]
+                ["SHAPE@", self.origin_id_field, self.assigned_dest_field] + self.origin_transfer_fields
             ):
                 dest_id = origin[2]
                 if dest_id is None:
@@ -266,7 +270,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
                     dest_val = f"'{dest_id}'" if isinstance(dest_id, str) else dest_id
                     with arcpy.da.SearchCursor(  # pylint: disable=no-member
                         self.input_destinations_layer,
-                        ["SHAPE@", self.dest_id_field] + location_fields,
+                        ["SHAPE@", self.dest_id_field] + self.destination_transfer_fields,
                         where_clause=f"{self.dest_id_field} = {dest_val}"
                     ) as cur:
                         try:
@@ -275,7 +279,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
                             # The origin's destination is not present in the destinations table. Just skip the origin.
                             continue
                 # Insert origin and destination
-                destination_row = destinations[dest_id]
+                destination = destinations[dest_id]
                 if self.reverse_direction:
                     route_name = f"{dest_id} - {origin[1]}"
                     origin_sequence = 2
@@ -284,17 +288,21 @@ class Route:  # pylint:disable = too-many-instance-attributes
                     route_name = f"{origin[1]} - {dest_id}"
                     origin_sequence = 1
                     destination_sequence = 2
-                origin_row = [route_name, origin_sequence, origin[1], origin[0], None]
-                if location_fields:
-                    # Include invalid location fields as a placeholder so they'll be calculated at solve time
-                    origin_row += [-1, -1, -1, -1]
-                destination_row = [route_name, destination_sequence, None] + list(destination_row)
-                if self.reverse_direction:
-                    icur.insertRow(destination_row)
-                    icur.insertRow(origin_row)
-                else:
-                    icur.insertRow(origin_row)
-                    icur.insertRow(destination_row)
+                # Define the final origin and destination rows for the input Stops
+                origin_row = [route_name, origin_sequence, origin[1], origin[0], None] + list(origin)[3:]
+                destination_row = [route_name, destination_sequence, None, destination[0], destination[1]] + \
+                    list(destination)[2:]
+                icur.insertRow(origin_row)
+                destination_rows.append(destination_row)
+
+        # Insert destinations
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@", self.dest_unique_id_field_name] +
+                self.destination_transfer_fields
+        ) as dcur:
+            for row in destination_rows:
+                dcur.insertRow(row)
 
     def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
         """Create and solve a Route analysis for the designated chunk of origins and their assigned destinations.
@@ -470,6 +478,8 @@ class ParallelRoutePairCalculator:
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                  to use. Defaults to None.
         """
+        self.origins = origins
+        self.destinations = destinations
         self.out_routes = out_routes
         self.scratch_folder = scratch_folder
         time_units = helpers.convert_time_units_str_to_enum(time_units)
@@ -484,10 +494,10 @@ class ParallelRoutePairCalculator:
 
         # Initialize the dictionary of inputs to send to each OD solve
         self.rt_inputs = {
-            "origins": origins,
+            "origins": self.origins,
             "origin_id_field": origin_id_field,
             "assigned_dest_field": assigned_dest_field,
-            "destinations": destinations,
+            "destinations": self.destinations,
             "dest_id_field": dest_id_field,
             "network_data_source": network_data_source,
             "travel_mode": travel_mode,
@@ -496,7 +506,9 @@ class ParallelRoutePairCalculator:
             "time_of_day": time_of_day,
             "reverse_direction": reverse_direction,
             "scratch_folder": self.scratch_folder,
-            "barriers": barriers
+            "barriers": barriers,
+            "origin_transfer_fields": [],  # Populate later
+            "destination_transfer_fields": []  # Populate later
         }
 
         # List of intermediate output OD Line files created by each process
@@ -541,12 +553,64 @@ class ParallelRoutePairCalculator:
                 shutil.rmtree(rt.job_result["jobFolder"], ignore_errors=True)
                 del rt
 
+    def _populate_input_data_transfer_fields(self):
+        """Discover if the origins and destinations include valid fields we can use in the Route analysis.
+
+        Any fields with the correct names and data types matching valid fields recognized by the Route solver for the
+        Stops input can be used in the analysis.  Compare the input origins and destinations fields with the list of
+        supported Route Stops fields and populate the list of fields to transfer in the route inputs dictionary.
+        """
+        # Valid fields for the Route Stops input are described here:
+        # https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-input-data-types.htm
+        # Do not transfer RouteName or Sequence as these are explicitly controlled by this tool.  Do not transfer
+        # LocationType because we want all inputs to be Stops. Waypoints don't make sense for this analysis.
+        int_types = ["Integer", "SmallInteger"]
+        numerical_types = ["Double", "Single"] + int_types
+        rt_stops_input_fields = {
+            "Name": ["String"],
+            "AdditionalTime": numerical_types,
+            "AdditionalDistance": numerical_types,
+            "AdditionalCost": numerical_types,
+            "TimeWindowStart": ["Date"],
+            "TimeWindowEnd": ["Date"],
+            "CurbApproach": int_types,
+            "Bearing": numerical_types,
+            "BearingTol": numerical_types,
+            "NavLatency": numerical_types,
+            "SourceID": int_types,
+            "SourceOID": int_types,
+            "PosAlong": numerical_types,
+            "SideOfEdge": int_types
+        }
+        # Preserve origin and destination input fields that match names and types
+        origin_transfer_fields = [
+            f.name for f in arcpy.ListFields(self.origins) if f.name in rt_stops_input_fields and
+            f.type in rt_stops_input_fields[f.name]]
+        self.rt_inputs["origin_transfer_fields"] = origin_transfer_fields
+        if origin_transfer_fields:
+            LOGGER.info((
+                "Supported fields in the input Origins table that will be used in the analysis: "
+                f"{origin_transfer_fields}"
+            ))
+        destination_transfer_fields = [
+            f.name for f in arcpy.ListFields(self.destinations) if f.name in rt_stops_input_fields and
+            f.type in rt_stops_input_fields[f.name]]
+        self.rt_inputs["destination_transfer_fields"] = destination_transfer_fields
+        if destination_transfer_fields:
+            LOGGER.info((
+                "Supported fields in the input Destinations table that will be used in the analysis: "
+                f"{destination_transfer_fields}"
+            ))
+
     def solve_route_in_parallel(self):
         """Solve the Route in chunks and post-process the results."""
         # Validate Route settings. Essentially, create a dummy Route class instance and set up the
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
         # the optimized that are guaranteed to all fail.
         self._validate_route_settings()
+
+        # Check if the input origins and destinations have any fields we should use in the route analysis
+        self._populate_input_data_transfer_fields()
 
         # Compute Route in parallel
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
