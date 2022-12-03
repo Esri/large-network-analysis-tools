@@ -145,7 +145,7 @@ Then, you can call the tool in your script:
 
 Here is the full tool signature:
 ```python
-arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
+arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(
     Origins, Origin_Unique_ID_Field, Assigned_Destination_Field, Destinations, Destination_Unique_ID_Field,
     Network_Data_Source, Travel_Mode, Time_Units, Distance_Units,
     Max_Pairs_Per_Chunk, Max_Processes, Output_Routes,
