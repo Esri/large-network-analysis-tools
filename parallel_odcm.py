@@ -673,6 +673,12 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             file_handler.setFormatter(formatter)
             logger_obj.addHandler(file_handler)
 
+    def teardown_logger(self):
+        """Clean up and close the logger."""
+        for handler in self.logger.handlers:
+            handler.close()
+            self.logger.removeHandler(handler)
+
 
 def solve_od_cost_matrix(inputs, chunk):
     """Solve an OD Cost Matrix analysis for the given inputs for the given chunk of ObjectIDs.
@@ -692,6 +698,7 @@ def solve_od_cost_matrix(inputs, chunk):
         f"as job id {odcm.job_id}"
     ))
     odcm.solve(chunk[0], chunk[1])
+    odcm.teardown_logger()
     return odcm.job_result
 
 
@@ -820,9 +827,7 @@ class ParallelODCalculator:
             if odcm:
                 LOGGER.debug("Deleting temporary test OD Cost Matrix job folder...")
                 # Close logging
-                for handler in odcm.logger.handlers:
-                    handler.close()
-                    odcm.logger.removeHandler(handler)
+                odcm.teardown_logger()
                 # Delete output folder
                 shutil.rmtree(odcm.job_result["jobFolder"], ignore_errors=True)
                 del odcm
