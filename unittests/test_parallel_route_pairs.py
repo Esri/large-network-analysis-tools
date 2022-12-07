@@ -26,6 +26,7 @@ import input_data_helper
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import parallel_route_pairs  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestParallelRoutePairs(unittest.TestCase):
@@ -126,7 +127,8 @@ class TestParallelRoutePairs(unittest.TestCase):
         rt_inputs = deepcopy(self.parallel_rt_class_args)
         rt_inputs["travel_mode"] = "InvalidTM"
         rt_calculator = parallel_route_pairs.ParallelRoutePairCalculator(**rt_inputs)
-        with self.assertRaises(RuntimeError):
+        error_type = ValueError if arcgis_version >= "3.1" else RuntimeError
+        with self.assertRaises(error_type):
             rt_calculator._validate_route_settings()
 
     def test_ParallelRoutePairCalculator_solve_route_in_parallel(self):

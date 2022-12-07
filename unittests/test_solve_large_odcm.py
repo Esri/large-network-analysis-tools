@@ -27,6 +27,7 @@ CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import solve_large_odcm  # noqa: E402, pylint: disable=wrong-import-position
 import helpers  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeODCM(unittest.TestCase):
@@ -95,7 +96,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             ("barriers", [does_not_exist], ValueError, f"Input dataset {does_not_exist} does not exist."),
             ("network_data_source", does_not_exist, ValueError,
              f"Input network dataset {does_not_exist} does not exist."),
-            ("travel_mode", "BadTM", RuntimeError, ""),
+            ("travel_mode", "BadTM", ValueError if arcgis_version >= "3.1" else RuntimeError, ""),
             ("time_of_day", "3/29/2022 4:45 PM", ValueError, ""),
             ("time_of_day", "BadDateTime", ValueError, ""),
             ("cutoff", 0, ValueError, "Impedance cutoff must be greater than 0."),
