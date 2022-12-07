@@ -428,6 +428,12 @@ class Route:  # pylint:disable = too-many-instance-attributes
             file_handler.setFormatter(formatter)
             logger_obj.addHandler(file_handler)
 
+    def teardown_logger(self):
+        """Clean up and close the logger."""
+        for handler in self.logger.handlers:
+            handler.close()
+            self.logger.removeHandler(handler)
+
 
 def solve_route(inputs, chunk):
     """Solve a Route analysis for the given inputs for the given chunk of ObjectIDs.
@@ -442,6 +448,7 @@ def solve_route(inputs, chunk):
     rt = Route(**inputs)
     rt.logger.info(f"Processing origins OID {chunk[0]} to {chunk[1]} as job id {rt.job_id}")
     rt.solve(chunk)
+    rt.teardown_logger()
     return rt.job_result
 
 
@@ -546,9 +553,7 @@ class ParallelRoutePairCalculator:
             if rt:
                 LOGGER.debug("Deleting temporary test Route job folder...")
                 # Close logging
-                for handler in rt.logger.handlers:
-                    handler.close()
-                    rt.logger.removeHandler(handler)
+                rt.teardown_logger()
                 # Delete output folder
                 shutil.rmtree(rt.job_result["jobFolder"], ignore_errors=True)
                 del rt
