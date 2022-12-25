@@ -242,11 +242,7 @@ class TestParallelODCM(unittest.TestCase):
         self.assertTrue(od.job_result["solveSucceeded"], "OD solve failed")
         self.assertTrue(arcpy.Exists(od.job_result["outputLines"]), "OD line output does not exist.")
         # Ensure the OriginOID and DestinationOID fields in the output have the correct numerical ranges
-        # Note: At the ArcGIS Pro 3.1 release, the solver object output fields were improved
-        if helpers.arcgis_version < "3.1":
-            fields_to_check = ["OriginOID", "DestinationOID"]
-        else:
-            fields_to_check = ["OriginID", "DestinationID"]
+        fields_to_check = ["OriginOID", "DestinationOID"]
         for row in arcpy.da.SearchCursor(od.job_result["outputLines"], fields_to_check):
             self.assertTrue(origin_criteria[0] <= row[0] <= origin_criteria[1], f"{fields_to_check[0]} out of range.")
             self.assertTrue(dest_criteria[0] <= row[1] <= dest_criteria[1], f"{fields_to_check[1]} out of range.")
