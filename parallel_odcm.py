@@ -381,7 +381,10 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # For services solve, export Origins and Destinations and properly populate OriginOID and DestinationOID fields
         # in the output Lines. Services do not preserve the original input OIDs, instead resetting from 1, unlike solves
         # using a local network dataset, so this extra post-processing step is necessary.
-        if self.is_service:
+        ## TODO: Need to check service version?
+        # NOTE: In 3.0, this logic is still needed.  I believe this was a client-side fix in 3.1, so it shouldn't matter
+        # what version of portal is being used.  Need to test in 3.1 and 3.0.
+        if self.is_service and helpers.arcgis_version < "3.1":
             output_origins = os.path.join(od_workspace, "output_od_origins")
             self.logger.debug(f"Exporting OD cost matrix Origins output to {output_origins}...")
             self.solve_result.export(arcpy.nax.OriginDestinationCostMatrixOutputDataType.Origins, output_origins)
@@ -431,7 +434,9 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         # For services solve, properly populate OriginOID and DestinationOID fields in the output Lines. Services do
         # not preserve the original input OIDs, instead resetting from 1, unlike solves using a local network dataset,
         # so this extra post-processing step is necessary.
-        if self.is_service:
+        ## TODO: Need to check service version
+        # NOTE: In 3.0, this logic is still needed.
+        if self.is_service and helpers.arcgis_version < "3.1":
             # Read the Lines output
             with self.solve_result.searchCursor(
                 arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, self.output_fields
