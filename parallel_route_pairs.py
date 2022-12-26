@@ -394,6 +394,9 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
 
         # Join the input ID fields to Routes
+        # New fields were added at 3.1.  Relationships between IDs/OIDs in output classes are more reliable.
+        # This may not work properly prior to 3.1.
+        id_field_prefix = "ID" if helpers.arcgis_version >= "3.1" else "OID"
         if self.reverse_direction:
             first_stop_field = self.dest_unique_id_field_name
             second_stop_field = self.origin_unique_id_field_name
@@ -403,12 +406,12 @@ class Route:  # pylint:disable = too-many-instance-attributes
         helpers.run_gp_tool(
             self.logger,
             arcpy.management.JoinField,
-            [output_routes, "FirstStopOID", output_stops, "ObjectID", [first_stop_field]]
+            [output_routes, f"FirstStop{id_field_prefix}", output_stops, "ObjectID", [first_stop_field]]
         )
         helpers.run_gp_tool(
             self.logger,
             arcpy.management.JoinField,
-            [output_routes, "LastStopOID", output_stops, "ObjectID", [second_stop_field]]
+            [output_routes, f"LastStop{id_field_prefix}", output_stops, "ObjectID", [second_stop_field]]
         )
 
         self.job_result["outputRoutes"] = output_routes
