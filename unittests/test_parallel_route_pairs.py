@@ -26,6 +26,7 @@ import input_data_helper
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import parallel_route_pairs  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestParallelRoutePairs(unittest.TestCase):
@@ -112,10 +113,37 @@ class TestParallelRoutePairs(unittest.TestCase):
         self.assertTrue(arcpy.Exists(rt.job_result["outputRoutes"]), "Route output does not exist.")
         # Expect 9 rows because two of the StoreID values are bad and are skipped
         self.assertEqual(9, int(arcpy.management.GetCount(rt.job_result["outputRoutes"]).getOutput(0)))
-        # Make sure the ID fields have been added
+        # Make sure the ID fields have been added and populated
         route_fields = [f.name for f in arcpy.ListFields(rt.job_result["outputRoutes"])]
         self.assertIn("OriginUniqueID", route_fields, "Routes output missing OriginUniqueID field.")
         self.assertIn("DestinationUniqueID", route_fields, "Routes output missing DestinationUniqueID field.")
+        for row in arcpy.da.SearchCursor(rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]):
+            self.assertIsNotNone(row[0], "Null OriginUniqueID field value in output routes.")
+            self.assertIsNotNone(row[1], "Null DestinationUniqueID field value in output routes.")
+
+    def test_Route_solve_service(self):
+        """Test the solve method of the Route class with feature class output using a service."""
+        # Initialize an Route analysis object
+        route_args = deepcopy(self.route_args)
+        route_args["network_data_source"] = self.portal_nd
+        route_args["travel_mode"] = self.portal_tm
+        rt = parallel_route_pairs.Route(**route_args)
+        # Solve a chunk
+        origin_criteria = [2, 12]  # 11 rows
+        rt.solve(origin_criteria)
+        # Check results
+        self.assertIsInstance(rt.job_result, dict)
+        self.assertTrue(rt.job_result["solveSucceeded"], "Route solve failed")
+        self.assertTrue(arcpy.Exists(rt.job_result["outputRoutes"]), "Route output does not exist.")
+        # Expect 9 rows because two of the StoreID values are bad and are skipped
+        self.assertEqual(9, int(arcpy.management.GetCount(rt.job_result["outputRoutes"]).getOutput(0)))
+        # Make sure the ID fields have been added and populated
+        route_fields = [f.name for f in arcpy.ListFields(rt.job_result["outputRoutes"])]
+        self.assertIn("OriginUniqueID", route_fields, "Routes output missing OriginUniqueID field.")
+        self.assertIn("DestinationUniqueID", route_fields, "Routes output missing DestinationUniqueID field.")
+        for row in arcpy.da.SearchCursor(rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]):
+            self.assertIsNotNone(row[0], "Null OriginUniqueID field value in output routes.")
+            self.assertIsNotNone(row[1], "Null DestinationUniqueID field value in output routes.")
 
     def test_ParallelRoutePairCalculator_validate_route_settings(self):
         """Test the _validate_route_settings function."""
@@ -126,7 +154,8 @@ class TestParallelRoutePairs(unittest.TestCase):
         rt_inputs = deepcopy(self.parallel_rt_class_args)
         rt_inputs["travel_mode"] = "InvalidTM"
         rt_calculator = parallel_route_pairs.ParallelRoutePairCalculator(**rt_inputs)
-        with self.assertRaises(RuntimeError):
+        error_type = ValueError if arcgis_version >= "3.1" else RuntimeError
+        with self.assertRaises(error_type):
             rt_calculator._validate_route_settings()
 
     def test_ParallelRoutePairCalculator_solve_route_in_parallel(self):

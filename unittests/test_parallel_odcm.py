@@ -242,9 +242,10 @@ class TestParallelODCM(unittest.TestCase):
         self.assertTrue(od.job_result["solveSucceeded"], "OD solve failed")
         self.assertTrue(arcpy.Exists(od.job_result["outputLines"]), "OD line output does not exist.")
         # Ensure the OriginOID and DestinationOID fields in the output have the correct numerical ranges
-        for row in arcpy.da.SearchCursor(od.job_result["outputLines"], ["OriginOID", "DestinationOID"]):
-            self.assertTrue(origin_criteria[0] <= row[0] <= origin_criteria[1], "OriginOID out of range.")
-            self.assertTrue(dest_criteria[0] <= row[1] <= dest_criteria[1], "DestinationOID out of range.")
+        fields_to_check = ["OriginOID", "DestinationOID"]
+        for row in arcpy.da.SearchCursor(od.job_result["outputLines"], fields_to_check):
+            self.assertTrue(origin_criteria[0] <= row[0] <= origin_criteria[1], f"{fields_to_check[0]} out of range.")
+            self.assertTrue(dest_criteria[0] <= row[1] <= dest_criteria[1], f"{fields_to_check[1]} out of range.")
 
     def test_ODCostMatrix_solve_service_csv(self):
         """Test the solve method of the ODCostMatrix class using a service with csv output.
@@ -310,7 +311,8 @@ class TestParallelODCM(unittest.TestCase):
         od_inputs = deepcopy(self.parallel_od_class_args)
         od_inputs["travel_mode"] = "InvalidTM"
         od_calculator = parallel_odcm.ParallelODCalculator(**od_inputs)
-        with self.assertRaises(RuntimeError):
+        error_type = ValueError if helpers.arcgis_version >= "3.1" else RuntimeError
+        with self.assertRaises(error_type):
             od_calculator._validate_od_settings()
 
     def test_ParallelODCalculator_solve_od_in_parallel_featureclass(self):

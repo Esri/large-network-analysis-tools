@@ -26,7 +26,7 @@ import input_data_helper
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import solve_large_route_pair_analysis  # noqa: E402, pylint: disable=wrong-import-position
-import helpers  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
@@ -94,7 +94,7 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
             ("barriers", [does_not_exist], ValueError, f"Input dataset {does_not_exist} does not exist."),
             ("network_data_source", does_not_exist, ValueError,
              f"Input network dataset {does_not_exist} does not exist."),
-            ("travel_mode", "BadTM", RuntimeError, ""),
+            ("travel_mode", "BadTM", ValueError if arcgis_version >= "3.1" else RuntimeError, ""),
             ("time_of_day", "3/29/2022 4:45 PM", ValueError, ""),
             ("time_of_day", "BadDateTime", ValueError, ""),
             ("origin_id_field", "BadField", ValueError,
