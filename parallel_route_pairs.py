@@ -394,10 +394,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
 
         # Join the input ID fields to Routes
-        # The new FirstStopID and LastStopID fields were added at Pro 3.1 / Enterprise 11.1 to make elationships between
-        # IDs/OIDs in output classes are more reliable.  Use these fields if they exist in the output.  Otherwise, use
-        # FirstStopOID and LastStopOID, which are mostly reliable but not perfect.  For best results, use the most
-        # recent ArcGIS software.
+        # The new FirstStopID and LastStopID fields were added at Pro 3.1 / Enterprise 11.1 to make relationships
+        # between IDs/OIDs in output classes are more reliable.  Use these fields if they exist in the output.
+        # Otherwise, use FirstStopOID and LastStopOID, which are mostly reliable but not perfect.  For best results, use
+        # the most recent ArcGIS software.
         if "FirstStopID" in self.solve_result.fieldNames(arcpy.nax.RouteOutputDataType.Routes):
             id_field_prefix = "ID"
         else:
