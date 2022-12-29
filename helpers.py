@@ -187,6 +187,13 @@ def convert_output_format_str_to_enum(output_format):
     raise ValueError(err)
 
 
+class PreassignedODPairType(enum.Enum):
+    """Enum definining the type of preassigned OD pairs being used in the analysis."""
+
+    one_to_one = 1  # Each origin is assigned to exactly one destination.
+    many_to_many = 2  # Origins and destinations may be reused. A separate table defines OD pairs.
+
+
 def validate_input_feature_class(feature_class):
     """Validate that the designated input feature class exists and is not empty.
 

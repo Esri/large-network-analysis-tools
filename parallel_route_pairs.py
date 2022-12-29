@@ -34,6 +34,7 @@ import time
 import datetime
 import traceback
 import argparse
+import pandas as pd
 from distutils.util import strtobool
 
 import arcpy
@@ -67,6 +68,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
         """Initialize the Route analysis for the given inputs.
 
         Expected arguments:
+        - pair_type
         - origins
         - origin_id_field
         - assigned_dest_field
@@ -83,6 +85,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
         - destination_transfer_fields
         - barriers
         """
+        self.pair_type = kwargs["pair_type"]
         self.origins = kwargs["origins"]
         self.origin_id_field = kwargs["origin_id_field"]
         self.assigned_dest_field = kwargs["assigned_dest_field"]
@@ -120,8 +123,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.input_origins_layer = "InputOrigins" + self.job_id
         self.input_destinations_layer = "InputDestinations" + self.job_id
         self.input_origins_layer_obj = None
+        self.input_dests_layer_obj = None
         self.origin_unique_id_field_name = "OriginUniqueID"
         self.dest_unique_id_field_name = "DestinationUniqueID"
+        self.od_pairs = None
 
         # Create a network dataset layer if needed
         if not self.is_service:
@@ -155,28 +160,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
                 [self.network_data_source, nds_layer_name],
             )
         self.network_data_source = nds_layer_name
-
-    def _select_inputs(self, origins_criteria):
-        """Create layers from the origins so the layer contains only the desired inputs for the chunk.
-
-        Args:
-            origins_criteria (list): Origin ObjectID range to select from the input dataset
-        """
-        # Select the origins with ObjectIDs in this range
-        self.logger.debug("Selecting origins for this chunk...")
-        origins_oid_field_name = arcpy.Describe(self.origins).oidFieldName
-        origins_where_clause = (
-            f"{origins_oid_field_name} >= {origins_criteria[0]} "
-            f"And {origins_oid_field_name} <= {origins_criteria[1]}"
-        )
-        self.logger.debug(f"Origins where clause: {origins_where_clause}")
-        self.input_origins_layer_obj = helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.MakeFeatureLayer,
-            [self.origins, self.input_origins_layer, origins_where_clause],
-        ).getOutput(0)
-        num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
-        self.logger.debug(f"Number of origins selected: {num_origins}")
 
     def initialize_rt_solver(self):
         """Initialize a Route solver object and set properties."""
@@ -227,19 +210,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.rt_solver.timeOfDay = self.time_of_day
         self.logger.debug(f"timeOfDay: {self.time_of_day}")
 
-    def _insert_stops(self):
-        """Insert the origins and destinations as stops for the Route analysis."""
-        # Make a layer for destinations for quicker access
-        helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.MakeFeatureLayer,
-            [self.destinations, self.input_destinations_layer],
-        )
-
-        self.logger.debug(f"Route solver fields transferred from Origins: {self.origin_transfer_fields}")
-        self.logger.debug(f"Route solver fields transferred from Destinations: {self.destination_transfer_fields}")
-
-        # Add fields to input Stops with the origin and destination's original unique IDs
+    def _add_unique_id_fields(self):
+        """Add fields to input Stops with the origin and destination's original unique IDs."""
         field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
                        "Integer": "LONG", "OID": "LONG"}
         origin_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.origin_id_field)[0]
@@ -252,6 +224,72 @@ class Route:  # pylint:disable = too-many-instance-attributes
             dest_field_def += [self.dest_unique_id_field_name, dest_id_field.length]
         self.rt_solver.addFields(arcpy.nax.RouteInputDataType.Stops, [origin_field_def, dest_field_def])
 
+    def _select_inputs_one_to_one(self, origins_criteria):
+        """Create layers from the origins so the layer contains only the desired inputs for the chunk.
+
+        Args:
+            origins_criteria (list): Origin ObjectID range to select from the input dataset
+        """
+        # Select the origins with ObjectIDs in this range
+        self.logger.debug("Selecting origins for this chunk...")
+        origins_oid_field_name = arcpy.Describe(self.origins).oidFieldName
+        origins_where_clause = (
+            f"{origins_oid_field_name} >= {origins_criteria[0]} "
+            f"And {origins_oid_field_name} <= {origins_criteria[1]}"
+        )
+        self.logger.debug(f"Origins where clause: {origins_where_clause}")
+        self.input_origins_layer_obj = helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.MakeFeatureLayer,
+            [self.origins, self.input_origins_layer, origins_where_clause],
+        ).getOutput(0)
+        num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
+        self.logger.debug(f"Number of origins selected: {num_origins}")
+
+        # Make a layer for destinations for quicker access
+        helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.MakeFeatureLayer,
+            [self.destinations, self.input_destinations_layer],
+        )
+
+    def _get_od_pairs_for_chunk(chunk_definition):
+        """Retrieve a list of OD pairs included in this chunk."""
+        ## TODO
+        pass
+
+    def _select_inputs_many_to_many(self):
+        """Create layers that include only the origins and destinations relevant to this chunk."""
+        ## TODO: Handle data type properly in queries
+        # Select the origins present in this chunk of predefined OD pairs
+        self.logger.debug("Selecting origins for this chunk...")
+        origins_in_chunk = set([pair[0] for pair in self.od_pairs])
+        origin_string = "'" + "', '".join([str(o_id) for o_id in origins_in_chunk]) + "'"
+        origins_where_clause = f"{self.origin_id_field} IN ({origin_string})"
+        self.logger.debug(f"Origins where clause: {origins_where_clause}")
+        self.input_origins_layer_obj = helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.MakeFeatureLayer
+            [self.origins, self.input_origins_layer, origins_where_clause]
+        ).getOutput(0)
+        num_origins = int(arcpy.management.GetCount(self.input_origins_layer).getOutput(0))
+        self.logger.debug(f"Number of origins selected: {num_origins}")
+        # Select the destinations present in this chunk of predefined OD pairs
+        self.logger.debug("Selecting destinations for this chunk...")
+        dests_in_chunk = set([pair[1] for pair in self.od_pairs])
+        dest_string = "'" + "', '".join([str(d_id) for d_id in dests_in_chunk]) + "'"
+        dests_where_clause = f"{self.dest_id_field} IN ({dest_string})"
+        self.logger.debug(f"Destinations where clause: {dests_where_clause}")
+        self.input_dests_layer_obj = helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.MakeFeatureLayer
+            [self.origins, self.input_destinations_layer, dests_where_clause]
+        ).getOutput(0)
+        num_dests = int(arcpy.management.GetCount(self.input_destinations_layer).getOutput(0))
+        self.logger.debug(f"Number of destinations selected: {num_dests}")
+
+    def _insert_stops_one_to_one(self):
+        """Insert the origins and destinations as stops for the Route analysis."""
         # Use an insertCursor to insert Stops into the Route analysis
         destinations = {}
         destination_rows = []
@@ -306,20 +344,71 @@ class Route:  # pylint:disable = too-many-instance-attributes
             for row in destination_rows:
                 dcur.insertRow(row)
 
-    def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
+    def _insert_stops_many_to_many(self):
+        """Insert each predefined OD pair into the Route analysis for the many-to-many case."""
+        # Store data of the relevant origins and destinations in pandas dataframes for quick lookups and reuse
+        with arcpy.da.SearchCursor(
+            self.input_origins_layer,
+            [self.origin_id_field, "SHAPE@"] + self.origin_transfer_fields
+        ) as cur:
+            o_df = pd.DataFrame(cur, columns=[self.origin_id_field, "Shape"])
+        o_df.set_index(self.origin_id_field, inplace=True)
+
+        with arcpy.da.SearchCursor(
+            self.input_destinations_layer,
+            [self.dest_id_field, "SHAPE@"] + self.destination_transfer_fields
+        ) as cur:
+            d_df = pd.DataFrame(cur, columns=[self.dest_id_field, "Shape"])
+        d_df.set_index(self.dest_id_field, inplace=True)
+
+        # Insert each OD pair into the Route analysis
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", self.origin_unique_id_field_name, self.dest_unique_id_field_name, "SHAPE@"] +
+                self.origin_transfer_fields
+        ) as icur:
+            for od_pair in self.od_pairs:
+                origin_id, dest_id = od_pair
+                try:
+                    origin_data = list(o_df.loc[origin_id].values)
+                    dest_data = list(d_df.loc[dest_id].values)
+                except KeyError:
+                    # This should never happen because we should have preprocessed this out.
+                    self.logger.debug(
+                        f"Origin or destination from OD Pairs not found in inputs. Skipped pair {od_pair}.")
+                    continue
+                route_name = f"{origin_id} - {dest_id}"
+                icur.insertRow([route_name, 1, origin_id, None] + origin_data)
+                icur.insertRow([route_name, 2, None, dest_id] + dest_data)
+
+    def solve(self, chunk_definition):  # pylint: disable=too-many-locals, too-many-statements
         """Create and solve a Route analysis for the designated chunk of origins and their assigned destinations.
 
         Args:
-            origins_criteria (list): ObjectID range to select from the input origins
+            chunk_definition (list): ObjectID range to select from the input origins  ## TODO
         """
-        # Select the origins to process
-        self._select_inputs(origins_criteria)
+        # Select the inputs to process
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            self._select_inputs_one_to_one(chunk_definition)
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            self._get_od_pairs_for_chunk(chunk_definition)
+            self._select_inputs_many_to_many()
+        else:
+            raise NotImplementedError(f"Invalid PreassignedODPairType: {self.pair_type}")
 
         # Initialize the Route solver object
         self.initialize_rt_solver()
+        self._add_unique_id_fields()
 
         # Insert the origins and destinations
-        self._insert_stops()
+        self.logger.debug(f"Route solver fields transferred from Origins: {self.origin_transfer_fields}")
+        self.logger.debug(f"Route solver fields transferred from Destinations: {self.destination_transfer_fields}")
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            self._insert_stops_one_to_one()
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            self._insert_stops_many_to_many()
+        else:
+            raise NotImplementedError(f"Invalid PreassignedODPairType: {self.pair_type}")
 
         if self.rt_solver.count(arcpy.nax.RouteInputDataType.Stops) == 0:
             # There were no valid destinations for this set of origins
@@ -370,6 +459,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.job_result["solveSucceeded"] = True
 
         # Save output
+        ## TODO
         self._export_to_feature_class(origins_criteria)
 
         self.logger.debug("Finished calculating Route.")
