@@ -362,17 +362,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Input"
         )
         param_origin_id_field.parameterDependencies = [param_origins.name]
-        param_origin_id_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
-
-        param_assigned_dest_field = arcpy.Parameter(
-            displayName="Assigned Destination Field",
-            name="Assigned_Destination_Field",
-            datatype="Field",
-            parameterType="Required",
-            direction="Input"
-        )
-        param_assigned_dest_field.parameterDependencies = [param_origins.name]
-        param_assigned_dest_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
+        param_origin_id_field.filter.list = helpers.ID_FIELD_TYPES
 
         param_destinations = arcpy.Parameter(
             displayName="Destinations",
@@ -390,7 +380,55 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Input"
         )
         param_dest_id_field.parameterDependencies = [param_destinations.name]
-        param_dest_id_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
+        param_dest_id_field.filter.list = helpers.ID_FIELD_TYPES
+
+        param_pair_type = arcpy.Parameter(
+            displayName="Origin-Destination Assignment Type",
+            name="OD_Pair_Type",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_pair_type.filter.list = helpers.PAIR_TYPES
+        param_pair_type.value = helpers.PAIR_TYPES[0]
+
+        param_assigned_dest_field = arcpy.Parameter(
+            displayName="Assigned Destination Field",
+            name="Assigned_Destination_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_assigned_dest_field.parameterDependencies = [param_origins.name]
+        param_assigned_dest_field.filter.list = helpers.ID_FIELD_TYPES
+
+        param_pair_table = arcpy.Parameter(
+            displayName="Origin-Destination Pair Table",
+            name="OD_Pair_Table",
+            datatype="DETable",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_pair_table_origin_id_field = arcpy.Parameter(
+            displayName="Origin ID Field in Origin-Destination Pair Table",
+            name="Pair_Table_Origin_Unique_ID_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_pair_table_origin_id_field.parameterDependencies = [param_pair_table.name]
+        param_pair_table_origin_id_field.filter.list = helpers.ID_FIELD_TYPES
+
+        param_pair_table_dest_id_field = arcpy.Parameter(
+            displayName="Destination ID Field in Origin-Destination Pair Table",
+            name="Pair_Table_Destination_Unique_ID_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_pair_table_dest_id_field.parameterDependencies = [param_pair_table.name]
+        param_pair_table_dest_id_field.filter.list = helpers.ID_FIELD_TYPES
 
         param_network = arcpy.Parameter(
             displayName="Network Data Source",
@@ -506,21 +544,25 @@ class SolveLargeAnalysisWithKnownPairs(object):
         params = [
             param_origins,  # 0
             param_origin_id_field,  # 1
-            param_assigned_dest_field,  # 2
-            param_destinations,  # 3
-            param_dest_id_field,  # 4
-            param_network,  # 5
-            param_travel_mode,  # 6
-            param_time_units,  # 7
-            param_distance_units,  # 8
-            param_chunk_size,  # 9
-            param_max_processes,  # 10
-            param_out_routes,  # 11
-            param_time_of_day,  # 12
-            param_barriers,  # 13
-            param_precalculate_network_locations,  # 14
-            param_sort_origins,  # 15
-            param_reverse_direction  # 16
+            param_destinations,  # 2
+            param_dest_id_field,  # 3
+            param_pair_type,  # 4
+            param_assigned_dest_field,  # 5
+            param_pair_table,  # 6
+            param_pair_table_origin_id_field,  # 7
+            param_pair_table_dest_id_field,  # 8
+            param_network,  # 9
+            param_travel_mode,  # 10
+            param_time_units,  # 11
+            param_distance_units,  # 12
+            param_chunk_size,  # 13
+            param_max_processes,  # 14
+            param_out_routes,  # 15
+            param_time_of_day,  # 16
+            param_barriers,  # 17
+            param_precalculate_network_locations,  # 18
+            param_sort_origins,  # 19
+            param_reverse_direction  # 20
         ]
 
         return params
@@ -533,22 +575,74 @@ class SolveLargeAnalysisWithKnownPairs(object):
         """Modify the values and properties of parameters before internal
         validation is performed.  This method is called whenever a parameter
         has been changed."""
-        param_network = parameters[5]
-        param_precalculate = parameters[14]
+        param_network = parameters[9]
+        param_precalculate = parameters[18]
+        param_pair_type = parameters[4]
+        param_assigned_dest_field = parameters[5]
+        param_pair_table = parameters[6]
+        param_pair_table_origin_id_field = parameters[7]
+        param_pair_table_dest_id_field = parameters[8]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         update_precalculate_parameter(param_network, param_precalculate)
+
+        # Toggle parameter visiblity based on Origin-Destination Assignment Type
+        if not param_pair_type.hasBeenValidated and param_pair_type.altered and param_pair_type.valueAsText:
+            try:
+                pair_type = helpers.convert_pair_type_str_to_enum(param_pair_type.valueAsText)
+                if pair_type is helpers.PreassignedODPairType.one_to_one:
+                    # Enable parameters associated with one-to-one
+                    param_assigned_dest_field.enabled = True
+                    # Disable parameter associated with other pair types and reset their values
+                    param_pair_table.value = None
+                    param_pair_table.enabled = False
+                    param_pair_table_origin_id_field.value = None
+                    param_pair_table_origin_id_field.enabled = False
+                    param_pair_table_dest_id_field.value = None
+                    param_pair_table_dest_id_field.enabled = False
+                elif pair_type is helpers.PreassignedODPairType.many_to_many:
+                    # Enable parameter associated with many-to-many
+                    param_pair_table.enabled = True
+                    param_pair_table_origin_id_field.enabled = True
+                    param_pair_table_dest_id_field.enabled = True
+                    # Disable parameter associated with other pair types and reset their values
+                    param_assigned_dest_field.enabled = False
+                    param_assigned_dest_field.value = None
+            except Exception:  # pylint: disable=broad-except
+                # Invalid pair type.  Don't modify any parameters.
+                pass
 
         return
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
-        param_network = parameters[5]
-        param_max_processes = parameters[10]
+        param_network = parameters[9]
+        param_max_processes = parameters[14]
+        param_assigned_dest_field = parameters[5]
+        param_pair_table = parameters[6]
+        param_pair_table_origin_id_field = parameters[7]
+        param_pair_table_dest_id_field = parameters[8]
 
         # If the network data source is arcgis.com, cap max processes
         cap_max_processes_for_agol(param_network, param_max_processes)
+
+        # Make the appropriate OD pair parameters required based on the user's choice of Origin-Destination Assignment
+        # Type. Just require whichever parameters is enabled. Enablement is controlled in updateParameters() based on
+        # the user's choice in the Origin-Destination Assignment Type parameter.
+        # The 735 error code doesn't display an actual error but displays the little red star to indicate that the
+        # parameter is required.
+        for param in [
+            param_assigned_dest_field,
+            param_pair_table,
+            param_pair_table_origin_id_field,
+            param_pair_table_dest_id_field
+        ]:
+            if param.enabled:
+                if not param.valueAsText:
+                    param.setIDMessage("Error", 735, param.displayName)
+            else:
+                param.clearMessage()
 
         return
 
@@ -558,6 +652,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         time_of_day = parameters[12].value
         if time_of_day:
             time_of_day = time_of_day.strftime(helpers.DATETIME_FORMAT)
+        ## TODO
         rt_solver = RoutePairSolver(
             parameters[0].value,  # origins
             parameters[1].valueAsText,  # unique origin ID field
