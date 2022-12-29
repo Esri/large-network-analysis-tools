@@ -842,8 +842,8 @@ class ParallelODCalculator:
         """Solve the OD Cost Matrix in chunks and post-process the results."""
         # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
-        # the optimized that are guaranteed to all fail. While we're doing this, check and store the field name that
-        # will represent costs in the output OD Lines table. We'll use this in post processing.
+        # that are guaranteed to all fail. While we're doing this, check and store the field name that  will represent
+        # costs in the output OD Lines table. We'll use this in post processing.
         self.optimized_cost_field = self._validate_od_settings()
 
         # Compute OD cost matrix in parallel

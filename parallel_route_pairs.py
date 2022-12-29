@@ -621,7 +621,7 @@ class ParallelRoutePairCalculator:
         """Solve the Route in chunks and post-process the results."""
         # Validate Route settings. Essentially, create a dummy Route class instance and set up the
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
-        # the optimized that are guaranteed to all fail.
+        # that are guaranteed to all fail.
         self._validate_route_settings()
 
         # Check if the input origins and destinations have any fields we should use in the route analysis
