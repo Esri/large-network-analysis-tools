@@ -122,7 +122,7 @@ The *Solve Large Analysis With Known OD Pairs* tool can be used to calculate the
   - You are using a portal URL as the network data source. In this case, pre-calculating network locations is not possible, and the parameter is hidden.
   - You have already pre-calculated the network location fields using the network dataset and travel mode you are using for this analysis. In this case, you can save time by not precalculating them again.
   - Each destination has only one assigned origin. In this case, there is no efficiency gain in calculating the location fields in advance.
-- **Sort Origins by Assigned Destination** (Python: *Sort_Origins*) - A Boolean indicating whether to sort origins by their assigned destination prior to commencing the parallel solve.  Using sorted day will improve the efficiency of the solve slightly.  If your input data is already sorted, or if no origins are assigned to the same destinations, then sorting is not useful, and you should set this parameter to false.
+- **Sort Origins by Assigned Destination** (Python: *Sort_Origins*) - A Boolean indicating whether to sort origins by their assigned destination prior to commencing the parallel solve.  Using sorted data will improve the efficiency of the solve slightly.  If your input data is already sorted, or if no origins are assigned to the same destinations, then sorting is not useful, and you should set this parameter to false.
 - **Reverse Direction of Travel** (Python: *Reverse_Direction*) - A Boolean indicating whether to reverse the direction of travel and calculate the route from the destination to the origin. The default is false.
 
 ### Running the tool from ArcGIS Pro
