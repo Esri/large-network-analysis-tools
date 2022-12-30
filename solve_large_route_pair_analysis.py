@@ -25,6 +25,7 @@ import uuid
 import traceback
 import argparse
 import subprocess
+import pandas as pd
 from math import floor
 from distutils.util import strtobool
 
@@ -48,14 +49,15 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     """
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
+        self, origins, origin_id_field, destinations, dest_id_field, pair_type,
         network_data_source, travel_mode, time_units, distance_units,
-        chunk_size, max_processes, output_routes, time_of_day=None, barriers=None,
-        precalculate_network_locations=True, sort_origins=True, reverse_direction=False
+        chunk_size, max_processes, output_routes,
+        assigned_dest_field=None, pair_table=None, pair_table_origin_id_field=None, pair_table_dest_id_field=None,
+        time_of_day=None, barriers=None, precalculate_network_locations=True, sort_origins=True, reverse_direction=False
     ):
         """Initialize the RoutePairSolver class.
 
-        Args:
+        Args:  # TODO
             origins (str, layer): Catalog path or layer for the input origins
             origin_id_field (str): Unique ID field of the input origins
             assigned_dest_field (str): Field in the input origins with the assigned destination ID
@@ -79,15 +81,19 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         """
         self.origins = origins
         self.origin_id_field = origin_id_field
-        self.assigned_dest_field = assigned_dest_field
         self.destinations = destinations
         self.dest_id_field = dest_id_field
+        self.pair_type = pair_type
         self.network_data_source = network_data_source
         self.travel_mode = travel_mode
         self.time_units = time_units
         self.distance_units = distance_units
         self.chunk_size = chunk_size
         self.max_processes = max_processes
+        self.assigned_dest_field = assigned_dest_field
+        self.pair_table = pair_table
+        self.pair_table_origin_id_field = pair_table_origin_id_field
+        self.pair_table_dest_id_field = pair_table_dest_id_field
         self.time_of_day = time_of_day
         self.time_of_day_dt = None  # Set during validation
         self.barriers = barriers if barriers else []
@@ -101,14 +107,17 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "rt_" + self.unique_id)  # pylint: disable=no-member
         arcpy.AddMessage(f"Intermediate outputs will be written to {self.scratch_folder}.")
         self.scratch_gdb = os.path.join(self.scratch_folder, "Inputs.gdb")
-        self.output_origins = os.path.join(self.scratch_gdb, "Origins")  # pylint: disable=no-member
-        self.output_destinations = os.path.join(self.scratch_gdb, "Destinations")  # pylint: disable=no-member
+        self.output_origins = os.path.join(self.scratch_gdb, "Origins")
+        self.output_destinations = os.path.join(self.scratch_gdb, "Destinations")
+        self.output_pair_table = os.path.join(self.scratch_folder, "ODPairs.csv")
 
         self.is_service = helpers.is_nds_service(self.network_data_source)
         self.service_limits = None  # Set during validation
         self.is_agol = False  # Set during validation
 
+        self.origin_ids = []  # Populated during validation
         self.destination_ids = []  # Populated during validation
+        self.df_od_pairs = None  # Populated during validation
 
     def _validate_inputs(self):
         """Validate the Route inputs."""
@@ -130,14 +139,49 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                 arcpy.AddError(f"Could not convert input time of day to datetime: {str(ex)}")
                 raise ex
 
+        # Validate that correct parameters are included based on pair type
+        param_error = "%s is required when preassigned OD pair type is %s"
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            if not self.assigned_dest_field:
+                err = param_error % ("Assigned destination field", helpers.PreassignedODPairType.one_to_one.name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            pair_type_name = helpers.PreassignedODPairType.many_to_many.name
+            if not self.pair_table:
+                err = param_error % ("Origin-destination pair table", pair_type_name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+            if not self.pair_table_origin_id_field:
+                err = param_error % ("Origin-destination pair table Origin ID field", pair_type_name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+            if not self.pair_table_dest_id_field:
+                err = param_error % ("Origin-destination pair table Destination ID field", pair_type_name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+            if self.reverse_direction:
+                arcpy.AddWarning((
+                    "When using a preassigned origin-destination pair table, the reverse direction option cannot "
+                    "be used. Routes will be calculated from origins to destinations."))
+                self.reverse_direction = False
+        else:
+            err = f"Invalid preassigned OD pair type: {self.pair_type}"
+            arcpy.AddError(err)
+            raise ValueError(err)
+
         # Validate origins, destinations, and barriers
         helpers.validate_input_feature_class(self.origins)
         helpers.validate_input_feature_class(self.destinations)
         for barrier_fc in self.barriers:
             helpers.validate_input_feature_class(barrier_fc)
-        self._validate_unique_id_field(self.origins, self.origin_id_field)
+        self.origin_ids = self._validate_unique_id_field(self.origins, self.origin_id_field)
         self.destination_ids = self._validate_unique_id_field(self.destinations, self.dest_id_field)
-        self._validate_assigned_dest_field()
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            self._validate_assigned_dest_field()
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            helpers.validate_input_feature_class(self.pair_table)
+            self._validate_pair_table()
 
         # Validate network
         self.network_data_source = helpers.validate_network_data_source(self.network_data_source)
@@ -175,7 +219,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             err = f"Unique ID field {id_field} does not exist in dataset {input_features}."
             arcpy.AddError(err)
             raise ValueError(err)
-        # Populate a list of destination IDs and verify that they are unique
+        # Populate a list of IDs and verify that they are unique
         ids = []
         for row in arcpy.da.SearchCursor(input_features, [id_field]):  # pylint:disable = no-member
             ids.append(row[0])
@@ -222,6 +266,69 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                     f"{num_invalid} of {num_total} origins have invalid values in the assigned destination field "
                     f"{self.assigned_dest_field} that do not correspond to values in the destinations unique ID field "
                     f"{self.dest_id_field} in {self.destinations}. The origins will be ignored in the analysis."))
+
+    def _validate_pair_table(self):
+        """Validate the pair table assigning origins to destinations.
+
+        Raises: # TODO
+            ValueError: If the field does not exist in the origins dataset
+            ValueError: If all origins are assigned to invalid destinations
+        """
+        # Check if the origin and destination ID fields exist
+        field_names = [f.name for f in arcpy.ListFields(self.pair_table)]
+        if self.pair_table_origin_id_field not in field_names:
+            err = (f"Origin-destination pair table Origin ID field {self.pair_table_origin_id_field} does not exist in "
+                   f"{self.pair_table}.")
+            arcpy.AddError(err)
+            raise ValueError(err)
+        if self.pair_table_dest_id_field not in field_names:
+            err = (f"Origin-destination pair table Destination ID field {self.pair_table_dest_id_field} does not "
+                   f"exist in {self.pair_table}.")
+            arcpy.AddError(err)
+            raise ValueError(err)
+
+        # Read the OD pairs into a dataframe for further validation and sorting
+        columns = [self.pair_table_origin_id_field, self.pair_table_dest_id_field]
+        ## TODO: Figure out data types
+        with arcpy.da.SearchCursor(self.pair_table, columns) as cur:  # pylint: disable=no-member
+            self.df_od_pairs = pd.DataFrame(cur, columns=columns)
+        # Drop rows if the origin or destination IDs aren't in the input origin or destination tables
+        num_pairs_initial = self.df_od_pairs.shape[0]
+        self.df_od_pairs = self.df_od_pairs[~self.df_od_pairs[self.pair_table_origin_id_field].isin(self.origin_ids)]
+        self.df_od_pairs = self.df_od_pairs[~self.df_od_pairs[self.pair_table_dest_id_field].isin(self.destination_ids)]
+        num_pairs_final = self.df_od_pairs.shape[0]
+        if num_pairs_final == 0:
+            err = (
+                "All origin-destination pairs in the preassigned origin-destination pair table "
+                f"{self.pair_table} have invalid values in either the Origin ID field "
+                f"{self.pair_table_origin_id_field} or Destination ID field {self.pair_table_dest_id_field} "
+                f"that do not correspond to values in the origins unique ID field {self.origin_id_field} in "
+                f"{self.origins} or the destinations unique ID field {self.dest_id_field} in "
+                f"{self.destinations}. Ensure that you have chosen the correct datasets and fields and that the "
+                "field types match."
+            )
+            arcpy.AddError(err)
+            raise ValueError(err)
+        if num_pairs_final < num_pairs_initial:
+            arcpy.AddWarning((
+                f"{num_pairs_initial - num_pairs_final} of {num_pairs_initial} origin-destination pairs in the "
+                f"preassigned origin-destination pair table {self.pair_table} have invalid values in either the Origin "
+                f"ID field {self.pair_table_origin_id_field} or Destination ID field "
+                f"{self.pair_table_dest_id_field} that do not correspond to values in the origins unique ID field "
+                f"{self.origin_id_field} in {self.origins} or the destinations unique ID field "
+                f"{self.dest_id_field} in {self.destinations}. These origin-destination pairs will be ignored in "
+                "the analysis."
+            ))
+        # Drop duplicates
+        num_pairs_initial = num_pairs_final
+        self.df_od_pairs.drop_duplicates(subset=columns, inplace=True)
+        num_pairs_final = self.df_od_pairs.shape[0]
+        if num_pairs_final < num_pairs_initial:
+            arcpy.AddWarning((
+                "Duplicate origin-destination pairs were found in the origin-destination pairs table "
+                f"{self.pair_table}. Duplicate pairs will be ignored. Only one route will be generated between a given "
+                "origin-destination pair."
+            ))
 
     def _validate_route_settings(self):
         """Validate Route settings by spinning up a dummy Route object.
@@ -301,6 +408,58 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         field_mappings.addFieldMap(new_fm)
         return field_mappings, new_field_name
 
+    def _preprocess_od_pairs(self):
+        # Drop origins and destinations that aren't in the pair table
+        bad_origins = [
+            o for o in self.origin_ids if o not in list(self.df_od_pairs[self.pair_table_origin_id_field].unique())]
+        if bad_origins:
+            ## TODO: Deal with data types
+            where_string = "'" + "', '".join([str(o) for o in bad_origins]) + "'"
+            where_clause = f"{self.pair_table_origin_id_field} IN ({where_string})"
+            temp_layer = "Irrelevant origins"
+            arcpy.management.MakeFeatureLayer(self.output_origins, temp_layer, where_clause)
+            arcpy.management.DeleteFeatures(temp_layer)
+        bad_dests = [
+            d for d in self.destination_ids if d not in list(self.df_od_pairs[self.pair_table_dest_id_field].unique())]
+        if bad_dests:
+            ## TODO: Deal with data types
+            where_string = "'" + "', '".join([str(d) for d in bad_dests]) + "'"
+            where_clause = f"{self.pair_table_dest_id_field} IN ({where_string})"
+            temp_layer = "Irrelevant destinations"
+            arcpy.management.MakeFeatureLayer(self.output_destinations, temp_layer, where_clause)
+            arcpy.management.DeleteFeatures(temp_layer)
+        ## TODO: Check for no rows?
+
+        # Spatially sort origins
+        if self.should_sort_origins:
+            shape_field = arcpy.Decribe(self.output_origins).shapeFieldName
+            sorted_origins = self.output_origins + "_Sorted"
+            try:
+                arcpy.management.Sort(self.output_origins, sorted_origins, [[shape_field, "ASCENDING"]], "PEANO")
+                self.output_origins = sorted_origins
+            except arcpy.ExecuteError:  # pylint:disable = no-member
+                msgs = arcpy.GetMessages(2)
+                if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
+                    arcpy.AddWarning("Skipping spatial sorting because the Advanced license is not available.")
+                else:
+                    arcpy.AddWarning(f"Skipping spatial sorting because the tool failed. Messages:\n{msgs}")
+
+        # Sort the OD pair table according to the ordering of origins
+        # Get the list of origins included in the analysis in sorted order
+        ordered_origins = []
+        for row in arcpy.da.SearchCursor(self.output_origins, [self.origin_id_field]):  # pylint:disable = no-member
+            ordered_origins.append(row[0])
+        # Sort OD pairs dataframe by this order
+        # See https://towardsdatascience.com/how-to-do-a-custom-sort-on-pandas-dataframe-ac18e7ea5320
+        order_field = "origin_order"
+        df_sorting = pd.DataFrame({order_field: ordered_origins})
+        sort_mapping = df_sorting.reset_index().set_index(order_field)
+        self.df_od_pairs[order_field] = self.df_od_pairs[self.pair_table_origin_id_field].map(sort_mapping['index'])
+        self.df_od_pairs.sort_values(order_field, inplace=True)
+        self.df_od_pairs.drop([order_field], axis="columns", inplace=True)
+        # Write the final, updated OD pairs table to a CSV file
+        self.df_od_pairs.to_csv(self.output_pair_table, index=False)
+
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
         # Make scratch folder and geodatabase
@@ -333,14 +492,21 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             field_mapping=field_mappings
         )
 
-        # Sort origins by assigned destination
-        if self.should_sort_origins:
+        # Sort origins by assigned destination if relevant
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one and self.should_sort_origins:
             self._sort_origins_by_assigned_destination()
+
+        # Special processing for the many-to-many case
+        if self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            self._preprocess_od_pairs()
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
             helpers.precalculate_network_locations(
                 self.output_destinations, self.network_data_source, self.travel_mode, RT_PROPS)
+            if self.pair_type is helpers.PreassignedODPairType.many_to_many:
+                helpers.precalculate_network_locations(
+                    self.output_origins, self.network_data_source, self.travel_mode, RT_PROPS)
             for barrier_fc in self.barriers:
                 helpers.precalculate_network_locations(
                     barrier_fc, self.network_data_source, self.travel_mode, RT_PROPS)
@@ -353,9 +519,9 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         rt_inputs = [
             os.path.join(sys.exec_prefix, "python.exe"),
             os.path.join(cwd, "parallel_route_pairs.py"),
+            "--pair-type", self.pair_type.name,
             "--origins", self.output_origins,
             "--origins-id-field", self.origin_id_field,
-            "--assigned-dest-field", self.assigned_dest_field,
             "--destinations", self.output_destinations,
             "--destinations-id-field", self.dest_id_field,
             "--network-data-source", self.network_data_source,
@@ -368,6 +534,11 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             "--out-routes", str(self.output_routes),
             "--scratch-folder", self.scratch_folder
         ]
+        # Include relevant parameters according to pair type
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            rt_inputs += ["--assigned-dest-field", self.assigned_dest_field]
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            rt_inputs += ["--od-pair-table", self.output_pair_table]
         # Include other optional parameters if relevant
         if self.barriers:
             rt_inputs += ["--barriers"]
