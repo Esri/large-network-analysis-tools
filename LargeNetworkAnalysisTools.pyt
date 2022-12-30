@@ -582,6 +582,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         param_pair_table = parameters[6]
         param_pair_table_origin_id_field = parameters[7]
         param_pair_table_dest_id_field = parameters[8]
+        param_sort_origins = parameters[19]
         param_reverse_direction = parameters[20]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
@@ -594,6 +595,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
                 if pair_type is helpers.PreassignedODPairType.one_to_one:
                     # Enable parameters associated with one-to-one
                     param_assigned_dest_field.enabled = True
+                    param_sort_origins.enabled = True
                     param_reverse_direction.enabled = True
                     # Disable parameter associated with other pair types and reset their values
                     param_pair_table.value = None
@@ -610,6 +612,8 @@ class SolveLargeAnalysisWithKnownPairs(object):
                     # Disable parameter associated with other pair types and reset their values
                     param_assigned_dest_field.enabled = False
                     param_assigned_dest_field.value = None
+                    param_sort_origins.enabled = False
+                    param_sort_origins.value = False
                     param_reverse_direction.enabled = False
                     param_reverse_direction.value = False
             except Exception:  # pylint: disable=broad-except
