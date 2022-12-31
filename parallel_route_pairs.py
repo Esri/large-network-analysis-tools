@@ -35,6 +35,7 @@ import datetime
 import traceback
 import argparse
 import pandas as pd
+from math import ceil
 from distutils.util import strtobool
 
 import arcpy
@@ -576,7 +577,10 @@ def solve_route(inputs, chunk):
         dict: Dictionary of results from the Route class
     """
     rt = Route(**inputs)
-    rt.logger.info(f"Processing origins OID {chunk[0]} to {chunk[1]} as job id {rt.job_id}")
+    if inputs["pair_type"] is helpers.PreassignedODPairType.one_to_one:
+        rt.logger.info(f"Processing origins OID {chunk[0]} to {chunk[1]} as job id {rt.job_id}")
+    elif inputs["pair_type"] is helpers.PreassignedODPairType.many_to_many:
+        rt.logger.info(f"Processing chunk {chunk[0]} as job id {rt.job_id}")
     rt.solve(chunk)
     rt.teardown_logger()
     return rt.job_result
@@ -656,10 +660,20 @@ class ParallelRoutePairCalculator:
         self.route_fcs = []
 
         # Construct OID ranges for chunks of origins and destinations
-        self.origin_ranges = helpers.get_oid_ranges_for_input(origins, max_routes)
+        if pair_type is helpers.PreassignedODPairType.one_to_one:
+            # Chunks are of the format [first origin ID, second origin ID]
+            self.chunks = helpers.get_oid_ranges_for_input(origins, max_routes)
+        elif pair_type is helpers.PreassignedODPairType.many_to_many:
+            # Chunks are of the format [chunk_num, chunk_size]
+            num_od_pairs = 0
+            with open(od_pair_table, "r") as f:
+                for _ in f:
+                    num_od_pairs += 1
+            num_chunks = ceil(num_od_pairs / max_routes)
+            self.chunks = [[i, max_routes] for i in range(num_chunks)]
 
         # Calculate the total number of jobs to use in logging
-        self.total_jobs = len(self.origin_ranges)
+        self.total_jobs = len(self.chunks)
 
         self.optimized_cost_field = None
 
@@ -757,7 +771,7 @@ class ParallelRoutePairCalculator:
         with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
             # Each parallel process calls the solve_route() function with the rt_inputs dictionary for the
             # given origin ranges and their assigned destinations.
-            jobs = {executor.submit(solve_route, self.rt_inputs, range): range for range in self.origin_ranges}
+            jobs = {executor.submit(solve_route, self.rt_inputs, range): range for range in self.chunks}
             # As each job is completed, add some logging information and store the results to post-process later
             for future in futures.as_completed(jobs):
                 completed_jobs += 1
