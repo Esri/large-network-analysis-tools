@@ -458,7 +458,13 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.df_od_pairs.sort_values(order_field, inplace=True)
         self.df_od_pairs.drop([order_field], axis="columns", inplace=True)
         # Write the final, updated OD pairs table to a CSV file
-        self.df_od_pairs.to_csv(self.output_pair_table, index=False)
+        # The CSV must have origin ID, destination ID with no headers so it plays nicely with parallel_route_pairs.py.
+        self.df_od_pairs.to_csv(
+            self.output_pair_table,
+            columns=[self.pair_table_origin_id_field, self.pair_table_dest_id_field],  # Ensure exact ordering
+            index=False,
+            header=False
+        )
 
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
