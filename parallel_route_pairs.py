@@ -372,46 +372,53 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
     def _insert_stops_many_to_many(self):
         """Insert each predefined OD pair into the Route analysis for the many-to-many case."""
-        # Store data of the relevant origins and destinations in pandas dataframes for quick lookups and reuse
-        with arcpy.da.SearchCursor(
+        # Store data of the relevant origins and destinations in dictionaries for quick lookups and reuse
+        o_data = {}  # {Origin ID: [Shape, transferred fields]}
+        for row in arcpy.da.SearchCursor(
             self.input_origins_layer,
             [self.origin_id_field, "SHAPE@"] + self.origin_transfer_fields
-        ) as cur:
-            o_df = pd.DataFrame(
-                cur,
-                columns=[self.origin_id_field, "Shape"],
-            )
-        o_df.set_index(self.origin_id_field, inplace=True)
-
-        with arcpy.da.SearchCursor(
+        ):
+            o_data[row[0]] = row[1:]
+        d_data = {}  # {Destination ID: [Shape, transferred fields]}
+        for row in arcpy.da.SearchCursor(
             self.input_destinations_layer,
             [self.dest_id_field, "SHAPE@"] + self.destination_transfer_fields
-        ) as cur:
-            d_df = pd.DataFrame(
-                cur,
-                columns=[self.dest_id_field, "Shape"],
-            )
-        d_df.set_index(self.dest_id_field, inplace=True)
+        ):
+            d_data[row[0]] = row[1:]
 
-        # Insert each OD pair into the Route analysis
+        # Insert origins from each OD pair into the Route analysis
         with self.rt_solver.insertCursor(
             arcpy.nax.RouteInputDataType.Stops,
-            ["RouteName", "Sequence", self.origin_unique_id_field_name, self.dest_unique_id_field_name, "SHAPE@"] +
-                self.origin_transfer_fields
+            ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@"] + self.origin_transfer_fields
         ) as icur:
             for od_pair in self.od_pairs:
                 origin_id, dest_id = od_pair
                 try:
-                    origin_data = list(o_df.loc[origin_id].values)
-                    dest_data = list(d_df.loc[dest_id].values)
+                    origin_data = o_data[origin_id]
                 except KeyError:
                     # This should never happen because we should have preprocessed this out.
                     self.logger.debug(
-                        f"Origin or destination from OD Pairs not found in inputs. Skipped pair {od_pair}.")
+                        f"Origin from OD Pairs not found in inputs. Skipped pair {od_pair}.")
                     continue
                 route_name = f"{origin_id} - {dest_id}"
-                icur.insertRow([route_name, 1, origin_id, None] + origin_data)
-                icur.insertRow([route_name, 2, None, dest_id] + dest_data)
+                icur.insertRow((route_name, 1, origin_id) + origin_data)
+
+        # Insert destinations from each OD pair into the Route analysis
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", self.dest_unique_id_field_name, "SHAPE@"] + self.destination_transfer_fields
+        ) as icur:
+            for od_pair in self.od_pairs:
+                origin_id, dest_id = od_pair
+                try:
+                    dest_data = d_data[dest_id]
+                except KeyError:
+                    # This should never happen because we should have preprocessed this out.
+                    self.logger.debug(
+                        f"Destination from OD Pairs not found in inputs. Skipped pair {od_pair}.")
+                    continue
+                route_name = f"{origin_id} - {dest_id}"
+                icur.insertRow((route_name, 2, dest_id) + dest_data)
 
     def solve(self, chunk_definition):  # pylint: disable=too-many-locals, too-many-statements
         """Create and solve a Route analysis for the designated chunk of origins and their assigned destinations.
