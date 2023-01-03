@@ -1,6 +1,6 @@
 """Unit tests for the parallel_route_pairs.py module.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -42,8 +42,7 @@ class TestParallelRoutePairs(unittest.TestCase):
         sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
         self.origins = input_data_helper.get_tract_centroids_with_store_id_fc(sf_gdb)
         self.destinations = os.path.join(sf_gdb, "Analysis", "Stores")
-        ## TODO: Figure out how to create this.
-        self.od_pair_table = os.path.join(self.input_data_folder, "od_pairs.csv")
+        self.od_pair_table = input_data_helper.get_od_pair_csv(self.input_data_folder)
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"
         self.local_tm_dist = "Driving Distance"
