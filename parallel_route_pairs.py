@@ -870,6 +870,10 @@ def launch_parallel_rt_pairs():
 
     # Define Arguments supported by the command line utility
 
+    # --pair-type parameter
+    help_string = "The type of origin-destination pair assignment to use. Either one_to_one or many_to_many."
+    parser.add_argument("-pt", "--pair-type", action="store", dest="pair_type_str", help=help_string, required=True)
+
     # --origins parameter
     help_string = "The full catalog path to the feature class containing the origins."
     parser.add_argument("-o", "--origins", action="store", dest="origins", help=help_string, required=True)
@@ -935,12 +939,13 @@ def launch_parallel_rt_pairs():
         "-sf", "--scratch-folder", action="store", dest="scratch_folder", help=help_string, required=True)
 
     # --assigned-dest-field parameter
-    help_string = "The name of the field in origins indicating the assigned destination."
+    help_string = ("The name of the field in origins indicating the assigned destination. "
+                   "Required for one_to_one pair-type")
     parser.add_argument(
         "-adf", "--assigned-dest-field", action="store", dest="assigned_dest_field", help=help_string, required=False)
 
     # --od-pair-table parameter
-    help_string = "CSV file holding preassigned OD pairs."
+    help_string = "CSV file holding preassigned OD pairs. Required for many_to_many pair-type."
     parser.add_argument(
         "-odp", "--od-pair-table", action="store", dest="od_pair_table", help=help_string, required=False)
 
