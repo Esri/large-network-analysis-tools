@@ -405,7 +405,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         param_pair_table = arcpy.Parameter(
             displayName="Origin-Destination Pair Table",
             name="OD_Pair_Table",
-            datatype="DETable",
+            datatype="GPTableView",
             parameterType="Required",
             direction="Input"
         )
