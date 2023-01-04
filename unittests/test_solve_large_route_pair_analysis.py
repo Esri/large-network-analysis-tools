@@ -40,7 +40,7 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         self.sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
         self.origins = input_data_helper.get_tract_centroids_with_store_id_fc(self.sf_gdb)
         self.destinations = os.path.join(self.sf_gdb, "Analysis", "Stores")
-        self.od_pairs_table = os.path.join(self.sf_gdb, "ODPairs")  ## TODO
+        self.od_pairs_table = input_data_helper.get_od_pairs_fgdb_table(self.sf_gdb)
         self.local_nd = os.path.join(self.sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"
         self.local_tm_dist = "Driving Distance"
