@@ -1,12 +1,17 @@
-"""Compute a large analysis with origins preassigned to specific destinations
-by chunking the inputs and solving in parallel. Write outputs into a single
-combined feature class.
+"""Compute a large analysis with preassigned origin-destination pairs by chunking the inputs and solving in parallel.
+
+Multiple cases are supported:
+- one-to-one: A field in the input origins table indicates which destination the origin is assigned to
+- many-to-many: A separate table defines a list of origin-destination pairs. A single origin may be assigned to multiple
+    destinations.
+
+The outputs are written to a single combined feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
 This script can be called from the script tool definition or from the command line.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -25,9 +30,9 @@ import uuid
 import traceback
 import argparse
 import subprocess
-import pandas as pd
 from math import floor
 from distutils.util import strtobool
+import pandas as pd
 
 import arcpy
 
@@ -38,7 +43,7 @@ arcpy.env.overwriteOutput = True
 
 
 class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-public-methods
-    """Compute routes between pre-assigned origins and destinations pairs in parallel and combine results.
+    """Compute routes between preassigned origins and destinations pairs in parallel and combine results.
 
     This class preprocesses and validates inputs and then spins up a subprocess to do the actual Route
     calculations. This is necessary because the a script tool running in the ArcGIS Pro UI cannot directly call
@@ -57,12 +62,12 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     ):
         """Initialize the RoutePairSolver class.
 
-        Args:  # TODO
+        Args:
             origins (str, layer): Catalog path or layer for the input origins
             origin_id_field (str): Unique ID field of the input origins
-            assigned_dest_field (str): Field in the input origins with the assigned destination ID
             destinations (str, layer): Catalog path or layer for the input destinations
             dest_id_field: (str): Unique ID field of the input destinations
+            pair_type (helpers.PreassignedODPairType): Type of preassigned OD pairs to use in the analysis.
             network_data_source (str, layer): Catalog path, layer, or URL for the input network dataset
             travel_mode (str, travel mode): Travel mode object, name, or json string representation
             time_units (str): String representation of time units
@@ -70,14 +75,24 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             chunk_size (int): Maximum number of origin-destination pairs that can be in one chunk
             max_processes (int): Maximum number of allowed parallel processes
             output_routes (str): Catalog path to the output routes feature class
+            assigned_dest_field (str): Field in the input origins with the assigned destination ID. Only relevant for
+                the one-to-one pair type.
+            pair_table (str, table view): Catalog path or TableView object to an ArcGIS table defining preassigned
+                origin-destination pairs. Only relevant for the many-to-many pair type.
+            pair_table_origin_id_field (str): Name of the field in pair_table defining origin IDs. Only relevant for the
+                many-to-many pair type.
+            pair_table_dest_id_field (str): Name of the field in pair_table defining destination IDs. Only relevant for
+                the many-to-many pair type.
             time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                  to use. Defaults to None.
             precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
                 inputs. Defaults to True. Should be false if the network_data_source is a service.
             sort_origins (bool, optional): Whether to sort the origins by assigned destination ID. Defaults to True.
+                Only relevant for the one-to-one pair type.
             reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
-                destination to origin instead of origin to destination. Defaults to False.
+                destination to origin instead of origin to destination. Defaults to False. Only relevant for the
+                one-to-one pair type.
         """
         self.origins = origins
         self.origin_id_field = origin_id_field
@@ -118,7 +133,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.origin_ids = []  # Populated during validation
         self.destination_ids = []  # Populated during validation
 
-    def _validate_inputs(self):
+    def _validate_inputs(self):  # pylint: disable=too-many-statements, too-many-branches
         """Validate the Route inputs."""
         # Validate input numerical values
         if self.chunk_size < 1:
@@ -281,9 +296,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     def _validate_pair_table(self):
         """Validate the pair table assigning origins to destinations.
 
-        Raises: # TODO
-            ValueError: If the field does not exist in the origins dataset
-            ValueError: If all origins are assigned to invalid destinations
+        Raises:
+            ValueError: If the designated origin ID field or destination ID field does not exist in the pair table
         """
         # Check if the origin and destination ID fields exist
         field_names = [f.name for f in arcpy.ListFields(self.pair_table)]
@@ -376,7 +390,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         field_mappings.addFieldMap(new_fm)
         return field_mappings, new_field_name
 
-    def _preprocess_od_pairs(self):
+    def _preprocess_od_pairs(self):  # pylint: disable=too-many-locals, too-many-statements, too-many-branches
         """Preprocess the OD pairs table and eliminate irrelevant data."""
         # Read the OD pairs into a dataframe for validation, preprocessing, and sorting
         pair_table_fields = arcpy.ListFields(self.pair_table)
@@ -459,7 +473,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             if isinstance(self.origin_ids[0], (int, float,)):
                 where_string = ", ".join([str(o) for o in bad_origins])
             else:
-            where_string = "'" + "', '".join([str(o) for o in bad_origins]) + "'"
+                where_string = "'" + "', '".join([str(o) for o in bad_origins]) + "'"
             where_clause = f"{self.origin_id_field} IN ({where_string})"
             temp_layer = "Irrelevant origins"
             arcpy.management.MakeFeatureLayer(self.output_origins, temp_layer, where_clause)
@@ -477,7 +491,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             if isinstance(self.destination_ids[0], (int, float,)):
                 where_string = ", ".join([str(d) for d in bad_dests])
             else:
-            where_string = "'" + "', '".join([str(d) for d in bad_dests]) + "'"
+                where_string = "'" + "', '".join([str(d) for d in bad_dests]) + "'"
             where_clause = f"{self.dest_id_field} IN ({where_string})"
             temp_layer = "Irrelevant destinations"
             arcpy.management.MakeFeatureLayer(self.output_destinations, temp_layer, where_clause)
