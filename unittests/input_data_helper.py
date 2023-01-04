@@ -136,7 +136,27 @@ def get_od_pair_csv(input_data_folder):
         ["06075026302", "Store_23"],
         ["06075026302", "Store_24"]
     ]
-    with open(od_pair_file, "w", newline='') as f:
+    with open(od_pair_file, "w", newline='', encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerows(od_pairs)
     return od_pair_file
+
+
+def get_od_pairs_fgdb_table(sf_gdb):
+    """Create the ODPairs fgdb input table in SanFrancisco.gdb for use in unit testing."""
+    od_pair_table = os.path.join(sf_gdb, "ODPairs")
+    if arcpy.Exists(od_pair_table):
+        # The OD pair table already exists, so no need to do anything.
+        return od_pair_table
+    input_data_folder = os.path.dirname(sf_gdb)
+    od_pair_csv = get_od_pair_csv(input_data_folder)
+    print(f"Creating {od_pair_table} for test input...")
+    arcpy.conversion.ExportTable(
+        od_pair_csv,
+        od_pair_table,
+        field_mapping=(
+            f'OriginID "OriginID" true true false 25 Text 0 0,First,#,{od_pair_csv},Field1,-1,-1;'
+            f'DestinationID "DestinationID" true true false 45 Text 0 0,First,#,{od_pair_csv},Field2,0,8000'
+        )
+    )
+    return od_pair_table
