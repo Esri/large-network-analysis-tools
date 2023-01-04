@@ -588,7 +588,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         update_precalculate_parameter(param_network, param_precalculate)
 
-        # Toggle parameter visiblity based on Origin-Destination Assignment Type
+        # Toggle parameter visibility based on Origin-Destination Assignment Type
         if not param_pair_type.hasBeenValidated and param_pair_type.altered and param_pair_type.valueAsText:
             try:
                 pair_type = helpers.convert_pair_type_str_to_enum(param_pair_type.valueAsText)
@@ -657,28 +657,31 @@ class SolveLargeAnalysisWithKnownPairs(object):
     def execute(self, parameters, messages):
         """The source code of the tool."""
         # Initialize the solver class
-        time_of_day = parameters[12].value
+        time_of_day = parameters[16].value
         if time_of_day:
             time_of_day = time_of_day.strftime(helpers.DATETIME_FORMAT)
-        ## TODO
         rt_solver = RoutePairSolver(
             parameters[0].value,  # origins
             parameters[1].valueAsText,  # unique origin ID field
-            parameters[2].valueAsText,  # assigned destination field
-            parameters[3].value,  # destinations
-            parameters[4].valueAsText,  # unique destination ID field
-            get_catalog_path(parameters[5]),  # network
-            parameters[6].value,  # travel mode
-            parameters[7].valueAsText,  # time units
-            parameters[8].valueAsText,  # distance units
-            parameters[9].value,  # chunk size
-            parameters[10].value,  # max processes
-            parameters[11].valueAsText,  # output routes
+            parameters[2].value,  # destinations
+            parameters[3].valueAsText,  # unique destination ID field
+            helpers.convert_pair_type_str_to_enum(parameters[4].valueAsText),  # pair type
+            get_catalog_path(parameters[9]),  # network
+            parameters[10].value,  # travel mode
+            parameters[11].valueAsText,  # time units
+            parameters[12].valueAsText,  # distance units
+            parameters[13].value,  # chunk size
+            parameters[14].value,  # max processes
+            parameters[15].valueAsText,  # output routes
+            parameters[5].valueAsText,  # assigned destination field
+            parameters[6].value,  # pair table
+            parameters[7].valueAsText,  # pair table origin ID field
+            parameters[8].valueAsText,  # pair table destination ID field
             time_of_day,  # time of day
-            get_catalog_path_multivalue(parameters[13]),  # barriers
-            parameters[14].value,  # Should precalculate network locations
-            parameters[15].value,  # Should sort origins
-            parameters[16].value  # Reverse direction of travel
+            get_catalog_path_multivalue(parameters[17]),  # barriers
+            parameters[18].value,  # Should precalculate network locations
+            parameters[19].value,  # Should sort origins
+            parameters[20].value  # Reverse direction of travel
         )
 
         # Solve the OD Cost Matrix analysis
@@ -726,7 +729,7 @@ def get_catalog_path_multivalue(param):
         # If the value is a layer object, get its data source (catalog path)
         if hasattr(val, "dataSource"):
             catalog_paths.append(val.dataSource)
-        # Otherwise, it's probably already a string catalog path. The only way to get it is to retrive it from the
+        # Otherwise, it's probably already a string catalog path. The only way to get it is to retrieve it from the
         # valueAsText string that we split up above.
         else:
             catalog_paths.append(string_values[idx])
