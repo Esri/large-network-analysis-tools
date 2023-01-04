@@ -1,14 +1,17 @@
-"""Compute a large multi-route analysis by chunking the input origins
-and their assigned destinations and solving in parallel. Write outputs to
-a single combined feature class.
+"""Compute a large multi-route analysis by chunking the preassigned origin-destination pairs and solving in parallel.
+
+Multiple cases are supported:
+- one-to-one: A field in the input origins table indicates which destination the origin is assigned to
+- many-to-many: A separate table defines a list of origin-destination pairs. A single origin may be assigned to multiple
+    destinations.
+
+The outputs are written to a single combined feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
-This script is intended to be called as a subprocess from the
-solve_large_route_pair_analysis.py script so that it can launch parallel
-processes with concurrent.futures. It must be called as a subprocess
-because the main script tool process, when running
-within ArcGIS Pro, cannot launch parallel subprocesses on its own.
+This script is intended to be called as a subprocess from the solve_large_route_pair_analysis.py script so that it can
+launch parallel processes with concurrent.futures. It must be called as a subprocess because the main script tool
+process, when running within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
 
@@ -34,9 +37,9 @@ import time
 import datetime
 import traceback
 import argparse
-import pandas as pd
 from math import ceil
 from distutils.util import strtobool
+import pandas as pd
 
 import arcpy
 
@@ -259,7 +262,12 @@ class Route:  # pylint:disable = too-many-instance-attributes
         )
 
     def _get_od_pairs_for_chunk(self, chunk_definition):
-        """Retrieve a list of OD pairs included in this chunk."""
+        """Retrieve a list of OD pairs included in this chunk.
+
+        Args:
+            chunk_definition (list): A list of [chunk starting row number, chunk size] indicating which records to
+                retrieve from the OD pair table.
+        """
         # Read the relevant rows from the CSV
         chunk_num, chunk_size = chunk_definition
         # Explicitly set data types
@@ -311,8 +319,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
         num_dests = int(arcpy.management.GetCount(self.input_destinations_layer).getOutput(0))
         self.logger.debug(f"Number of destinations selected: {num_dests}")
 
-    def _insert_stops_one_to_one(self):
-        """Insert the origins and destinations as stops for the Route analysis."""
+    def _insert_stops_one_to_one(self):  # pylint: disable=too-many-locals
+        """Insert the origins and destinations as Stops for the Route analysis for the one-to-one case."""
         # Use an insertCursor to insert Stops into the Route analysis
         destinations = {}
         destination_rows = []
@@ -371,13 +379,13 @@ class Route:  # pylint:disable = too-many-instance-attributes
         """Insert each predefined OD pair into the Route analysis for the many-to-many case."""
         # Store data of the relevant origins and destinations in dictionaries for quick lookups and reuse
         o_data = {}  # {Origin ID: [Shape, transferred fields]}
-        for row in arcpy.da.SearchCursor(
+        for row in arcpy.da.SearchCursor(  # pylint: disable=no-member
             self.input_origins_layer,
             [self.origin_id_field, "SHAPE@"] + self.origin_transfer_fields
         ):
             o_data[row[0]] = row[1:]
         d_data = {}  # {Destination ID: [Shape, transferred fields]}
-        for row in arcpy.da.SearchCursor(
+        for row in arcpy.da.SearchCursor(  # pylint: disable=no-member
             self.input_destinations_layer,
             [self.dest_id_field, "SHAPE@"] + self.destination_transfer_fields
         ):
@@ -417,11 +425,12 @@ class Route:  # pylint:disable = too-many-instance-attributes
                 route_name = f"{origin_id} - {dest_id}"
                 icur.insertRow((route_name, 2, dest_id) + dest_data)
 
-    def solve(self, chunk_definition):  # pylint: disable=too-many-locals, too-many-statements
-        """Create and solve a Route analysis for the designated chunk of origins and their assigned destinations.
+    def solve(self, chunk_definition):  # pylint: disable=too-many-locals, too-many-statements, too-many-branches
+        """Create and solve a Route analysis for the designated preassigned origin-destination pairs.
 
         Args:
-            chunk_definition (list): ObjectID range to select from the input origins  ## TODO
+            chunk_definition (list): For one-to-one, the ObjectID range to select from the input origins. For
+                many-to-many, a list of [chunk starting row number, chunk size].
         """
         # Select the inputs to process
         if self.pair_type is helpers.PreassignedODPairType.one_to_one:
@@ -571,11 +580,12 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
 
 def solve_route(inputs, chunk):
-    """Solve a Route analysis for the given inputs for the given chunk of ObjectIDs.
+    """Solve a Route analysis for the given inputs for the given chunk of preassigned OD pairs.
 
     Args:
         inputs (dict): Dictionary of keyword inputs suitable for initializing the Route class
-        chunk (list): Represents the ObjectID ranges to select from the origins when solving the Route.
+        chunk (list): For one-to-one, the ObjectID range to select from the input origins. For many-to-many, a list of
+            [chunk starting row number, chunk size].
 
     Returns:
         dict: Dictionary of results from the Route class
@@ -590,13 +600,13 @@ def solve_route(inputs, chunk):
     return rt.job_result
 
 
-class ParallelRoutePairCalculator:
+class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attributes, too-few-public-methods
     """Solves a large Route by chunking the problem, solving in parallel, and combining results."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, pair_type_str, origins, origin_id_field, destinations, dest_id_field,
         network_data_source, travel_mode, time_units, distance_units,
-        max_routes, max_processes, out_routes, reverse_direction, scratch_folder,
+        max_routes, max_processes, out_routes, scratch_folder, reverse_direction=False,
         assigned_dest_field=None, od_pair_table=None, time_of_day=None, barriers=None
     ):
         """Compute Routes between origins and their assigned destinations in parallel and combine results.
@@ -605,9 +615,10 @@ class ParallelRoutePairCalculator:
         This class assumes that the inputs have already been pre-processed and validated.
 
         Args:
+            pair_type_str (str): String representation of the preassigned origin-destination pair type. Must match one
+                of the enum names in helpers.PreassignedODPairType.
             origins (str, layer): Catalog path or layer for the input origins
             origin_id_field (str): Unique ID field of the input origins
-            assigned_dest_field (str): Field in the input origins with the assigned destination ID
             destinations (str, layer): Catalog path or layer for the input destinations
             dest_id_field: (str): Unique ID field of the input destinations
             network_data_source (str, layer): Catalog path, layer, or URL for the input network dataset
@@ -617,12 +628,17 @@ class ParallelRoutePairCalculator:
             max_routes (int): Maximum number of origin-destination pairs that can be in one chunk
             max_processes (int): Maximum number of allowed parallel processes
             out_routes (str): Catalog path to the output routes feature class
-            reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
-                destination to origin instead of origin to destination. Defaults to False.
             scratch_folder (str): Catalog path to the folder where intermediate outputs will be written.
-            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
+            reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
+                destination to origin instead of origin to destination. Defaults to False. Only applicable for the
+                one_to_one pair type.
+            assigned_dest_field (str): Field in the input origins with the assigned destination ID
+            od_pair_table (str): CSV file containing preassigned origin-destination pairs. Must have no headers. The
+                first column contains origin ID, and the second column contains destination IDs.
+            time_of_day (str): String representation of the start time for the analysis (required format defined in
+                helpers.DATETIME_FORMAT)
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
-                 to use. Defaults to None.
+                to use. Defaults to None.
         """
         pair_type = helpers.PreassignedODPairType[pair_type_str]
         self.origins = origins
@@ -670,7 +686,7 @@ class ParallelRoutePairCalculator:
         elif pair_type is helpers.PreassignedODPairType.many_to_many:
             # Chunks are of the format [chunk_num, chunk_size]
             num_od_pairs = 0
-            with open(od_pair_table, "r") as f:
+            with open(od_pair_table, "r", encoding="utf-8") as f:
                 for _ in f:
                     num_od_pairs += 1
             num_chunks = ceil(num_od_pairs / max_routes)

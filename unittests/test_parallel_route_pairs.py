@@ -17,9 +17,9 @@ import sys
 import os
 import datetime
 import subprocess
-import pandas as pd
 import unittest
 from copy import deepcopy
+import pandas as pd
 import arcpy
 import portal_credentials
 import input_data_helper
@@ -213,7 +213,9 @@ class TestParallelRoutePairs(unittest.TestCase):
         route_fields = [f.name for f in arcpy.ListFields(rt.job_result["outputRoutes"])]
         self.assertIn("OriginUniqueID", route_fields, "Routes output missing OriginUniqueID field.")
         self.assertIn("DestinationUniqueID", route_fields, "Routes output missing DestinationUniqueID field.")
-        for row in arcpy.da.SearchCursor(rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]):
+        for row in arcpy.da.SearchCursor(  # pylint: disable=no-member
+            rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]
+        ):
             self.assertIsNotNone(row[0], "Null OriginUniqueID field value in output routes.")
             self.assertIsNotNone(row[1], "Null DestinationUniqueID field value in output routes.")
 
@@ -245,7 +247,9 @@ class TestParallelRoutePairs(unittest.TestCase):
         )
         expected_origin_ids = df_od_pairs[0].unique().tolist()
         expected_dest_ids = df_od_pairs[1].unique().tolist()
-        for row in arcpy.da.SearchCursor(rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]):
+        for row in arcpy.da.SearchCursor(  # pylint: disable=no-member
+            rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]
+        ):
             self.assertIsNotNone(row[0], "Null OriginUniqueID field value in output routes.")
             self.assertIn(row[0], expected_origin_ids, "OriginUniqueID does not match expected list of IDs.")
             self.assertIsNotNone(row[1], "Null DestinationUniqueID field value in output routes.")
@@ -271,7 +275,9 @@ class TestParallelRoutePairs(unittest.TestCase):
         route_fields = [f.name for f in arcpy.ListFields(rt.job_result["outputRoutes"])]
         self.assertIn("OriginUniqueID", route_fields, "Routes output missing OriginUniqueID field.")
         self.assertIn("DestinationUniqueID", route_fields, "Routes output missing DestinationUniqueID field.")
-        for row in arcpy.da.SearchCursor(rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]):
+        for row in arcpy.da.SearchCursor(  # pylint: disable=no-member
+            rt.job_result["outputRoutes"], ["OriginUniqueID", "DestinationUniqueID"]
+        ):
             self.assertIsNotNone(row[0], "Null OriginUniqueID field value in output routes.")
             self.assertIsNotNone(row[1], "Null DestinationUniqueID field value in output routes.")
 
