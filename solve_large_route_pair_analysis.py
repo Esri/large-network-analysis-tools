@@ -409,6 +409,17 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         })
         del rows
 
+        # Drop duplicates
+        num_pairs_initial = df_od_pairs.shape[0]
+        df_od_pairs.drop_duplicates(subset=columns, inplace=True)
+        num_pairs_final = df_od_pairs.shape[0]
+        if num_pairs_final < num_pairs_initial:
+            arcpy.AddWarning((
+                "Duplicate origin-destination pairs were found in the origin-destination pairs table "
+                f"{self.pair_table}. Duplicate pairs will be ignored. Only one route will be generated between a given "
+                "origin-destination pair."
+            ))
+
         # Drop rows if the origin or destination IDs aren't in the input origin or destination tables
         num_pairs_initial = df_od_pairs.shape[0]
         df_od_pairs = df_od_pairs[df_od_pairs[self.pair_table_origin_id_field].isin(self.origin_ids)]
@@ -435,17 +446,6 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                 f"{self.origin_id_field} in {self.origins} or the destinations unique ID field "
                 f"{self.dest_id_field} in {self.destinations}. These origin-destination pairs will be ignored in "
                 "the analysis."
-            ))
-
-        # Drop duplicates
-        num_pairs_initial = num_pairs_final
-        df_od_pairs.drop_duplicates(subset=columns, inplace=True)
-        num_pairs_final = df_od_pairs.shape[0]
-        if num_pairs_final < num_pairs_initial:
-            arcpy.AddWarning((
-                "Duplicate origin-destination pairs were found in the origin-destination pairs table "
-                f"{self.pair_table}. Duplicate pairs will be ignored. Only one route will be generated between a given "
-                "origin-destination pair."
             ))
 
         # Sort the OD pairs dataframe by origin ID or destination ID, whichever has fewest unique values
@@ -479,6 +479,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             arcpy.management.MakeFeatureLayer(self.output_origins, temp_layer, where_clause)
             arcpy.management.DeleteFeatures(temp_layer)
             if int(arcpy.management.GetCount(self.output_origins).getOutput(0)) <= 0:
+                # This will probably never happen because if none of the origins match the pair table, the checks
+                # above for the pair table dataframe would have already thrown an error.
                 err = (
                     f"None of the origins in {self.origins} are in the preassigned origin-destination pair table "
                     f"{self.pair_table}. Ensure that you have chosen the correct datasets and Origin ID fields."
@@ -497,6 +499,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             arcpy.management.MakeFeatureLayer(self.output_destinations, temp_layer, where_clause)
             arcpy.management.DeleteFeatures(temp_layer)
             if int(arcpy.management.GetCount(self.output_destinations).getOutput(0)) <= 0:
+                # This will probably never happen because if none of the origins match the pair table, the checks
+                # above for the pair table dataframe would have already thrown an error.
                 err = (
                     f"None of the destinations in {self.destinations} are in the preassigned origin-destination pair "
                     f"table {self.pair_table}. Ensure that you have chosen the correct datasets and Destination ID "
