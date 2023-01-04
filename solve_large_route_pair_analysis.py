@@ -117,7 +117,6 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         self.origin_ids = []  # Populated during validation
         self.destination_ids = []  # Populated during validation
-        self.df_od_pairs = None  # Populated during validation
 
     def _validate_inputs(self):
         """Validate the Route inputs."""
@@ -165,6 +164,11 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                     "When using a preassigned origin-destination pair table, the reverse direction option cannot "
                     "be used. Routes will be calculated from origins to destinations."))
                 self.reverse_direction = False
+            if self.should_sort_origins:
+                arcpy.AddWarning((
+                    "When using a preassigned origin-destination pair table, the Sort Origins by Assigned Destination"
+                    "option cannot be used."))
+                self.should_sort_origins = False
         else:
             err = f"Invalid preassigned OD pair type: {self.pair_type}"
             arcpy.AddError(err)
@@ -287,49 +291,6 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             arcpy.AddError(err)
             raise ValueError(err)
 
-        # Read the OD pairs into a dataframe for further validation and sorting
-        columns = [self.pair_table_origin_id_field, self.pair_table_dest_id_field]
-        ## TODO: Figure out data types
-        with arcpy.da.SearchCursor(self.pair_table, columns) as cur:  # pylint: disable=no-member
-            self.df_od_pairs = pd.DataFrame(cur, columns=columns)
-        # Drop rows if the origin or destination IDs aren't in the input origin or destination tables
-        num_pairs_initial = self.df_od_pairs.shape[0]
-        self.df_od_pairs = self.df_od_pairs[~self.df_od_pairs[self.pair_table_origin_id_field].isin(self.origin_ids)]
-        self.df_od_pairs = self.df_od_pairs[~self.df_od_pairs[self.pair_table_dest_id_field].isin(self.destination_ids)]
-        num_pairs_final = self.df_od_pairs.shape[0]
-        if num_pairs_final == 0:
-            err = (
-                "All origin-destination pairs in the preassigned origin-destination pair table "
-                f"{self.pair_table} have invalid values in either the Origin ID field "
-                f"{self.pair_table_origin_id_field} or Destination ID field {self.pair_table_dest_id_field} "
-                f"that do not correspond to values in the origins unique ID field {self.origin_id_field} in "
-                f"{self.origins} or the destinations unique ID field {self.dest_id_field} in "
-                f"{self.destinations}. Ensure that you have chosen the correct datasets and fields and that the "
-                "field types match."
-            )
-            arcpy.AddError(err)
-            raise ValueError(err)
-        if num_pairs_final < num_pairs_initial:
-            arcpy.AddWarning((
-                f"{num_pairs_initial - num_pairs_final} of {num_pairs_initial} origin-destination pairs in the "
-                f"preassigned origin-destination pair table {self.pair_table} have invalid values in either the Origin "
-                f"ID field {self.pair_table_origin_id_field} or Destination ID field "
-                f"{self.pair_table_dest_id_field} that do not correspond to values in the origins unique ID field "
-                f"{self.origin_id_field} in {self.origins} or the destinations unique ID field "
-                f"{self.dest_id_field} in {self.destinations}. These origin-destination pairs will be ignored in "
-                "the analysis."
-            ))
-        # Drop duplicates
-        num_pairs_initial = num_pairs_final
-        self.df_od_pairs.drop_duplicates(subset=columns, inplace=True)
-        num_pairs_final = self.df_od_pairs.shape[0]
-        if num_pairs_final < num_pairs_initial:
-            arcpy.AddWarning((
-                "Duplicate origin-destination pairs were found in the origin-destination pairs table "
-                f"{self.pair_table}. Duplicate pairs will be ignored. Only one route will be generated between a given "
-                "origin-destination pair."
-            ))
-
     def _validate_route_settings(self):
         """Validate Route settings by spinning up a dummy Route object.
 
@@ -409,9 +370,82 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         return field_mappings, new_field_name
 
     def _preprocess_od_pairs(self):
+        """Preprocess the OD pairs table and eliminate irrelevant data."""
+        # Read the OD pairs into a dataframe for validation, preprocessing, and sorting
+        pair_table_fields = arcpy.ListFields(self.pair_table)
+        origin_id_field_type = [f.type for f in pair_table_fields if f.name == self.pair_table_origin_id_field][0]
+        dest_id_field_type = [f.type for f in pair_table_fields if f.name == self.pair_table_dest_id_field][0]
+        columns = [self.pair_table_origin_id_field, self.pair_table_dest_id_field]
+        with arcpy.da.SearchCursor(self.pair_table, columns) as cur:  # pylint: disable=no-member
+            df_od_pairs = pd.DataFrame(
+                cur,
+                columns=columns,
+                dtype={
+                    self.pair_table_origin_id_field: helpers.PD_FIELD_TYPES[origin_id_field_type],
+                    self.pair_table_dest_id_field: helpers.PD_FIELD_TYPES[dest_id_field_type]
+                }
+            )
+
+        # Drop rows if the origin or destination IDs aren't in the input origin or destination tables
+        num_pairs_initial = df_od_pairs.shape[0]
+        df_od_pairs = df_od_pairs[~df_od_pairs[self.pair_table_origin_id_field].isin(self.origin_ids)]
+        df_od_pairs = df_od_pairs[~df_od_pairs[self.pair_table_dest_id_field].isin(self.destination_ids)]
+        num_pairs_final = df_od_pairs.shape[0]
+        if num_pairs_final == 0:
+            err = (
+                "All origin-destination pairs in the preassigned origin-destination pair table "
+                f"{self.pair_table} have invalid values in either the Origin ID field "
+                f"{self.pair_table_origin_id_field} or Destination ID field {self.pair_table_dest_id_field} "
+                f"that do not correspond to values in the origins unique ID field {self.origin_id_field} in "
+                f"{self.origins} or the destinations unique ID field {self.dest_id_field} in "
+                f"{self.destinations}. Ensure that you have chosen the correct datasets and fields and that the "
+                "field types match."
+            )
+            arcpy.AddError(err)
+            raise ValueError(err)
+        if num_pairs_final < num_pairs_initial:
+            arcpy.AddWarning((
+                f"{num_pairs_initial - num_pairs_final} of {num_pairs_initial} origin-destination pairs in the "
+                f"preassigned origin-destination pair table {self.pair_table} have invalid values in either the Origin "
+                f"ID field {self.pair_table_origin_id_field} or Destination ID field "
+                f"{self.pair_table_dest_id_field} that do not correspond to values in the origins unique ID field "
+                f"{self.origin_id_field} in {self.origins} or the destinations unique ID field "
+                f"{self.dest_id_field} in {self.destinations}. These origin-destination pairs will be ignored in "
+                "the analysis."
+            ))
+
+        # Drop duplicates
+        num_pairs_initial = num_pairs_final
+        df_od_pairs.drop_duplicates(subset=columns, inplace=True)
+        num_pairs_final = df_od_pairs.shape[0]
+        if num_pairs_final < num_pairs_initial:
+            arcpy.AddWarning((
+                "Duplicate origin-destination pairs were found in the origin-destination pairs table "
+                f"{self.pair_table}. Duplicate pairs will be ignored. Only one route will be generated between a given "
+                "origin-destination pair."
+            ))
+
+        # Sort the OD pairs dataframe by origin ID or destination ID, whichever has fewest unique values
+        num_unique_o = df_od_pairs[self.pair_table_origin_id_field].nunique()
+        num_unique_d = df_od_pairs[self.pair_table_dest_id_field].nunique()
+        if num_unique_d < num_unique_o:
+            sort_field = self.pair_table_dest_id_field
+        else:
+            sort_field = self.pair_table_origin_id_field
+        df_od_pairs.sort_values(sort_field, inplace=True)
+
+        # Write the final, updated OD pairs table to a CSV file
+        # The CSV must have origin ID, destination ID with no headers so it plays nicely with parallel_route_pairs.py.
+        df_od_pairs.to_csv(
+            self.output_pair_table,
+            columns=[self.pair_table_origin_id_field, self.pair_table_dest_id_field],  # Ensure exact ordering
+            index=False,
+            header=False
+        )
+
         # Drop origins and destinations that aren't in the pair table
         bad_origins = [
-            o for o in self.origin_ids if o not in list(self.df_od_pairs[self.pair_table_origin_id_field].unique())]
+            o for o in self.origin_ids if o not in list(df_od_pairs[self.pair_table_origin_id_field].unique())]
         if bad_origins:
             ## TODO: Deal with data types
             where_string = "'" + "', '".join([str(o) for o in bad_origins]) + "'"
@@ -419,8 +453,15 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             temp_layer = "Irrelevant origins"
             arcpy.management.MakeFeatureLayer(self.output_origins, temp_layer, where_clause)
             arcpy.management.DeleteFeatures(temp_layer)
+            if int(arcpy.management.GetCount(self.output_origins).getOutput(0)) <= 0:
+                err = (
+                    f"None of the origins in {self.origins} are in the preassigned origin-destination pair table "
+                    f"{self.pair_table}. Ensure that you have chosen the correct datasets and Origin ID fields."
+                )
+                arcpy.AddError(err)
+                raise ValueError(err)
         bad_dests = [
-            d for d in self.destination_ids if d not in list(self.df_od_pairs[self.pair_table_dest_id_field].unique())]
+            d for d in self.destination_ids if d not in list(df_od_pairs[self.pair_table_dest_id_field].unique())]
         if bad_dests:
             ## TODO: Deal with data types
             where_string = "'" + "', '".join([str(d) for d in bad_dests]) + "'"
@@ -428,43 +469,13 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             temp_layer = "Irrelevant destinations"
             arcpy.management.MakeFeatureLayer(self.output_destinations, temp_layer, where_clause)
             arcpy.management.DeleteFeatures(temp_layer)
-        ## TODO: Check for no rows?
-
-        # Spatially sort origins
-        if self.should_sort_origins:
-            shape_field = arcpy.Decribe(self.output_origins).shapeFieldName
-            sorted_origins = self.output_origins + "_Sorted"
-            try:
-                arcpy.management.Sort(self.output_origins, sorted_origins, [[shape_field, "ASCENDING"]], "PEANO")
-                self.output_origins = sorted_origins
-            except arcpy.ExecuteError:  # pylint:disable = no-member
-                msgs = arcpy.GetMessages(2)
-                if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
-                    arcpy.AddWarning("Skipping spatial sorting because the Advanced license is not available.")
-                else:
-                    arcpy.AddWarning(f"Skipping spatial sorting because the tool failed. Messages:\n{msgs}")
-
-        # Sort the OD pair table according to the ordering of origins
-        # Get the list of origins included in the analysis in sorted order
-        ordered_origins = []
-        for row in arcpy.da.SearchCursor(self.output_origins, [self.origin_id_field]):  # pylint:disable = no-member
-            ordered_origins.append(row[0])
-        # Sort OD pairs dataframe by this order
-        # See https://towardsdatascience.com/how-to-do-a-custom-sort-on-pandas-dataframe-ac18e7ea5320
-        order_field = "origin_order"
-        df_sorting = pd.DataFrame({order_field: ordered_origins})
-        sort_mapping = df_sorting.reset_index().set_index(order_field)
-        self.df_od_pairs[order_field] = self.df_od_pairs[self.pair_table_origin_id_field].map(sort_mapping['index'])
-        self.df_od_pairs.sort_values(order_field, inplace=True)
-        self.df_od_pairs.drop([order_field], axis="columns", inplace=True)
-        # Write the final, updated OD pairs table to a CSV file
-        # The CSV must have origin ID, destination ID with no headers so it plays nicely with parallel_route_pairs.py.
-        self.df_od_pairs.to_csv(
-            self.output_pair_table,
-            columns=[self.pair_table_origin_id_field, self.pair_table_dest_id_field],  # Ensure exact ordering
-            index=False,
-            header=False
-        )
+            if int(arcpy.management.GetCount(self.output_destinations).getOutput(0)) <= 0:
+                err = (
+                    f"None of the origins in {self.destinations} are in the preassigned origin-destination pair table "
+                    f"{self.pair_table}. Ensure that you have chosen the correct datasets and Destination ID fields."
+                )
+                arcpy.AddError(err)
+                raise ValueError(err)
 
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
@@ -598,7 +609,12 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             return
 
         # Preprocess inputs
-        self._preprocess_inputs()
+        try:
+            self._preprocess_inputs()
+            arcpy.AddMessage("Inputs successfully preprocessed.")
+        except Exception:  # pylint: disable=broad-except
+            arcpy.AddError("Error preprocessing inputs.")
+            return
 
         # Solve the analysis
         self._execute_solve()
