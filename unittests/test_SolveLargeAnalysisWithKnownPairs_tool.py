@@ -1,7 +1,8 @@
-"""Unit tests for the SolveLargeAnalysisWithKnownPairs script tool. The test cases focus
-on making sure the tool parameters work correctly.
+"""Unit tests for the SolveLargeAnalysisWithKnownPairs script tool.
 
-Copyright 2022 Esri
+The test cases focus on making sure the tool parameters work correctly.
+
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -42,6 +43,7 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
         sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
         self.origins = input_data_helper.get_tract_centroids_with_store_id_fc(sf_gdb)
         self.destinations = os.path.join(sf_gdb, "Analysis", "Stores")
+        self.od_pairs_table = input_data_helper.get_od_pairs_fgdb_table(sf_gdb)
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         tms = arcpy.nax.GetTravelModes(self.local_nd)
         self.local_tm_time = tms["Driving Time"]
@@ -63,16 +65,20 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
         self.barriers = os.path.join(self.output_gdb, "Barriers")
         arcpy.management.Copy(os.path.join(sf_gdb, "Analysis", "CentralDepots"), self.barriers)
 
-    def test_run_tool(self):
-        """Test that the tool runs with all inputs."""
+    def test_run_tool_one_to_one(self):
+        """Test that the tool runs with all inputs for the one-to-one pair type."""
         # Run tool
-        out_routes = os.path.join(self.output_gdb, "OutRoutesLocal")
+        out_routes = os.path.join(self.output_gdb, "OutRoutesLocal_OneToOne")
         arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
             self.origins,
             "ObjectID",
-            "StoreID",
             self.destinations,
             "NAME",
+            helpers.PAIR_TYPES[0],
+            "StoreID",
+            None,
+            None,
+            None,
             self.local_nd,
             self.local_tm_time,
             "Minutes",
@@ -89,15 +95,49 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
         # Check results
         self.assertTrue(arcpy.Exists(out_routes))
 
+    def test_run_tool_many_to_many(self):
+        """Test that the tool runs with all inputs for the many-to-many pair type."""
+        # Run tool
+        out_routes = os.path.join(self.output_gdb, "OutRoutesLocal_ManyToMany")
+        arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
+            self.origins,
+            "ID",
+            self.destinations,
+            "NAME",
+            helpers.PAIR_TYPES[1],
+            None,
+            self.od_pairs_table,
+            "OriginID",
+            "DestinationID",
+            self.local_nd,
+            self.local_tm_time,
+            "Minutes",
+            "Miles",
+            20,  # chunk size
+            4,  # max processes
+            out_routes,
+            datetime.datetime(2022, 3, 29, 16, 45, 0),  # time of day
+            None,  # barriers
+            True,  # precalculate network locations
+            False,  # Sort origins
+            False  # Reverse direction of travel
+        )
+        # Check results
+        self.assertTrue(arcpy.Exists(out_routes))
+
     def test_run_tool_service(self):
-        """Test that the tool runs with a service as a network data source. Use reverse order"""
+        """Test that the tool runs with a service as a network data source. Use reverse order."""
         out_routes = os.path.join(self.output_gdb, "OutRoutesService")
         arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
             self.origins,
             "ID",
-            "StoreID",
             self.destinations,
             "NAME",
+            helpers.PAIR_TYPES[0],
+            "StoreID",
+            None,
+            None,
+            None,
             self.portal_nd,
             self.portal_tm,
             "Minutes",
@@ -122,9 +162,13 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
             arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
                 self.origins,
                 "ID",
-                "StoreID",
                 self.destinations,
                 "NAME",
+                helpers.PAIR_TYPES[0],
+                "StoreID",
+                None,
+                None,
+                None,
                 self.portal_nd,
                 self.portal_tm,
                 "Minutes",
@@ -134,8 +178,8 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
                 out_routes,
                 None,  # time of day
                 None,  # barriers
-                True,  # precalculate network locations
-                True,  # Sort origins
+                False,  # precalculate network locations
+                False,  # Sort origins
                 False  # Reverse direction of travel
             )
         expected_messages = [
