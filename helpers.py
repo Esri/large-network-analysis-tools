@@ -2,7 +2,7 @@
 
 This is a sample script users can modify to fit their specific needs.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -196,7 +196,7 @@ def convert_output_format_str_to_enum(output_format) -> OutputFormat:
 
 
 class PreassignedODPairType(enum.Enum):
-    """Enum definining the type of preassigned OD pairs being used in the analysis."""
+    """Enum defining the type of preassigned OD pairs being used in the analysis."""
 
     one_to_one = 1  # Each origin is assigned to exactly one destination.
     many_to_many = 2  # Origins and destinations may be reused. A separate table defines OD pairs.
