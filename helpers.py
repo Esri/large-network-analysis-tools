@@ -36,6 +36,9 @@ if arcgis_version >= "2.9":
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 DATETIME_FORMAT = "%Y%m%d %H:%M"  # Used for converting between datetime and string
 
+# Conversion between ArcGIS field types and python types for use when creating dataframes
+PD_FIELD_TYPES = {"String": str, "Single": float, "Double": float, "SmallInteger": int, "Integer": int, "OID": int}
+
 
 def is_nds_service(network_data_source):
     """Determine if the network data source points to a service.

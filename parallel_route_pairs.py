@@ -12,7 +12,7 @@ within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -134,9 +134,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.origin_unique_id_field_name = "OriginUniqueID"
         self.dest_unique_id_field_name = "DestinationUniqueID"
         self.od_pairs = None
-        # Conversion between ArcGIS field types and python types for use when creating dataframes
-        self.pd_field_types = {"String": str, "Single": float, "Double": float, "SmallInteger": int,
-                               "Integer": int, "OID": int}
 
         # Create a network dataset layer if needed
         if not self.is_service:
@@ -267,8 +264,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
         chunk_num, chunk_size = chunk_definition
         # Explicitly set data types
         dtypes = {
-            0: self.pd_field_types[self.origin_id_field_obj.type],
-            1: self.pd_field_types[self.dest_id_field_obj.type]
+            0: helpers.PD_FIELD_TYPES[self.origin_id_field_obj.type],
+            1: helpers.PD_FIELD_TYPES[self.dest_id_field_obj.type]
         }
         df_od_pairs = pd.read_csv(
             self.od_pair_table,
