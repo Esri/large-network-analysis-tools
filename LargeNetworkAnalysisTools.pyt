@@ -2,7 +2,7 @@
 
 This is a sample script users can modify to fit their specific needs.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -14,7 +14,7 @@ Copyright 2022 Esri
    limitations under the License.
 """
 # Disable a bunch of linter errors caused by the standard python toolbox class definitions that we cannot change
-# pylint: disable=invalid-name, useless-object-inheritance, too-few-public-methods, no-self-use, too-many-locals
+# pylint: disable=invalid-name, useless-object-inheritance, too-few-public-methods, too-many-locals
 # pylint: disable=useless-return, unused-argument
 import arcpy
 
