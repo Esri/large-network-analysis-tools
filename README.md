@@ -143,7 +143,8 @@ You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You j
 
 If you plan to use ArcGIS Online or a portal as your network data source, make sure you're connected to that portal in your current Pro session.
 
-![Screenshot of tool dialog](./images/SolveLargeAnalysisWithKnownODPairs_Dialog.png)
+![Screenshot of tool dialog](./images/SolveLargeAnalysisWithKnownODPairs_OneToOne_Dialog.png)
+![Screenshot of tool dialog](./images/SolveLargeAnalysisWithKnownODPairs_ManyToMany_Dialog.png)
 
 ### Running the tool from standalone Python
 
