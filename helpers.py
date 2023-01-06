@@ -34,6 +34,7 @@ if arcgis_version >= "2.9":
     # in software versions that support it.
     OUTPUT_FORMATS.append("Apache Arrow files")
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
+MAX_ALLOWED_MAX_PROCESSES = 61  # Windows limitation for concurrent.futures ProcessPoolExecutor
 DATETIME_FORMAT = "%Y%m%d %H:%M"  # Used for converting between datetime and string
 
 # Conversion between ArcGIS field types and python types for use when creating dataframes

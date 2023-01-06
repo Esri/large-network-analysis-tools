@@ -1,7 +1,7 @@
 """Unit tests for the SolveLargeODCostMatrix script tool. The test cases focus
 on making sure the tool parameters work correctly.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -253,44 +253,6 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         expected_messages = [
             "Failed to execute. Parameters are not valid.",
             "ERROR 000735: Output Folder: Value is required",
-            "Failed to execute (SolveLargeODCostMatrix)."
-        ]
-        actual_messages = str(ex.exception).strip().split("\n")
-        self.assertEqual(expected_messages, actual_messages)
-
-    def test_error_agol_max_processes(self):
-        """Test for correct error when max processes exceeds the limit for AGOL."""
-        with self.assertRaises(arcpy.ExecuteError) as ex:
-            # Run tool
-            out_od_lines = os.path.join(self.output_gdb, "Err_ODLines")
-            out_origins = os.path.join(self.output_gdb, "Err_Origins")
-            out_destinations = os.path.join(self.output_gdb, "Err_Destinations")
-            arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(  # pylint: disable=no-member
-                self.origins,
-                self.destinations,
-                self.portal_nd,
-                self.portal_tm,
-                "Minutes",
-                "Miles",
-                50,  # chunk size
-                500,  # max processes
-                out_origins,
-                out_destinations,
-                "Feature class",
-                out_od_lines,
-                None,
-                15,  # cutoff
-                1,  # number of destinations
-                None,  # time of day
-                None,  # barriers
-                True  # precalculate network locations
-            )
-        expected_messages = [
-            "Failed to execute. Parameters are not valid.",
-            (
-                f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
-                "ArcGIS Online services are used as the network data source."
-            ),
             "Failed to execute (SolveLargeODCostMatrix)."
         ]
         actual_messages = str(ex.exception).strip().split("\n")

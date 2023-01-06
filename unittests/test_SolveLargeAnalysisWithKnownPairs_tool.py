@@ -19,6 +19,7 @@ import sys
 import os
 import datetime
 import unittest
+from copy import deepcopy
 import arcpy
 import portal_credentials
 import input_data_helper
@@ -46,7 +47,8 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
         self.od_pairs_table = input_data_helper.get_od_pairs_fgdb_table(sf_gdb)
         self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
         tms = arcpy.nax.GetTravelModes(self.local_nd)
-        self.local_tm_time = tms["Driving Time"]
+        self.local_tm_name = "Driving Time"
+        self.local_tm_time = tms[self.local_tm_name]
         self.portal_nd = portal_credentials.PORTAL_URL  # Must be arcgis.com for test to work
         self.portal_tm = portal_credentials.PORTAL_TRAVEL_MODE
 
@@ -154,44 +156,66 @@ class TestSolveLargeAnalysisWithKnownPairsTool(unittest.TestCase):
         # Check results
         self.assertTrue(arcpy.Exists(out_routes))
 
-    def test_error_agol_max_processes(self):
-        """Test for correct error when max processes exceeds the limit for AGOL."""
-        with self.assertRaises(arcpy.ExecuteError) as ex:
-            # Run tool
-            out_routes = os.path.join(self.output_gdb, "Junk")
-            arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
-                self.origins,
-                "ID",
-                self.destinations,
-                "NAME",
-                helpers.PAIR_TYPES[0],
-                "StoreID",
-                None,
-                None,
-                None,
-                self.portal_nd,
-                self.portal_tm,
-                "Minutes",
-                "Miles",
-                50,  # chunk size
-                2000,  # max processes
-                out_routes,
-                None,  # time of day
-                None,  # barriers
-                False,  # precalculate network locations
-                False,  # Sort origins
-                False  # Reverse direction of travel
+    def test_error_max_processes(self):
+        """Test for correct errors max processes parameter.
+
+        This test primarily tests the shared cap_max_processes() function, so this is sufficient for testing all tools.
+        """
+        inputs = {
+            "Origins": self.origins,
+            "Origin_Unique_ID_Field": "ID",
+            "Destinations": self.destinations,
+            "Destination_Unique_ID_Field": "NAME",
+            "OD_Pair_Type": helpers.PAIR_TYPES[0],
+            "Assigned_Destination_Field": "StoreID",
+            "Network_Data_Source": self.local_nd,
+            "Travel_Mode": self.local_tm_name,
+            "Output_Routes": os.path.join(self.output_gdb, "Junk")
+        }
+
+        for bad_max_processes in [-2, 0]:
+            with self.subTest(Max_Processes=bad_max_processes):
+                with self.assertRaises(arcpy.ExecuteError) as ex:
+                    bad_inputs = deepcopy(inputs)
+                    bad_inputs["Max_Processes"] = bad_max_processes
+                    arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
+                        **bad_inputs
+                    )
+                expected_message = "The maximum number of parallel processes must be positive."
+                actual_messages = str(ex.exception).strip().split("\n")
+                self.assertIn(expected_message, actual_messages)
+
+        bad_max_processes = 5000
+        with self.subTest(Max_Processes=bad_max_processes):
+            with self.assertRaises(arcpy.ExecuteError) as ex:
+                bad_inputs = deepcopy(inputs)
+                bad_inputs["Max_Processes"] = bad_max_processes
+                arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
+                    **bad_inputs
+                )
+            expected_message = (
+                f"The maximum number of parallel processes cannot exceed {helpers.MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
             )
-        expected_messages = [
-            "Failed to execute. Parameters are not valid.",
-            (
+            actual_messages = str(ex.exception).strip().split("\n")
+            self.assertIn(expected_message, actual_messages)
+
+        bad_max_processes = 5
+        with self.subTest(Max_Processes=bad_max_processes, Network_Data_Source=self.portal_nd):
+            with self.assertRaises(arcpy.ExecuteError) as ex:
+                bad_inputs = deepcopy(inputs)
+                bad_inputs["Max_Processes"] = bad_max_processes
+                bad_inputs["Network_Data_Source"] = self.portal_nd
+                bad_inputs["Travel_Mode"] = self.portal_tm
+                arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(  # pylint: disable=no-member
+                    **bad_inputs
+                )
+            expected_message = (
                 f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
-                "ArcGIS Online services are used as the network data source."
-            ),
-            "Failed to execute (SolveLargeAnalysisWithKnownPairs)."
-        ]
-        actual_messages = str(ex.exception).strip().split("\n")
-        self.assertEqual(expected_messages, actual_messages)
+                "ArcGIS Online service is used as the network data source."
+            )
+            actual_messages = str(ex.exception).strip().split("\n")
+            self.assertIn(expected_message, actual_messages)
 
 
 if __name__ == '__main__':

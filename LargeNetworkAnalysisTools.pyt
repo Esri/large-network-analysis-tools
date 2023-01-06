@@ -16,6 +16,7 @@ Copyright 2023 Esri
 # Disable a bunch of linter errors caused by the standard python toolbox class definitions that we cannot change
 # pylint: disable=invalid-name, useless-object-inheritance, too-few-public-methods, too-many-locals
 # pylint: disable=useless-return, unused-argument
+from os import cpu_count
 import arcpy
 
 import helpers
@@ -271,10 +272,10 @@ class SolveLargeODCostMatrix(object):
         param_out_od_lines = parameters[11]
         param_out_folder = parameters[12]
 
-        # If the network data source is arcgis.com:
-        # - Cap max processes
-        cap_max_processes_for_agol(param_network, param_max_processes)
-        # - Show an error if attempting to use Arrow output, which is not supported at this time
+        # Validate max processes and cap it when necessary
+        cap_max_processes(param_network, param_max_processes)
+        # If the network data source is a service, show an error if attempting to use Arrow output, which is not
+        # supported at this time
         if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
             if param_output_format.altered and param_output_format.valueAsText:
                 output_format = helpers.convert_output_format_str_to_enum(param_output_format.valueAsText)
@@ -632,8 +633,8 @@ class SolveLargeAnalysisWithKnownPairs(object):
         param_pair_table_origin_id_field = parameters[7]
         param_pair_table_dest_id_field = parameters[8]
 
-        # If the network data source is arcgis.com, cap max processes
-        cap_max_processes_for_agol(param_network, param_max_processes)
+        # Validate max processes and cap it when necessary
+        cap_max_processes(param_network, param_max_processes)
 
         # Make the appropriate OD pair parameters required based on the user's choice of Origin-Destination Assignment
         # Type. Just require whichever parameters is enabled. Enablement is controlled in updateParameters() based on
@@ -751,17 +752,42 @@ def update_precalculate_parameter(param_network, param_precalculate):
             param_precalculate.enabled = True
 
 
-def cap_max_processes_for_agol(param_network, param_max_processes):
-    """If the network data source is arcgis.com, cap max processes.
+def cap_max_processes(param_network, param_max_processes):
+    """Validate max processes and cap it when required.
 
     Args:
         param_network (arcpy.Parameter): Parameter for the network data source
         param_max_processes (arcpy.Parameter): Parameter for the max processes
     """
-    if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
-        if param_max_processes.altered and param_max_processes.valueAsText:
-            if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
-                param_max_processes.setErrorMessage((
-                    f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
-                    "ArcGIS Online services are used as the network data source."
-                ))
+    if param_max_processes.altered and param_max_processes.valueAsText:
+        max_processes = param_max_processes.value
+        # Don't allow 0 or negative numbers
+        if max_processes <= 0:
+            param_max_processes.setErrorMessage("The maximum number of parallel processes must be positive.")
+            return
+        # Cap max processes to the limit allowed by the concurrent.futures module
+        if max_processes > helpers.MAX_ALLOWED_MAX_PROCESSES:
+            param_max_processes.setErrorMessage((
+                f"The maximum number of parallel processes cannot exceed {helpers.MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            ))
+            return
+        # If the network data source is arcgis.com, cap max processes
+        if (
+            max_processes > helpers.MAX_AGOL_PROCESSES and
+            param_network.altered and
+            param_network.valueAsText and
+            helpers.is_nds_service(param_network.valueAsText) and
+            "arcgis.com" in param_network.valueAsText
+        ):
+            param_max_processes.setErrorMessage((
+                f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
+                "ArcGIS Online service is used as the network data source."
+            ))
+            return
+        # Set a warning if the user has put more processes than the number of logical cores on their machine
+        if max_processes > cpu_count():
+            param_max_processes.setWarningMessage((
+                "The maximum number of parallel processes is greater than the number of logical cores "
+                f"({cpu_count()}) in your machine."
+            ))
