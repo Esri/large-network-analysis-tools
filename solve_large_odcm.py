@@ -7,7 +7,7 @@ This is a sample script users can modify to fit their specific needs.
 
 This script can be called from the script tool definition or from the command line.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -148,6 +148,13 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             raise ValueError(err)
         if self.max_processes < 1:
             err = "Maximum allowed parallel processes must be greater than 0."
+            arcpy.AddError(err)
+            raise ValueError(err)
+        if self.max_processes > helpers.MAX_ALLOWED_MAX_PROCESSES:
+            err = (
+                f"The maximum allowed parallel processes cannot exceed {helpers.MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            )
             arcpy.AddError(err)
             raise ValueError(err)
         if self.cutoff not in ["", None] and self.cutoff <= 0:
@@ -405,7 +412,11 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
 
     def solve_large_od_cost_matrix(self):
         """Solve the large OD Cost Matrix in parallel."""
+        # Set the progressor so the user is informed of progress
+        arcpy.SetProgressor("default")
+
         try:
+            arcpy.SetProgressorLabel("Validating inputs...")
             self._validate_inputs()
             arcpy.AddMessage("Inputs successfully validated.")
         except Exception:  # pylint: disable=broad-except
@@ -413,9 +424,11 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             return
 
         # Preprocess inputs
+        arcpy.SetProgressorLabel("Preprocessing inputs...")
         self._preprocess_inputs()
 
         # Solve the analysis
+        arcpy.SetProgressorLabel("Solving analysis in parallel...")
         self._execute_solve()
 
 

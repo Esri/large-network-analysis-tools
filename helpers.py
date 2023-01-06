@@ -2,7 +2,7 @@
 
 This is a sample script users can modify to fit their specific needs.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -20,16 +20,25 @@ import arcpy
 arcgis_version = arcpy.GetInstallInfo()["Version"]
 
 # Set some shared global variables that can be referenced from the other scripts
+ID_FIELD_TYPES = ["Short", "Long", "Double", "Single", "Text", "OID"]
 MSG_STR_SPLITTER = " | "
 DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
 TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
 OUTPUT_FORMATS = ["Feature class", "CSV files"]
+PAIR_TYPES = [
+    "A field in Origins defines the assigned Destination (one-to-one)",
+    "A separate table defines the origin-destination pairs (many-to-many)"
+]
 if arcgis_version >= "2.9":
     # The ODCostMatrix solver object's toArrowTable method was added at Pro 2.9. Allow this output format only
     # in software versions that support it.
     OUTPUT_FORMATS.append("Apache Arrow files")
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
+MAX_ALLOWED_MAX_PROCESSES = 61  # Windows limitation for concurrent.futures ProcessPoolExecutor
 DATETIME_FORMAT = "%Y%m%d %H:%M"  # Used for converting between datetime and string
+
+# Conversion between ArcGIS field types and python types for use when creating dataframes
+PD_FIELD_TYPES = {"String": str, "Single": float, "Double": float, "SmallInteger": int, "Integer": int, "OID": int}
 
 
 def is_nds_service(network_data_source):
@@ -163,7 +172,7 @@ class OutputFormat(enum.Enum):
     arrow = 3
 
 
-def convert_output_format_str_to_enum(output_format):
+def convert_output_format_str_to_enum(output_format) -> OutputFormat:
     """Convert a string representation of the desired output format to an enum.
 
     Args:
@@ -181,8 +190,37 @@ def convert_output_format_str_to_enum(output_format):
         return OutputFormat.csv
     if output_format.lower() == "apache arrow files":
         return OutputFormat.arrow
-    # If we got to this point, the input distance units were invalid.
+    # If we got to this point, the output format was invalid.
     err = f"Invalid output format: {output_format}"
+    arcpy.AddError(err)
+    raise ValueError(err)
+
+
+class PreassignedODPairType(enum.Enum):
+    """Enum defining the type of preassigned OD pairs being used in the analysis."""
+
+    one_to_one = 1  # Each origin is assigned to exactly one destination.
+    many_to_many = 2  # Origins and destinations may be reused. A separate table defines OD pairs.
+
+
+def convert_pair_type_str_to_enum(pair_type):
+    """Convert a string representation of the OD pair assignment type to an enum.
+
+    Args:
+        output_format (str): String representation of the output format
+
+    Raises:
+        ValueError: If the string cannot be parsed as a valid arcpy.nax.DistanceUnits enum value.
+
+    Returns:
+        OutputFormat: Output format enum value
+    """
+    if "one-to-one" in pair_type:
+        return PreassignedODPairType.one_to_one
+    if "many-to-many" in pair_type:
+        return PreassignedODPairType.many_to_many
+    # If we got to this point, the input OD pair assignment type was invalid.
+    err = f"Invalid OD pair assignment type: {pair_type}"
     arcpy.AddError(err)
     raise ValueError(err)
 

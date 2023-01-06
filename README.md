@@ -7,8 +7,8 @@ We have provided two python script tools designed to solve large network analysi
 
 ## Features
 The LargeNetworkAnalysisTools.pyt toolbox has two geoprocessing tools:
-* *Solve Large OD Cost Matrix* - solves a large origin destination cost matrix problem, and the results can be written to a feature class, a set of CSV files, or a set of Apache Arrow files
-* *Solve Large Analysis With Known OD Pairs* - generates routes between origins and preassigned destinations
+* *[Solve Large OD Cost Matrix](#Solve-Large-OD-Cost-Matrix-tool)* - solves a large origin destination cost matrix problem, and the results can be written to a feature class, a set of CSV files, or a set of Apache Arrow files
+* *[Solve Large Analysis With Known OD Pairs](#Solve-Large-Analysis-With-Known-OD-Pairs-tool)* - generates routes between origins and preassigned destinations
 
 ## Requirements
 
@@ -37,7 +37,7 @@ The *Solve Large OD Cost Matrix* tool can be used to solve a large [origin-desti
 - **Time Units** (Python: *Time_Units*) - The time units the output Total_Time field will be reported in.
 - **Distance Units** (Python: *Distance_Units*) - The distance units the output Total_Distance field will be reported in.
 - **Maximum Origins and Destinations per Chunk** (Python: *Max_Inputs_Per_Chunk*) - Defines the chunk size for parallel OD Cost Matrix calculations. For example, if you want to process a maximum of 1000 origins and 1000 destinations in a single chunk, set this parameter to 1000.
-- **Maximum Number of Parallel Processes** (Python: *Max_Processes*) - Defines the maximum number of parallel processes to run at once. Do not exceed the number of cores of your machine.
+- **Maximum Number of Parallel Processes** (Python: *Max_Processes*) - Defines the maximum number of parallel processes to run at once. Do not exceed the number of logical processors of your machine.
 - **Output Updated Origins** (Python: *Output_Updated_Origins*) - Path to the output feature class that will contain the updated origins, which may be spatially sorted and have added fields. The OriginOID field in the Output OD Lines Feature Class refers to the ObjectID of the Output Updated Origins and not the original input origins.
 - **Output Updated Destinations** (Python: *Output_Updated_Destinations*) - Path to the output feature class that will contain the updated destinations, which may be spatially sorted and have added fields. The DestinationOID field in the Output OD Lines Feature Class refers to the ObjectID of the Output Updated Destinations and not the original input destinations.
 - **Output OD Cost Matrix Format** (Python: *Output_Format*) - The desired output format for the OD Cost Matrix Lines. The available choices are:
@@ -98,32 +98,44 @@ The tool consists of several scripts:
 
 Why do we have both solve_large_odcm.py and parallel_odcm.py? Why do we call parallel_odcm.py as a subprocess? This is necessary to accommodate running this tool from the ArcGIS Pro UI. A script tool running in the ArcGIS Pro UI cannot directly call multiprocessing using concurrent.futures. We must instead spin up a subprocess, and the subprocess must spawn parallel processes for the calculations. Thus, solve_large_odcm.py does all the pre-processing in the main python process, but it passes the inputs to parallel_odcm.py as a separate subprocess, and that subprocess can, in turn, spin up parallel processes for the OD Cost Matrix calculations.
 
+Unit tests are available in the `unittests` folder and can help identify problems if you're editing the code.
+
 
 ## Solve Large Analysis With Known OD Pairs tool
 
-The *Solve Large Analysis With Known OD Pairs* tool can be used to calculate the travel time and distance and generate routes between known origin-destination pairs. It can calculate many routes simultaneously by chunking up the problem and solving in parallel.
+The *Solve Large Analysis With Known OD Pairs* tool can be used to calculate the travel time and distance and generate routes between preassigned origin-destination pairs. It can calculate many routes simultaneously by chunking up the problem and solving in parallel.
+
+Multiple types of origin-destination pairs are supported:
+- one-to-one: A field in the input origins table indicates which destination the origin is assigned to. Each origin can be assigned to only one destination.
+- many-to-many: A separate table defines the preassigned origin-destination pairs. A single origin may be assigned to multiple destinations.
 
 ### Solve Large Analysis With Known OD Pairs tool inputs
-- **Origins** (Python: *Origins*) - The feature class or layer containing the origins.  Your origins dataset must have a field populated with the ID of the destination the origin is assigned to.  If your feature class includes fields in the [Route solver object input Stops schema](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-input-data-types.htm#ESRI_SECTION1_D64F7E7B5196448B9B64CDD603BF8207), with the exception of "RouteName", "Sequence", and "LocationType", these fields will automatically be used in the analysis.
-- **Origin Unique ID Field** (Python: *Origin_Unique_ID_Field*) - A field in origins representing the origin's unique ID.
-- **Assigned Destination Field** (Python: *Assigned_Destination_Field*) - A field in origins indicating the ID of the destination each origin is assigned to. Any origin with a null value or a value that does not match a valid destination ID will be ignored in the analysis.
+- **Origins** (Python: *Origins*) - The feature class or layer containing the origins.  If your feature class includes fields in the [Route solver object input Stops schema](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-input-data-types.htm#ESRI_SECTION1_D64F7E7B5196448B9B64CDD603BF8207), with the exception of "RouteName", "Sequence", and "LocationType", these fields will automatically be used in the analysis.  For the one-to-one Origin-Destination Assignment Type, the origins dataset must have a field populated with the ID of the destination the origin is assigned to.
+- **Origin Unique ID Field** (Python: *Origin_Unique_ID_Field*) - A field in origins representing the origin's unique ID.  For the many-to-many Origin-Destination Assignment Type, the values in the Origin-Destination Pair Table's origin ID field must correspond to these unique origin IDs.
 - **Destinations** (Python: *Destinations*) - The feature class or layer containing the destinations. If your feature class includes fields in the [Route solver object input Stops schema](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-input-data-types.htm#ESRI_SECTION1_D64F7E7B5196448B9B64CDD603BF8207), with the exception of "RouteName", "Sequence", and "LocationType", these fields will automatically be used in the analysis.
-- **Destination Unique ID Field** (Python: *Destination_Unique_ID_Field*) -  A field in destinations representing the destination's unique ID.  The values in the origins table's Assigned Destination Field should correspond to these unique destination IDs.
+- **Destination Unique ID Field** (Python: *Destination_Unique_ID_Field*) - A field in destinations representing the destination's unique ID.  For the one-to-one Origin-Destination Assignment Type, the values in the origins table's Assigned Destination Field should correspond to these unique destination IDs.  For the many-to-many Origin-Destination Assignment Type, the values in the Origin-Destination Pair Table's destination ID field must correspond to these unique destination IDs.
+- **Origin-Destination Assignment Type** (Python: *OD_Pair_Type*) - A text string indicating which type of preassigned origin-destination pairs to use for the analysis.  The options are:
+  - `A field in Origins defines the assigned Destination (one-to-one)`
+  - `A separate table defines the origin-destination pairs (many-to-many)`
+- **Assigned Destination Field** (Python: *Assigned_Destination_Field*) - A field in Origins indicating the ID of the destination each origin is assigned to. Any origin with a null value or a value that does not match a valid destination ID will be ignored in the analysis.  This parameter is only applicable for the one-to-one Origin-Destination Assignment Type.
+- **Origin-Destination Pair Table** (Python: *OD_Pair_Table*) - A table or CSV file defining origin-destination pairs. The table must be populated with a column of origin IDs matching values in the Origin Unique ID Field of the Origins table and a column of destination IDs matching values in the Destination Unique ID Field of the Destinations table.  This parameter is only applicable for the many-to-many Origin-Destination Assignment Type.
+- **Origin ID Field in Origin-Destination Pair Table** (Python: *Pair_Table_Origin_Unique_ID_Field*) - The field name in the Origin-Destination Pair Table defining the origin IDs.  This parameter is only applicable for the many-to-many Origin-Destination Assignment Type.
+- **Destination ID Field in Origin-Destination Pair Table** (Python: *Pair_Table_Destination_Unique_ID_Field*) - The field name in the Origin-Destination Pair Table defining the destination IDs.  This parameter is only applicable for the many-to-many Origin-Destination Assignment Type.
 - **Network Data Source** (Python: *Network_Data_Source*) - Network dataset, network dataset layer, or portal URL to use when calculating the Route analysis.
 - **Travel Mode** (Python: *Travel_Mode*) - Network travel mode to use when calculating the Route analysis.
 - **Time Units** (Python: *Time_Units*) - The time units the output travel time will be reported in.
 - **Distance Units** (Python: *Distance_Units*) - The distance units the output travel distance will be reported in.
 - **Maximum OD Pairs per Chunk** (Python: *Max_Pairs_Per_Chunk*) - Defines the chunk size for parallel Route calculations, the number of origin-destination routes to calculate simultaneously. For example, if you want to process a maximum of 1000 origins and 1000 destinations in a single chunk, for a total of 1000 paired routes, set this parameter to 1000.
-- **Maximum Number of Parallel Processes** (Python: *Max_Processes*) - Defines the maximum number of parallel processes to run at once. Do not exceed the number of cores of your machine.
+- **Maximum Number of Parallel Processes** (Python: *Max_Processes*) - Defines the maximum number of parallel processes to run at once. Do not exceed the number of logical processors of your machine.
 - **Output Routes** (Python: *Output_Routes*) - Path to the output feature class that will contain the calculated routes between origins and their assigned destinations.  The schema of this feature class is described in the [arcpy documentation](https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route-output-data-types.htm#ESRI_SECTION1_9FF9489173C741DD95472F21B5AD8374). The feature class's schema matches that described for the Routes table in the documentation, plus two additional fields, "OriginUniqueID" and "DestinationUniqueID", containing the unique ID field values for the origin and destination this route connects.
 - **Time of Day** (Python: *Time_Of_Day*) - The start time of day for the analysis. No value indicates a time neutral analysis.
 - **Barriers** (Python: *Barriers*) - Point, line, or polygon barriers to use in the OD Cost Matrix analysis. This parameter is optional.
-- **Precalculate Network Locations** (Python: *Precalculate_Network_Locations*) - When you solve a network analysis, the input points must "locate" on the network used for the analysis. If multiple origins are assigned to the same destination, it is more efficient to calculate the network location fields for the destinations up front and re-use them.  Set this parameter to True to pre-calculate the network location fields. This is recommended unless:
+- **Precalculate Network Locations** (Python: *Precalculate_Network_Locations*) - When you solve a network analysis, the input points must "locate" on the network used for the analysis. If origins and destinations are used more than once, it is more efficient to calculate the network location fields up front and re-use them.  Set this parameter to True to pre-calculate the network location fields. This is recommended unless:
   - You are using a portal URL as the network data source. In this case, pre-calculating network locations is not possible, and the parameter is hidden.
   - You have already pre-calculated the network location fields using the network dataset and travel mode you are using for this analysis. In this case, you can save time by not precalculating them again.
   - Each destination has only one assigned origin. In this case, there is no efficiency gain in calculating the location fields in advance.
-- **Sort Origins by Assigned Destination** (Python: *Sort_Origins*) - A Boolean indicating whether to sort origins by their assigned destination prior to commencing the parallel solve.  Using sorted day will improve the efficiency of the solve slightly.  If your input data is already sorted, or if no origins are assigned to the same destinations, then sorting is not useful, and you should set this parameter to false.
-- **Reverse Direction of Travel** (Python: *Reverse_Direction*) - A Boolean indicating whether to reverse the direction of travel and calculate the route from the destination to the origin. The default is false.
+- **Sort Origins by Assigned Destination** (Python: *Sort_Origins*) - A Boolean indicating whether to sort origins by their assigned destination prior to commencing the parallel solve.  Using sorted data will improve the efficiency of the solve slightly.  If your input data is already sorted, or if no origins are assigned to the same destinations, then sorting is not useful, and you should set this parameter to false.  This parameter is only applicable for the one-to-one Origin-Destination Assignment Type.
+- **Reverse Direction of Travel** (Python: *Reverse_Direction*) - A Boolean indicating whether to reverse the direction of travel and calculate the route from the destination to the origin. The default is false.  This parameter is only applicable for the one-to-one Origin-Destination Assignment Type.
 
 ### Running the tool from ArcGIS Pro
 
@@ -131,7 +143,8 @@ You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You j
 
 If you plan to use ArcGIS Online or a portal as your network data source, make sure you're connected to that portal in your current Pro session.
 
-![Screenshot of tool dialog](./images/SolveLargeAnalysisWithKnownODPairs_Dialog.png)
+![Screenshot of tool dialog](./images/SolveLargeAnalysisWithKnownODPairs_OneToOne_Dialog.png)
+![Screenshot of tool dialog](./images/SolveLargeAnalysisWithKnownODPairs_ManyToMany_Dialog.png)
 
 ### Running the tool from standalone Python
 
@@ -146,10 +159,12 @@ Then, you can call the tool in your script:
 Here is the full tool signature:
 ```python
 arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(
-    Origins, Origin_Unique_ID_Field, Assigned_Destination_Field, Destinations, Destination_Unique_ID_Field,
+    Origins, Origin_Unique_ID_Field, Destinations, Destination_Unique_ID_Field,
+    OD_Pair_Type, Assigned_Destination_Field, OD_Pair_Table,
+    Pair_Table_Origin_Unique_ID_Field, Pair_Table_Destination_Unique_ID_Field,
     Network_Data_Source, Travel_Mode, Time_Units, Distance_Units,
     Max_Pairs_Per_Chunk, Max_Processes, Output_Routes,
-    Time_Of_Day, Barriers, Precalculate_Network_Locations, Sort_Origins
+    Time_Of_Day, Barriers, Precalculate_Network_Locations, Sort_Origins, Reverse_Direction
 )
 ```
 
@@ -166,6 +181,7 @@ The tool consists of several scripts:
 
 Why do we have both solve_large_route_pair_analysis.py and parallel_route_pairs.py? Why do we call parallel_route_pairs.py as a subprocess? This is necessary to accommodate running this tool from the ArcGIS Pro UI. A script tool running in the ArcGIS Pro UI cannot directly call multiprocessing using concurrent.futures. We must instead spin up a subprocess, and the subprocess must spawn parallel processes for the calculations. Thus, solve_large_route_pair_analysis.py does all the pre-processing in the main python process, but it passes the inputs to parallel_route_pairs.py as a separate subprocess, and that subprocess can, in turn, spin up parallel processes for the Route calculations.
 
+Unit tests are available in the `unittests` folder and can help identify problems if you're editing the code.
 
 ## Resources
 
@@ -183,7 +199,7 @@ Find a bug or want to request a new feature?  Please let us know by submitting a
 Esri welcomes contributions from anyone and everyone. Please see our [guidelines for contributing](https://github.com/esri/contributing).
 
 ## Licensing
-Copyright 2022 Esri
+Copyright 2023 Esri
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

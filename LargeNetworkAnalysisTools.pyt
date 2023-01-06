@@ -2,7 +2,7 @@
 
 This is a sample script users can modify to fit their specific needs.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -14,8 +14,9 @@ Copyright 2022 Esri
    limitations under the License.
 """
 # Disable a bunch of linter errors caused by the standard python toolbox class definitions that we cannot change
-# pylint: disable=invalid-name, useless-object-inheritance, too-few-public-methods, no-self-use, too-many-locals
+# pylint: disable=invalid-name, useless-object-inheritance, too-few-public-methods, too-many-locals
 # pylint: disable=useless-return, unused-argument
+from os import cpu_count
 import arcpy
 
 import helpers
@@ -271,10 +272,10 @@ class SolveLargeODCostMatrix(object):
         param_out_od_lines = parameters[11]
         param_out_folder = parameters[12]
 
-        # If the network data source is arcgis.com:
-        # - Cap max processes
-        cap_max_processes_for_agol(param_network, param_max_processes)
-        # - Show an error if attempting to use Arrow output, which is not supported at this time
+        # Validate max processes and cap it when necessary
+        cap_max_processes(param_network, param_max_processes)
+        # If the network data source is a service, show an error if attempting to use Arrow output, which is not
+        # supported at this time
         if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
             if param_output_format.altered and param_output_format.valueAsText:
                 output_format = helpers.convert_output_format_str_to_enum(param_output_format.valueAsText)
@@ -362,17 +363,7 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Input"
         )
         param_origin_id_field.parameterDependencies = [param_origins.name]
-        param_origin_id_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
-
-        param_assigned_dest_field = arcpy.Parameter(
-            displayName="Assigned Destination Field",
-            name="Assigned_Destination_Field",
-            datatype="Field",
-            parameterType="Required",
-            direction="Input"
-        )
-        param_assigned_dest_field.parameterDependencies = [param_origins.name]
-        param_assigned_dest_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
+        param_origin_id_field.filter.list = helpers.ID_FIELD_TYPES
 
         param_destinations = arcpy.Parameter(
             displayName="Destinations",
@@ -390,7 +381,55 @@ class SolveLargeAnalysisWithKnownPairs(object):
             direction="Input"
         )
         param_dest_id_field.parameterDependencies = [param_destinations.name]
-        param_dest_id_field.filter.list = ["Short", "Long", "Double", "Single", "Text", "OID"]
+        param_dest_id_field.filter.list = helpers.ID_FIELD_TYPES
+
+        param_pair_type = arcpy.Parameter(
+            displayName="Origin-Destination Assignment Type",
+            name="OD_Pair_Type",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_pair_type.filter.list = helpers.PAIR_TYPES
+        param_pair_type.value = helpers.PAIR_TYPES[0]
+
+        param_assigned_dest_field = arcpy.Parameter(
+            displayName="Assigned Destination Field",
+            name="Assigned_Destination_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_assigned_dest_field.parameterDependencies = [param_origins.name]
+        param_assigned_dest_field.filter.list = helpers.ID_FIELD_TYPES
+
+        param_pair_table = arcpy.Parameter(
+            displayName="Origin-Destination Pair Table",
+            name="OD_Pair_Table",
+            datatype="GPTableView",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_pair_table_origin_id_field = arcpy.Parameter(
+            displayName="Origin ID Field in Origin-Destination Pair Table",
+            name="Pair_Table_Origin_Unique_ID_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_pair_table_origin_id_field.parameterDependencies = [param_pair_table.name]
+        param_pair_table_origin_id_field.filter.list = helpers.ID_FIELD_TYPES
+
+        param_pair_table_dest_id_field = arcpy.Parameter(
+            displayName="Destination ID Field in Origin-Destination Pair Table",
+            name="Pair_Table_Destination_Unique_ID_Field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_pair_table_dest_id_field.parameterDependencies = [param_pair_table.name]
+        param_pair_table_dest_id_field.filter.list = helpers.ID_FIELD_TYPES
 
         param_network = arcpy.Parameter(
             displayName="Network Data Source",
@@ -506,21 +545,25 @@ class SolveLargeAnalysisWithKnownPairs(object):
         params = [
             param_origins,  # 0
             param_origin_id_field,  # 1
-            param_assigned_dest_field,  # 2
-            param_destinations,  # 3
-            param_dest_id_field,  # 4
-            param_network,  # 5
-            param_travel_mode,  # 6
-            param_time_units,  # 7
-            param_distance_units,  # 8
-            param_chunk_size,  # 9
-            param_max_processes,  # 10
-            param_out_routes,  # 11
-            param_time_of_day,  # 12
-            param_barriers,  # 13
-            param_precalculate_network_locations,  # 14
-            param_sort_origins,  # 15
-            param_reverse_direction  # 16
+            param_destinations,  # 2
+            param_dest_id_field,  # 3
+            param_pair_type,  # 4
+            param_assigned_dest_field,  # 5
+            param_pair_table,  # 6
+            param_pair_table_origin_id_field,  # 7
+            param_pair_table_dest_id_field,  # 8
+            param_network,  # 9
+            param_travel_mode,  # 10
+            param_time_units,  # 11
+            param_distance_units,  # 12
+            param_chunk_size,  # 13
+            param_max_processes,  # 14
+            param_out_routes,  # 15
+            param_time_of_day,  # 16
+            param_barriers,  # 17
+            param_precalculate_network_locations,  # 18
+            param_sort_origins,  # 19
+            param_reverse_direction  # 20
         ]
 
         return params
@@ -533,49 +576,113 @@ class SolveLargeAnalysisWithKnownPairs(object):
         """Modify the values and properties of parameters before internal
         validation is performed.  This method is called whenever a parameter
         has been changed."""
-        param_network = parameters[5]
-        param_precalculate = parameters[14]
+        param_network = parameters[9]
+        param_precalculate = parameters[18]
+        param_pair_type = parameters[4]
+        param_assigned_dest_field = parameters[5]
+        param_pair_table = parameters[6]
+        param_pair_table_origin_id_field = parameters[7]
+        param_pair_table_dest_id_field = parameters[8]
+        param_sort_origins = parameters[19]
+        param_reverse_direction = parameters[20]
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         update_precalculate_parameter(param_network, param_precalculate)
+
+        # Toggle parameter visibility based on Origin-Destination Assignment Type
+        if not param_pair_type.hasBeenValidated and param_pair_type.altered and param_pair_type.valueAsText:
+            try:
+                pair_type = helpers.convert_pair_type_str_to_enum(param_pair_type.valueAsText)
+                if pair_type is helpers.PreassignedODPairType.one_to_one:
+                    # Enable parameters associated with one-to-one
+                    param_assigned_dest_field.enabled = True
+                    param_sort_origins.enabled = True
+                    param_reverse_direction.enabled = True
+                    # Disable parameter associated with other pair types and reset their values
+                    param_pair_table.value = None
+                    param_pair_table.enabled = False
+                    param_pair_table_origin_id_field.value = None
+                    param_pair_table_origin_id_field.enabled = False
+                    param_pair_table_dest_id_field.value = None
+                    param_pair_table_dest_id_field.enabled = False
+                elif pair_type is helpers.PreassignedODPairType.many_to_many:
+                    # Enable parameter associated with many-to-many
+                    param_pair_table.enabled = True
+                    param_pair_table_origin_id_field.enabled = True
+                    param_pair_table_dest_id_field.enabled = True
+                    # Disable parameter associated with other pair types and reset their values
+                    param_assigned_dest_field.enabled = False
+                    param_assigned_dest_field.value = None
+                    param_sort_origins.enabled = False
+                    param_sort_origins.value = False
+                    param_reverse_direction.enabled = False
+                    param_reverse_direction.value = False
+            except Exception:  # pylint: disable=broad-except
+                # Invalid pair type.  Don't modify any parameters.
+                pass
 
         return
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
-        param_network = parameters[5]
-        param_max_processes = parameters[10]
+        param_network = parameters[9]
+        param_max_processes = parameters[14]
+        param_assigned_dest_field = parameters[5]
+        param_pair_table = parameters[6]
+        param_pair_table_origin_id_field = parameters[7]
+        param_pair_table_dest_id_field = parameters[8]
 
-        # If the network data source is arcgis.com, cap max processes
-        cap_max_processes_for_agol(param_network, param_max_processes)
+        # Validate max processes and cap it when necessary
+        cap_max_processes(param_network, param_max_processes)
+
+        # Make the appropriate OD pair parameters required based on the user's choice of Origin-Destination Assignment
+        # Type. Just require whichever parameters is enabled. Enablement is controlled in updateParameters() based on
+        # the user's choice in the Origin-Destination Assignment Type parameter.
+        # The 735 error code doesn't display an actual error but displays the little red star to indicate that the
+        # parameter is required.
+        for param in [
+            param_assigned_dest_field,
+            param_pair_table,
+            param_pair_table_origin_id_field,
+            param_pair_table_dest_id_field
+        ]:
+            if param.enabled:
+                if not param.valueAsText:
+                    param.setIDMessage("Error", 735, param.displayName)
+            else:
+                param.clearMessage()
 
         return
 
     def execute(self, parameters, messages):
         """The source code of the tool."""
         # Initialize the solver class
-        time_of_day = parameters[12].value
+        time_of_day = parameters[16].value
         if time_of_day:
             time_of_day = time_of_day.strftime(helpers.DATETIME_FORMAT)
         rt_solver = RoutePairSolver(
             parameters[0].value,  # origins
             parameters[1].valueAsText,  # unique origin ID field
-            parameters[2].valueAsText,  # assigned destination field
-            parameters[3].value,  # destinations
-            parameters[4].valueAsText,  # unique destination ID field
-            get_catalog_path(parameters[5]),  # network
-            parameters[6].value,  # travel mode
-            parameters[7].valueAsText,  # time units
-            parameters[8].valueAsText,  # distance units
-            parameters[9].value,  # chunk size
-            parameters[10].value,  # max processes
-            parameters[11].valueAsText,  # output routes
+            parameters[2].value,  # destinations
+            parameters[3].valueAsText,  # unique destination ID field
+            helpers.convert_pair_type_str_to_enum(parameters[4].valueAsText),  # pair type
+            get_catalog_path(parameters[9]),  # network
+            parameters[10].value,  # travel mode
+            parameters[11].valueAsText,  # time units
+            parameters[12].valueAsText,  # distance units
+            parameters[13].value,  # chunk size
+            parameters[14].value,  # max processes
+            parameters[15].valueAsText,  # output routes
+            parameters[5].valueAsText,  # assigned destination field
+            parameters[6].value,  # pair table
+            parameters[7].valueAsText,  # pair table origin ID field
+            parameters[8].valueAsText,  # pair table destination ID field
             time_of_day,  # time of day
-            get_catalog_path_multivalue(parameters[13]),  # barriers
-            parameters[14].value,  # Should precalculate network locations
-            parameters[15].value,  # Should sort origins
-            parameters[16].value  # Reverse direction of travel
+            get_catalog_path_multivalue(parameters[17]),  # barriers
+            parameters[18].value,  # Should precalculate network locations
+            parameters[19].value,  # Should sort origins
+            parameters[20].value  # Reverse direction of travel
         )
 
         # Solve the OD Cost Matrix analysis
@@ -623,7 +730,7 @@ def get_catalog_path_multivalue(param):
         # If the value is a layer object, get its data source (catalog path)
         if hasattr(val, "dataSource"):
             catalog_paths.append(val.dataSource)
-        # Otherwise, it's probably already a string catalog path. The only way to get it is to retrive it from the
+        # Otherwise, it's probably already a string catalog path. The only way to get it is to retrieve it from the
         # valueAsText string that we split up above.
         else:
             catalog_paths.append(string_values[idx])
@@ -645,17 +752,42 @@ def update_precalculate_parameter(param_network, param_precalculate):
             param_precalculate.enabled = True
 
 
-def cap_max_processes_for_agol(param_network, param_max_processes):
-    """If the network data source is arcgis.com, cap max processes.
+def cap_max_processes(param_network, param_max_processes):
+    """Validate max processes and cap it when required.
 
     Args:
         param_network (arcpy.Parameter): Parameter for the network data source
         param_max_processes (arcpy.Parameter): Parameter for the max processes
     """
-    if param_network.altered and param_network.valueAsText and helpers.is_nds_service(param_network.valueAsText):
-        if param_max_processes.altered and param_max_processes.valueAsText:
-            if "arcgis.com" in param_network.valueAsText and param_max_processes.value > helpers.MAX_AGOL_PROCESSES:
-                param_max_processes.setErrorMessage((
-                    f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
-                    "ArcGIS Online services are used as the network data source."
-                ))
+    if param_max_processes.altered and param_max_processes.valueAsText:
+        max_processes = param_max_processes.value
+        # Don't allow 0 or negative numbers
+        if max_processes <= 0:
+            param_max_processes.setErrorMessage("The maximum number of parallel processes must be positive.")
+            return
+        # Cap max processes to the limit allowed by the concurrent.futures module
+        if max_processes > helpers.MAX_ALLOWED_MAX_PROCESSES:
+            param_max_processes.setErrorMessage((
+                f"The maximum number of parallel processes cannot exceed {helpers.MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            ))
+            return
+        # If the network data source is arcgis.com, cap max processes
+        if (
+            max_processes > helpers.MAX_AGOL_PROCESSES and
+            param_network.altered and
+            param_network.valueAsText and
+            helpers.is_nds_service(param_network.valueAsText) and
+            "arcgis.com" in param_network.valueAsText
+        ):
+            param_max_processes.setErrorMessage((
+                f"The maximum number of parallel processes cannot exceed {helpers.MAX_AGOL_PROCESSES} when the "
+                "ArcGIS Online service is used as the network data source."
+            ))
+            return
+        # Set a warning if the user has put more processes than the number of logical cores on their machine
+        if max_processes > cpu_count():
+            param_max_processes.setWarningMessage((
+                "The maximum number of parallel processes is greater than the number of logical cores "
+                f"({cpu_count()}) in your machine."
+            ))

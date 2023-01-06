@@ -12,7 +12,7 @@ within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -842,11 +842,12 @@ class ParallelODCalculator:
         """Solve the OD Cost Matrix in chunks and post-process the results."""
         # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
-        # the optimized that are guaranteed to all fail. While we're doing this, check and store the field name that
-        # will represent costs in the output OD Lines table. We'll use this in post processing.
+        # that are guaranteed to all fail. While we're doing this, check and store the field name that  will represent
+        # costs in the output OD Lines table. We'll use this in post processing.
         self.optimized_cost_field = self._validate_od_settings()
 
         # Compute OD cost matrix in parallel
+        LOGGER.info(f"Beginning parallelized OD Cost Matrix solves ({self.total_jobs} chunks)")
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
         # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
         with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
@@ -1166,15 +1167,24 @@ def launch_parallel_od():
     parser.add_argument(
         "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
 
-    # Get arguments as dictionary.
-    args = vars(parser.parse_args())
+    try:
+        # Get arguments as dictionary.
+        args = vars(parser.parse_args())
 
-    # Initialize a parallel OD Cost Matrix calculator class
-    od_calculator = ParallelODCalculator(**args)
-    # Solve the OD Cost Matrix in parallel chunks
-    start_time = time.time()
-    od_calculator.solve_od_in_parallel()
-    LOGGER.info(f"Parallel OD Cost Matrix calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
+        # Initialize a parallel OD Cost Matrix calculator class
+        od_calculator = ParallelODCalculator(**args)
+        # Solve the OD Cost Matrix in parallel chunks
+        start_time = time.time()
+        od_calculator.solve_od_in_parallel()
+        LOGGER.info(
+            f"Parallel OD Cost Matrix calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
+
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.error("Error in parallelization subprocess.")
+        errs = traceback.format_exc().splitlines()
+        for err in errs:
+            LOGGER.error(err)
+        raise
 
 
 if __name__ == "__main__":

@@ -1,12 +1,17 @@
-"""Compute a large analysis with origins preassigned to specific destinations
-by chunking the inputs and solving in parallel. Write outputs into a single
-combined feature class.
+"""Compute a large analysis with preassigned origin-destination pairs by chunking the inputs and solving in parallel.
+
+Multiple cases are supported:
+- one-to-one: A field in the input origins table indicates which destination the origin is assigned to
+- many-to-many: A separate table defines a list of origin-destination pairs. A single origin may be assigned to multiple
+    destinations.
+
+The outputs are written to a single combined feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
 This script can be called from the script tool definition or from the command line.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -27,6 +32,7 @@ import argparse
 import subprocess
 from math import floor
 from distutils.util import strtobool
+import pandas as pd
 
 import arcpy
 
@@ -37,7 +43,7 @@ arcpy.env.overwriteOutput = True
 
 
 class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-public-methods
-    """Compute routes between pre-assigned origins and destinations pairs in parallel and combine results.
+    """Compute routes between preassigned origins and destinations pairs in parallel and combine results.
 
     This class preprocesses and validates inputs and then spins up a subprocess to do the actual Route
     calculations. This is necessary because the a script tool running in the ArcGIS Pro UI cannot directly call
@@ -48,19 +54,20 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
     """
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
+        self, origins, origin_id_field, destinations, dest_id_field, pair_type,
         network_data_source, travel_mode, time_units, distance_units,
-        chunk_size, max_processes, output_routes, time_of_day=None, barriers=None,
-        precalculate_network_locations=True, sort_origins=True, reverse_direction=False
+        chunk_size, max_processes, output_routes,
+        assigned_dest_field=None, pair_table=None, pair_table_origin_id_field=None, pair_table_dest_id_field=None,
+        time_of_day=None, barriers=None, precalculate_network_locations=True, sort_origins=True, reverse_direction=False
     ):
         """Initialize the RoutePairSolver class.
 
         Args:
             origins (str, layer): Catalog path or layer for the input origins
             origin_id_field (str): Unique ID field of the input origins
-            assigned_dest_field (str): Field in the input origins with the assigned destination ID
             destinations (str, layer): Catalog path or layer for the input destinations
             dest_id_field: (str): Unique ID field of the input destinations
+            pair_type (helpers.PreassignedODPairType): Type of preassigned OD pairs to use in the analysis.
             network_data_source (str, layer): Catalog path, layer, or URL for the input network dataset
             travel_mode (str, travel mode): Travel mode object, name, or json string representation
             time_units (str): String representation of time units
@@ -68,26 +75,40 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             chunk_size (int): Maximum number of origin-destination pairs that can be in one chunk
             max_processes (int): Maximum number of allowed parallel processes
             output_routes (str): Catalog path to the output routes feature class
+            assigned_dest_field (str): Field in the input origins with the assigned destination ID. Only relevant for
+                the one-to-one pair type.
+            pair_table (str, table view): Catalog path or TableView object to an ArcGIS table defining preassigned
+                origin-destination pairs. Only relevant for the many-to-many pair type.
+            pair_table_origin_id_field (str): Name of the field in pair_table defining origin IDs. Only relevant for the
+                many-to-many pair type.
+            pair_table_dest_id_field (str): Name of the field in pair_table defining destination IDs. Only relevant for
+                the many-to-many pair type.
             time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                  to use. Defaults to None.
             precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
                 inputs. Defaults to True. Should be false if the network_data_source is a service.
             sort_origins (bool, optional): Whether to sort the origins by assigned destination ID. Defaults to True.
+                Only relevant for the one-to-one pair type.
             reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
-                destination to origin instead of origin to destination. Defaults to False.
+                destination to origin instead of origin to destination. Defaults to False. Only relevant for the
+                one-to-one pair type.
         """
         self.origins = origins
         self.origin_id_field = origin_id_field
-        self.assigned_dest_field = assigned_dest_field
         self.destinations = destinations
         self.dest_id_field = dest_id_field
+        self.pair_type = pair_type
         self.network_data_source = network_data_source
         self.travel_mode = travel_mode
         self.time_units = time_units
         self.distance_units = distance_units
         self.chunk_size = chunk_size
         self.max_processes = max_processes
+        self.assigned_dest_field = assigned_dest_field
+        self.pair_table = pair_table
+        self.pair_table_origin_id_field = pair_table_origin_id_field
+        self.pair_table_dest_id_field = pair_table_dest_id_field
         self.time_of_day = time_of_day
         self.time_of_day_dt = None  # Set during validation
         self.barriers = barriers if barriers else []
@@ -101,16 +122,18 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "rt_" + self.unique_id)  # pylint: disable=no-member
         arcpy.AddMessage(f"Intermediate outputs will be written to {self.scratch_folder}.")
         self.scratch_gdb = os.path.join(self.scratch_folder, "Inputs.gdb")
-        self.output_origins = os.path.join(self.scratch_gdb, "Origins")  # pylint: disable=no-member
-        self.output_destinations = os.path.join(self.scratch_gdb, "Destinations")  # pylint: disable=no-member
+        self.output_origins = os.path.join(self.scratch_gdb, "Origins")
+        self.output_destinations = os.path.join(self.scratch_gdb, "Destinations")
+        self.output_pair_table = os.path.join(self.scratch_folder, "ODPairs.csv")
 
         self.is_service = helpers.is_nds_service(self.network_data_source)
         self.service_limits = None  # Set during validation
         self.is_agol = False  # Set during validation
 
+        self.origin_ids = []  # Populated during validation
         self.destination_ids = []  # Populated during validation
 
-    def _validate_inputs(self):
+    def _validate_inputs(self):  # pylint: disable=too-many-statements, too-many-branches
         """Validate the Route inputs."""
         # Validate input numerical values
         if self.chunk_size < 1:
@@ -119,6 +142,13 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             raise ValueError(err)
         if self.max_processes < 1:
             err = "Maximum allowed parallel processes must be greater than 0."
+            arcpy.AddError(err)
+            raise ValueError(err)
+        if self.max_processes > helpers.MAX_ALLOWED_MAX_PROCESSES:
+            err = (
+                f"The maximum allowed parallel processes cannot exceed {helpers.MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            )
             arcpy.AddError(err)
             raise ValueError(err)
 
@@ -130,14 +160,61 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                 arcpy.AddError(f"Could not convert input time of day to datetime: {str(ex)}")
                 raise ex
 
+        # Validate that correct parameters are included based on pair type
+        param_error = "%s is required when preassigned OD pair type is %s"
+        if isinstance(self.pair_type, str):  # Likely came from the CLI
+            try:
+                self.pair_type = helpers.PreassignedODPairType[self.pair_type]
+            except KeyError:
+                err = f"Invalid preassigned OD pair type: {self.pair_type}"
+                arcpy.AddError(err)
+                raise ValueError(err)
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            if not self.assigned_dest_field:
+                err = param_error % ("Assigned destination field", helpers.PreassignedODPairType.one_to_one.name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            pair_type_name = helpers.PreassignedODPairType.many_to_many.name
+            if not self.pair_table:
+                err = param_error % ("Origin-destination pair table", pair_type_name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+            if not self.pair_table_origin_id_field:
+                err = param_error % ("Origin-destination pair table Origin ID field", pair_type_name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+            if not self.pair_table_dest_id_field:
+                err = param_error % ("Origin-destination pair table Destination ID field", pair_type_name)
+                arcpy.AddError(err)
+                raise ValueError(err)
+            if self.reverse_direction:
+                arcpy.AddWarning((
+                    "When using a preassigned origin-destination pair table, the reverse direction option cannot "
+                    "be used. Routes will be calculated from origins to destinations."))
+                self.reverse_direction = False
+            if self.should_sort_origins:
+                arcpy.AddWarning((
+                    "When using a preassigned origin-destination pair table, the Sort Origins by Assigned Destination s"
+                    "option cannot be used."))
+                self.should_sort_origins = False
+        else:
+            err = f"Invalid preassigned OD pair type: {self.pair_type}"
+            arcpy.AddError(err)
+            raise ValueError(err)
+
         # Validate origins, destinations, and barriers
         helpers.validate_input_feature_class(self.origins)
         helpers.validate_input_feature_class(self.destinations)
         for barrier_fc in self.barriers:
             helpers.validate_input_feature_class(barrier_fc)
-        self._validate_unique_id_field(self.origins, self.origin_id_field)
+        self.origin_ids = self._validate_unique_id_field(self.origins, self.origin_id_field)
         self.destination_ids = self._validate_unique_id_field(self.destinations, self.dest_id_field)
-        self._validate_assigned_dest_field()
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            self._validate_assigned_dest_field()
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            helpers.validate_input_feature_class(self.pair_table)
+            self._validate_pair_table()
 
         # Validate network
         self.network_data_source = helpers.validate_network_data_source(self.network_data_source)
@@ -175,7 +252,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             err = f"Unique ID field {id_field} does not exist in dataset {input_features}."
             arcpy.AddError(err)
             raise ValueError(err)
-        # Populate a list of destination IDs and verify that they are unique
+        # Populate a list of IDs and verify that they are unique
         ids = []
         for row in arcpy.da.SearchCursor(input_features, [id_field]):  # pylint:disable = no-member
             ids.append(row[0])
@@ -222,6 +299,25 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                     f"{num_invalid} of {num_total} origins have invalid values in the assigned destination field "
                     f"{self.assigned_dest_field} that do not correspond to values in the destinations unique ID field "
                     f"{self.dest_id_field} in {self.destinations}. The origins will be ignored in the analysis."))
+
+    def _validate_pair_table(self):
+        """Validate the pair table assigning origins to destinations.
+
+        Raises:
+            ValueError: If the designated origin ID field or destination ID field does not exist in the pair table
+        """
+        # Check if the origin and destination ID fields exist
+        field_names = [f.name for f in arcpy.ListFields(self.pair_table)]
+        if self.pair_table_origin_id_field not in field_names:
+            err = (f"Origin-destination pair table Origin ID field {self.pair_table_origin_id_field} does not exist in "
+                   f"{self.pair_table}.")
+            arcpy.AddError(err)
+            raise ValueError(err)
+        if self.pair_table_dest_id_field not in field_names:
+            err = (f"Origin-destination pair table Destination ID field {self.pair_table_dest_id_field} does not "
+                   f"exist in {self.pair_table}.")
+            arcpy.AddError(err)
+            raise ValueError(err)
 
     def _validate_route_settings(self):
         """Validate Route settings by spinning up a dummy Route object.
@@ -301,6 +397,125 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         field_mappings.addFieldMap(new_fm)
         return field_mappings, new_field_name
 
+    def _preprocess_od_pairs(self):  # pylint: disable=too-many-locals, too-many-statements, too-many-branches
+        """Preprocess the OD pairs table and eliminate irrelevant data."""
+        # Read the OD pairs into a dataframe for validation, preprocessing, and sorting
+        pair_table_fields = arcpy.ListFields(self.pair_table)
+        origin_id_field_type = [f.type for f in pair_table_fields if f.name == self.pair_table_origin_id_field][0]
+        dest_id_field_type = [f.type for f in pair_table_fields if f.name == self.pair_table_dest_id_field][0]
+        columns = [self.pair_table_origin_id_field, self.pair_table_dest_id_field]
+        with arcpy.da.SearchCursor(  # pylint: disable=no-member
+            self.pair_table, [self.pair_table_origin_id_field, self.pair_table_dest_id_field]
+        ) as cur:
+            rows = [r for r in cur]
+        df_od_pairs = pd.DataFrame({
+            self.pair_table_origin_id_field: pd.Series(
+                [r[0] for r in rows], dtype=helpers.PD_FIELD_TYPES[origin_id_field_type]),
+            self.pair_table_dest_id_field: pd.Series(
+                [r[1] for r in rows], dtype=helpers.PD_FIELD_TYPES[dest_id_field_type])
+        })
+        del rows
+
+        # Drop duplicates
+        num_pairs_initial = df_od_pairs.shape[0]
+        df_od_pairs.drop_duplicates(subset=columns, inplace=True)
+        num_pairs_final = df_od_pairs.shape[0]
+        if num_pairs_final < num_pairs_initial:
+            arcpy.AddWarning((
+                "Duplicate origin-destination pairs were found in the origin-destination pairs table "
+                f"{self.pair_table}. Duplicate pairs will be ignored. Only one route will be generated between a given "
+                "origin-destination pair."
+            ))
+
+        # Drop rows if the origin or destination IDs aren't in the input origin or destination tables
+        num_pairs_initial = df_od_pairs.shape[0]
+        df_od_pairs = df_od_pairs[df_od_pairs[self.pair_table_origin_id_field].isin(self.origin_ids)]
+        df_od_pairs = df_od_pairs[df_od_pairs[self.pair_table_dest_id_field].isin(self.destination_ids)]
+        num_pairs_final = df_od_pairs.shape[0]
+        if num_pairs_final == 0:
+            err = (
+                "All origin-destination pairs in the preassigned origin-destination pair table "
+                f"{self.pair_table} have invalid values in either the Origin ID field "
+                f"{self.pair_table_origin_id_field} or Destination ID field {self.pair_table_dest_id_field} "
+                f"that do not correspond to values in the origins unique ID field {self.origin_id_field} in "
+                f"{self.origins} or the destinations unique ID field {self.dest_id_field} in "
+                f"{self.destinations}. Ensure that you have chosen the correct datasets and fields and that the "
+                "field types match."
+            )
+            arcpy.AddError(err)
+            raise ValueError(err)
+        if num_pairs_final < num_pairs_initial:
+            arcpy.AddWarning((
+                f"{num_pairs_initial - num_pairs_final} of {num_pairs_initial} origin-destination pairs in the "
+                f"preassigned origin-destination pair table {self.pair_table} have invalid values in either the Origin "
+                f"ID field {self.pair_table_origin_id_field} or Destination ID field "
+                f"{self.pair_table_dest_id_field} that do not correspond to values in the origins unique ID field "
+                f"{self.origin_id_field} in {self.origins} or the destinations unique ID field "
+                f"{self.dest_id_field} in {self.destinations}. These origin-destination pairs will be ignored in "
+                "the analysis."
+            ))
+
+        # Sort the OD pairs dataframe by origin ID or destination ID, whichever has fewest unique values
+        num_unique_o = df_od_pairs[self.pair_table_origin_id_field].nunique()
+        num_unique_d = df_od_pairs[self.pair_table_dest_id_field].nunique()
+        if num_unique_d < num_unique_o:
+            sort_field = self.pair_table_dest_id_field
+        else:
+            sort_field = self.pair_table_origin_id_field
+        df_od_pairs.sort_values(sort_field, inplace=True)
+
+        # Write the final, updated OD pairs table to a CSV file
+        # The CSV must have origin ID, destination ID with no headers so it plays nicely with parallel_route_pairs.py.
+        df_od_pairs.to_csv(
+            self.output_pair_table,
+            columns=[self.pair_table_origin_id_field, self.pair_table_dest_id_field],  # Ensure exact ordering
+            index=False,
+            header=False
+        )
+
+        # Drop origins and destinations that aren't in the pair table
+        bad_origins = [
+            o for o in self.origin_ids if o not in list(df_od_pairs[self.pair_table_origin_id_field].unique())]
+        if bad_origins:
+            if isinstance(self.origin_ids[0], (int, float,)):
+                where_string = ", ".join([str(o) for o in bad_origins])
+            else:
+                where_string = "'" + "', '".join([str(o) for o in bad_origins]) + "'"
+            where_clause = f"{self.origin_id_field} IN ({where_string})"
+            temp_layer = "Irrelevant origins"
+            arcpy.management.MakeFeatureLayer(self.output_origins, temp_layer, where_clause)
+            arcpy.management.DeleteFeatures(temp_layer)
+            if int(arcpy.management.GetCount(self.output_origins).getOutput(0)) <= 0:
+                # This will probably never happen because if none of the origins match the pair table, the checks
+                # above for the pair table dataframe would have already thrown an error.
+                err = (
+                    f"None of the origins in {self.origins} are in the preassigned origin-destination pair table "
+                    f"{self.pair_table}. Ensure that you have chosen the correct datasets and Origin ID fields."
+                )
+                arcpy.AddError(err)
+                raise ValueError(err)
+        bad_dests = [
+            d for d in self.destination_ids if d not in list(df_od_pairs[self.pair_table_dest_id_field].unique())]
+        if bad_dests:
+            if isinstance(self.destination_ids[0], (int, float,)):
+                where_string = ", ".join([str(d) for d in bad_dests])
+            else:
+                where_string = "'" + "', '".join([str(d) for d in bad_dests]) + "'"
+            where_clause = f"{self.dest_id_field} IN ({where_string})"
+            temp_layer = "Irrelevant destinations"
+            arcpy.management.MakeFeatureLayer(self.output_destinations, temp_layer, where_clause)
+            arcpy.management.DeleteFeatures(temp_layer)
+            if int(arcpy.management.GetCount(self.output_destinations).getOutput(0)) <= 0:
+                # This will probably never happen because if none of the origins match the pair table, the checks
+                # above for the pair table dataframe would have already thrown an error.
+                err = (
+                    f"None of the destinations in {self.destinations} are in the preassigned origin-destination pair "
+                    f"table {self.pair_table}. Ensure that you have chosen the correct datasets and Destination ID "
+                    "fields."
+                )
+                arcpy.AddError(err)
+                raise ValueError(err)
+
     def _preprocess_inputs(self):
         """Preprocess the input feature classes to prepare them for use in the Route."""
         # Make scratch folder and geodatabase
@@ -333,14 +548,21 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             field_mapping=field_mappings
         )
 
-        # Sort origins by assigned destination
-        if self.should_sort_origins:
+        # Sort origins by assigned destination if relevant
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one and self.should_sort_origins:
             self._sort_origins_by_assigned_destination()
+
+        # Special processing for the many-to-many case
+        if self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            self._preprocess_od_pairs()
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
             helpers.precalculate_network_locations(
                 self.output_destinations, self.network_data_source, self.travel_mode, RT_PROPS)
+            if self.pair_type is helpers.PreassignedODPairType.many_to_many:
+                helpers.precalculate_network_locations(
+                    self.output_origins, self.network_data_source, self.travel_mode, RT_PROPS)
             for barrier_fc in self.barriers:
                 helpers.precalculate_network_locations(
                     barrier_fc, self.network_data_source, self.travel_mode, RT_PROPS)
@@ -353,9 +575,9 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         rt_inputs = [
             os.path.join(sys.exec_prefix, "python.exe"),
             os.path.join(cwd, "parallel_route_pairs.py"),
+            "--pair-type", self.pair_type.name,
             "--origins", self.output_origins,
             "--origins-id-field", self.origin_id_field,
-            "--assigned-dest-field", self.assigned_dest_field,
             "--destinations", self.output_destinations,
             "--destinations-id-field", self.dest_id_field,
             "--network-data-source", self.network_data_source,
@@ -368,6 +590,11 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             "--out-routes", str(self.output_routes),
             "--scratch-folder", self.scratch_folder
         ]
+        # Include relevant parameters according to pair type
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            rt_inputs += ["--assigned-dest-field", self.assigned_dest_field]
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            rt_inputs += ["--od-pair-table", self.output_pair_table]
         # Include other optional parameters if relevant
         if self.barriers:
             rt_inputs += ["--barriers"]
@@ -413,7 +640,11 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
     def solve_large_route_pair_analysis(self):
         """Solve the large multi-route with known OD pairs in parallel."""
+        # Set the progressor so the user is informed of progress
+        arcpy.SetProgressor("default")
+
         try:
+            arcpy.SetProgressorLabel("Validating inputs...")
             self._validate_inputs()
             arcpy.AddMessage("Inputs successfully validated.")
         except Exception:  # pylint: disable=broad-except
@@ -421,9 +652,16 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             return
 
         # Preprocess inputs
-        self._preprocess_inputs()
+        try:
+            arcpy.SetProgressorLabel("Preprocessing inputs...")
+            self._preprocess_inputs()
+            arcpy.AddMessage("Inputs successfully preprocessed.")
+        except Exception:  # pylint: disable=broad-except
+            arcpy.AddError("Error preprocessing inputs.")
+            return
 
         # Solve the analysis
+        arcpy.SetProgressorLabel("Solving analysis in parallel...")
         self._execute_solve()
 
 
@@ -443,11 +681,6 @@ def _run_from_command_line():
     parser.add_argument(
         "-oif", "--origins-id-field", action="store", dest="origin_id_field", help=help_string, required=True)
 
-    # --assigned-dest-field parameter
-    help_string = "The name of the field in origins indicating the assigned destination."
-    parser.add_argument(
-        "-adf", "--assigned-dest-field", action="store", dest="assigned_dest_field", help=help_string, required=True)
-
     # --destinations parameter
     help_string = "The full catalog path to the feature class containing the destinations."
     parser.add_argument("-d", "--destinations", action="store", dest="destinations", help=help_string, required=True)
@@ -456,6 +689,10 @@ def _run_from_command_line():
     help_string = "The name of the unique ID field in destinations."
     parser.add_argument(
         "-dif", "--destinations-id-field", action="store", dest="dest_id_field", help=help_string, required=True)
+
+    # --pair-type parameter
+    help_string = "The type of origin-destination pair assignment to use. Either one_to_one or many_to_many."
+    parser.add_argument("-pt", "--pair-type", action="store", dest="pair_type", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset or a portal url that will be used for the analysis."
@@ -491,6 +728,28 @@ def _run_from_command_line():
     # --out-routes parameter
     help_string = "The full catalog path to the output routes feature class."
     parser.add_argument("-r", "--out-routes", action="store", dest="output_routes", help=help_string, required=True)
+
+    # --assigned-dest-field parameter
+    help_string = "The name of the field in origins indicating the assigned destination."
+    parser.add_argument(
+        "-adf", "--assigned-dest-field", action="store", dest="assigned_dest_field", help=help_string, required=False)
+
+    # --od-pair-table parameter
+    help_string = "Table holding preassigned OD pairs. Required for many_to_many pair-type."
+    parser.add_argument(
+        "-odp", "--od-pair-table", action="store", dest="pair_table", help=help_string, required=False)
+
+    # --od-pair-table-origin-id parameter
+    help_string = "Origin ID field in the od-pair-table. Required for many_to_many pair-type."
+    parser.add_argument(
+        "-pto", "--od-pair-table-origin-id", action="store", dest="pair_table_origin_id_field",
+        help=help_string, required=False)
+
+    # --od-pair-table-dest-id parameter
+    help_string = "Destination ID field in the od-pair-table. Required for many_to_many pair-type."
+    parser.add_argument(
+        "-ptd", "--od-pair-table-dest-id", action="store", dest="pair_table_dest_id_field",
+        help=help_string, required=False)
 
     # --time-of-day parameter
     help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "

@@ -1,6 +1,6 @@
 """Unit tests for the solve_large_odcm.py module.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -27,7 +27,7 @@ CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import solve_large_odcm  # noqa: E402, pylint: disable=wrong-import-position
 import helpers  # noqa: E402, pylint: disable=wrong-import-position
-from helpers import arcgis_version  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version, MAX_ALLOWED_MAX_PROCESSES  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeODCM(unittest.TestCase):
@@ -89,6 +89,10 @@ class TestSolveLargeODCM(unittest.TestCase):
         invalid_inputs = [
             ("chunk_size", -5, ValueError, "Chunk size must be greater than 0."),
             ("max_processes", 0, ValueError, "Maximum allowed parallel processes must be greater than 0."),
+            ("max_processes", 5000, ValueError, (
+                f"The maximum allowed parallel processes cannot exceed {MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            )),
             ("time_units", "BadUnits", ValueError, "Invalid time units: BadUnits"),
             ("distance_units", "BadUnits", ValueError, "Invalid distance units: BadUnits"),
             ("origins", does_not_exist, ValueError, f"Input dataset {does_not_exist} does not exist."),

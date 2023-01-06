@@ -1,6 +1,6 @@
 """Unit tests for the solve_large_route_pair_analysis.py module.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -26,7 +26,8 @@ import input_data_helper
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import solve_large_route_pair_analysis  # noqa: E402, pylint: disable=wrong-import-position
-from helpers import arcgis_version  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version, PreassignedODPairType, \
+    MAX_ALLOWED_MAX_PROCESSES  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
@@ -40,6 +41,7 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         self.sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
         self.origins = input_data_helper.get_tract_centroids_with_store_id_fc(self.sf_gdb)
         self.destinations = os.path.join(self.sf_gdb, "Analysis", "Stores")
+        self.od_pairs_table = input_data_helper.get_od_pairs_fgdb_table(self.sf_gdb)
         self.local_nd = os.path.join(self.sf_gdb, "Transportation", "Streets_ND")
         self.local_tm_time = "Driving Time"
         self.local_tm_dist = "Driving Distance"
@@ -61,32 +63,59 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         self.barriers = os.path.join(self.output_gdb, "Barriers")
         arcpy.management.Copy(os.path.join(self.sf_gdb, "Analysis", "CentralDepots"), self.barriers)
 
-        self.rt_args = {
+        self.rt_args_one_to_one = {
             "origins": self.origins,
             "origin_id_field": "ID",
-            "assigned_dest_field": "StoreID",
             "destinations": self.destinations,
             "dest_id_field": "NAME",
+            "pair_type": PreassignedODPairType.one_to_one,
             "network_data_source": self.local_nd,
             "travel_mode": self.local_tm_dist,
             "time_units": "Minutes",
             "distance_units": "Miles",
             "chunk_size": 15,
             "max_processes": 4,
-            "output_routes": os.path.join(self.output_gdb, "OutRoutes"),
+            "output_routes": os.path.join(self.output_gdb, "OutRoutes_OneToOne"),
+            "assigned_dest_field": "StoreID",
             "time_of_day": self.time_of_day_str,
             "barriers": "",
             "precalculate_network_locations": True,
             "sort_origins": True,
             "reverse_direction": False
         }
+        self.rt_args_many_to_many = {
+            "origins": self.origins,
+            "origin_id_field": "ID",
+            "destinations": self.destinations,
+            "dest_id_field": "NAME",
+            "pair_type": PreassignedODPairType.many_to_many,
+            "network_data_source": self.local_nd,
+            "travel_mode": self.local_tm_dist,
+            "time_units": "Minutes",
+            "distance_units": "Miles",
+            "chunk_size": 15,
+            "max_processes": 4,
+            "output_routes": os.path.join(self.output_gdb, "OutRoutes_ManyToMany"),
+            "pair_table": self.od_pairs_table,
+            "pair_table_origin_id_field": "OriginID",
+            "pair_table_dest_id_field": "DestinationID",
+            "time_of_day": self.time_of_day_str,
+            "barriers": "",
+            "precalculate_network_locations": True,
+            "sort_origins": False,
+            "reverse_direction": False
+        }
 
-    def test_validate_inputs(self):
-        """Test the validate_inputs function."""
+    def test_validate_inputs_one_to_one(self):
+        """Test the validate_inputs function for all generic/shared cases and one-to-one pair type specific cases."""
         does_not_exist = os.path.join(self.sf_gdb, "Analysis", "DoesNotExist")
         invalid_inputs = [
             ("chunk_size", -5, ValueError, "Chunk size must be greater than 0."),
             ("max_processes", 0, ValueError, "Maximum allowed parallel processes must be greater than 0."),
+            ("max_processes", 5000, ValueError, (
+                f"The maximum allowed parallel processes cannot exceed {MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            )),
             ("time_units", "BadUnits", ValueError, "Invalid time units: BadUnits"),
             ("distance_units", "BadUnits", ValueError, "Invalid distance units: BadUnits"),
             ("origins", does_not_exist, ValueError, f"Input dataset {does_not_exist} does not exist."),
@@ -97,6 +126,7 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
             ("travel_mode", "BadTM", ValueError if arcgis_version >= "3.1" else RuntimeError, ""),
             ("time_of_day", "3/29/2022 4:45 PM", ValueError, ""),
             ("time_of_day", "BadDateTime", ValueError, ""),
+            ("pair_type", "BadPairType", ValueError, "Invalid preassigned OD pair type: BadPairType"),
             ("origin_id_field", "BadField", ValueError,
              f"Unique ID field BadField does not exist in dataset {self.origins}."),
             ("origin_id_field", "STATE_NAME", ValueError,
@@ -111,14 +141,17 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
              (f"All origins in the Origins dataset {self.origins} have invalid values in the assigned "
               f"destination field STATE_NAME that do not correspond to values in the "
               f"destinations unique ID field NAME in {self.destinations}. Ensure that you "
-              "have chosen the correct datasets and fields and that the field types match."))
+              "have chosen the correct datasets and fields and that the field types match.")),
+            ("assigned_dest_field", None, ValueError,
+             "Assigned destination field is required when preassigned OD pair type is "
+             f"{PreassignedODPairType.one_to_one.name}")
         ]
         for invalid_input in invalid_inputs:
             property_name, value, error_type, expected_message = invalid_input
             with self.subTest(
                 property_name=property_name, value=value, error_type=error_type, expected_message=expected_message
             ):
-                inputs = deepcopy(self.rt_args)
+                inputs = deepcopy(self.rt_args_one_to_one)
                 inputs[property_name] = value
                 rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**inputs)
                 with self.assertRaises(error_type) as ex:
@@ -126,10 +159,100 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
                 if expected_message:
                     self.assertEqual(expected_message, str(ex.exception))
 
+    def test_validate_inputs_many_to_many(self):
+        """Test the validate_inputs function for many-to-many pair type specific cases."""
+        does_not_exist = os.path.join(self.sf_gdb, "DoesNotExist")
+        invalid_inputs = [
+            ("pair_table", None, ValueError,
+             "Origin-destination pair table is required when preassigned OD pair type is "
+             f"{PreassignedODPairType.many_to_many.name}"),
+            ("pair_table", does_not_exist, ValueError, f"Input dataset {does_not_exist} does not exist."),
+            ("pair_table_origin_id_field", None, ValueError,
+             "Origin-destination pair table Origin ID field is required when preassigned OD pair type is "
+             f"{PreassignedODPairType.many_to_many.name}"),
+            ("pair_table_origin_id_field", "BadFieldName", ValueError,
+             ("Origin-destination pair table Origin ID field BadFieldName does not exist in "
+              f"{self.rt_args_many_to_many['pair_table']}.")),
+            ("pair_table_dest_id_field", None, ValueError,
+             "Origin-destination pair table Destination ID field is required when preassigned OD pair type is "
+             f"{PreassignedODPairType.many_to_many.name}"),
+            ("pair_table_dest_id_field", "BadFieldName", ValueError,
+             ("Origin-destination pair table Destination ID field BadFieldName does not exist in "
+              f"{self.rt_args_many_to_many['pair_table']}."))
+        ]
+        for invalid_input in invalid_inputs:
+            property_name, value, error_type, expected_message = invalid_input
+            with self.subTest(
+                property_name=property_name, value=value, error_type=error_type, expected_message=expected_message
+            ):
+                inputs = deepcopy(self.rt_args_many_to_many)
+                inputs[property_name] = value
+                rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**inputs)
+                with self.assertRaises(error_type) as ex:
+                    rt_solver._validate_inputs()
+                if expected_message:
+                    self.assertEqual(expected_message, str(ex.exception))
+
+    def test_pair_table_errors_no_matching_ods(self):
+        """Test for correct error when the pair table's origin or destination IDs don't match the input tables."""
+        inputs = deepcopy(self.rt_args_many_to_many)
+        inputs["origin_id_field"] = "OBJECTID"
+        rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**inputs)
+        rt_solver._validate_inputs()
+        with self.assertRaises(ValueError) as ex:
+            rt_solver._preprocess_inputs()
+        self.assertIn(
+            "All origin-destination pairs in the preassigned origin-destination pair table",
+            str(ex.exception)
+        )
+
+    def test_pair_table_drop_irrelevant_data(self):
+        """Test that irrelevant data is dropped from the origins, destinations, and pair table."""
+        # Construct an OD pair table such that we can check for eliminated duplicate and irrelevant data
+        in_od_pairs = [
+            ["06075013000", "Store_12"],
+            ["06075013000", "Store_12"],  # Duplicate of the last row. Should be eliminated
+            ["06075013000", "Store_25"],
+            ["06081602500", "Store_25"],
+            ["06075030400", "Store_7"],
+            ["06075030400", "Store_5"],
+        ]  # 3 unique origins; 4 unique destinations; 5 unique OD pairs
+        od_pair_table = os.path.join("memory", "ODPairsDuplicates")
+        arcpy.management.CreateTable("memory", "ODPairsDuplicates", template=self.od_pairs_table)
+        with arcpy.da.InsertCursor(  # pylint: disable=no-member
+            od_pair_table,
+            [
+                self.rt_args_many_to_many["pair_table_origin_id_field"],
+                self.rt_args_many_to_many["pair_table_dest_id_field"]
+            ]
+        ) as cur:
+            for od_pair in in_od_pairs:
+                cur.insertRow(od_pair)
+
+        # Validate and preprocess the data
+        inputs = deepcopy(self.rt_args_many_to_many)
+        inputs["pair_table"] = od_pair_table
+        rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**inputs)
+        rt_solver._validate_inputs()
+        rt_solver._preprocess_inputs()
+
+        # Verify that the outputs generated by preprocessing have the correct number of rows
+        with open(rt_solver.output_pair_table, "r", encoding="utf-8") as f:
+            output_od_pairs = f.readlines()
+        self.assertEqual(5, len(output_od_pairs), "Incorrect number of rows in output preprocessed OD pairs CSV.")
+        self.assertEqual(
+            3, int(arcpy.management.GetCount(rt_solver.output_origins).getOutput(0)),
+            "Incorrect number of rows in output preprocessed origins."
+        )
+        self.assertEqual(
+            4, int(arcpy.management.GetCount(rt_solver.output_destinations).getOutput(0)),
+            "Incorrect number of rows in output preprocessed destinations."
+        )
+
     def test_update_max_inputs_for_service(self):
         """Test the update_max_inputs_for_service function."""
         max_routes = 20000000
-        inputs = deepcopy(self.rt_args)
+        inputs = deepcopy(self.rt_args_one_to_one)
         inputs["network_data_source"] = self.portal_nd
         inputs["travel_mode"] = self.portal_tm
         inputs["chunk_size"] = max_routes
@@ -166,22 +289,29 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         rt_solver._update_max_inputs_for_service()
         self.assertEqual(max_routes, rt_solver.chunk_size)
 
-    def test_solve_large_route_pair_analysis(self):
-        """Test the full solve route pair workflow."""
-        rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**self.rt_args)
+    def test_solve_large_route_pair_analysis_one_to_one(self):
+        """Test the full solve route pair workflow for the one-to-one pair type."""
+        rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**self.rt_args_one_to_one)
         rt_solver.solve_large_route_pair_analysis()
-        self.assertTrue(arcpy.Exists(self.rt_args["output_routes"]))
+        self.assertTrue(arcpy.Exists(self.rt_args_one_to_one["output_routes"]))
 
-    def test_cli(self):
-        """Test the command line interface of solve_large_route_pair_analysis."""
-        out_folder = os.path.join(self.scratch_folder, "CLI_CSV_Output")
+    def test_solve_large_route_pair_analysis_many_to_many(self):
+        """Test the full solve route pair workflow for the many-to-many pair type."""
+        rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**self.rt_args_many_to_many)
+        rt_solver.solve_large_route_pair_analysis()
+        self.assertTrue(arcpy.Exists(self.rt_args_many_to_many["output_routes"]))
+
+    def test_cli_one_to_one(self):
+        """Test the command line interface of solve_large_route_pair_analysis for the one-to-one pair type."""
+        out_folder = os.path.join(self.scratch_folder, "CLI_CSV_Output_OneToOne")
         os.mkdir(out_folder)
+        out_routes = os.path.join(self.output_gdb, "OutCLIRoutes_OneToOne")
         rt_inputs = [
             os.path.join(sys.exec_prefix, "python.exe"),
             os.path.join(os.path.dirname(CWD), "solve_large_route_pair_analysis.py"),
+            "--pair-type", "one_to_one",
             "--origins", self.origins,
             "--origins-id-field", "ID",
-            "--assigned-dest-field", "StoreID",
             "--destinations", self.destinations,
             "--destinations-id-field", "NAME",
             "--network-data-source", self.local_nd,
@@ -190,7 +320,8 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
             "--distance-units", "Miles",
             "--max-routes", "15",
             "--max-processes", "4",
-            "--out-routes", os.path.join(self.output_gdb, "OutCLIRoutes"),
+            "--out-routes", out_routes,
+            "--assigned-dest-field", "StoreID",
             "--time-of-day", self.time_of_day_str,
             "--precalculate-network-locations", "true",
             "--sort-origins", "true",
@@ -198,6 +329,39 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         ]
         result = subprocess.run(rt_inputs, check=True)
         self.assertEqual(result.returncode, 0)
+        self.assertTrue(arcpy.Exists(out_routes))
+
+    def test_cli_many_to_many(self):
+        """Test the command line interface of solve_large_route_pair_analysis for the many-to-many pair type."""
+        out_folder = os.path.join(self.scratch_folder, "CLI_CSV_Output_ManyToMany")
+        os.mkdir(out_folder)
+        out_routes = os.path.join(self.output_gdb, "OutCLIRoutes_ManyToMany")
+        rt_inputs = [
+            os.path.join(sys.exec_prefix, "python.exe"),
+            os.path.join(os.path.dirname(CWD), "solve_large_route_pair_analysis.py"),
+            "--pair-type", "many_to_many",
+            "--origins", self.origins,
+            "--origins-id-field", "ID",
+            "--destinations", self.destinations,
+            "--destinations-id-field", "NAME",
+            "--network-data-source", self.local_nd,
+            "--travel-mode", self.local_tm_dist,
+            "--time-units", "Minutes",
+            "--distance-units", "Miles",
+            "--max-routes", "15",
+            "--max-processes", "4",
+            "--out-routes", out_routes,
+            "--od-pair-table", self.od_pairs_table,
+            "--od-pair-table-origin-id", "OriginID",
+            "--od-pair-table-dest-id", "DestinationID",
+            "--time-of-day", self.time_of_day_str,
+            "--precalculate-network-locations", "true",
+            "--sort-origins", "false",
+            "--reverse-direction", "false"
+        ]
+        result = subprocess.run(rt_inputs, check=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(arcpy.Exists(out_routes))
 
 
 if __name__ == '__main__':

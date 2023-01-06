@@ -1,18 +1,21 @@
-"""Compute a large multi-route analysis by chunking the input origins
-and their assigned destinations and solving in parallel. Write outputs to
-a single combined feature class.
+"""Compute a large multi-route analysis by chunking the preassigned origin-destination pairs and solving in parallel.
+
+Multiple cases are supported:
+- one-to-one: A field in the input origins table indicates which destination the origin is assigned to
+- many-to-many: A separate table defines a list of origin-destination pairs. A single origin may be assigned to multiple
+    destinations.
+
+The outputs are written to a single combined feature class.
 
 This is a sample script users can modify to fit their specific needs.
 
-This script is intended to be called as a subprocess from the
-solve_large_route_pair_analysis.py script so that it can launch parallel
-processes with concurrent.futures. It must be called as a subprocess
-because the main script tool process, when running
-within ArcGIS Pro, cannot launch parallel subprocesses on its own.
+This script is intended to be called as a subprocess from the solve_large_route_pair_analysis.py script so that it can
+launch parallel processes with concurrent.futures. It must be called as a subprocess because the main script tool
+process, when running within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -34,7 +37,9 @@ import time
 import datetime
 import traceback
 import argparse
+from math import ceil
 from distutils.util import strtobool
+import pandas as pd
 
 import arcpy
 
@@ -67,9 +72,9 @@ class Route:  # pylint:disable = too-many-instance-attributes
         """Initialize the Route analysis for the given inputs.
 
         Expected arguments:
+        - pair_type
         - origins
         - origin_id_field
-        - assigned_dest_field
         - destinations
         - dest_id_field
         - network_data_source
@@ -79,13 +84,15 @@ class Route:  # pylint:disable = too-many-instance-attributes
         - time_of_day
         - reverse_direction
         - scratch_folder
+        - assigned_dest_field
+        - od_pair_table
         - origin_transfer_fields
         - destination_transfer_fields
         - barriers
         """
+        self.pair_type = kwargs["pair_type"]
         self.origins = kwargs["origins"]
         self.origin_id_field = kwargs["origin_id_field"]
-        self.assigned_dest_field = kwargs["assigned_dest_field"]
         self.destinations = kwargs["destinations"]
         self.dest_id_field = kwargs["dest_id_field"]
         self.network_data_source = kwargs["network_data_source"]
@@ -95,6 +102,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.time_of_day = kwargs["time_of_day"]
         self.reverse_direction = kwargs["reverse_direction"]
         self.scratch_folder = kwargs["scratch_folder"]
+        self.assigned_dest_field = kwargs["assigned_dest_field"]
+        self.od_pair_table = kwargs["od_pair_table"]
         self.origin_transfer_fields = kwargs["origin_transfer_fields"]
         self.destination_transfer_fields = kwargs["destination_transfer_fields"]
         self.barriers = []
@@ -113,6 +122,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.setup_logger(cls_logger)
         self.logger = cls_logger
 
+        # Get field objects for the origin and destination ID fields since we need this in multiple places
+        self.origin_id_field_obj = arcpy.ListFields(self.origins, wild_card=self.origin_id_field)[0]
+        self.dest_id_field_obj = arcpy.ListFields(self.destinations, wild_card=self.dest_id_field)[0]
+
         # Set up other instance attributes
         self.is_service = helpers.is_nds_service(self.network_data_source)
         self.rt_solver = None
@@ -120,8 +133,10 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.input_origins_layer = "InputOrigins" + self.job_id
         self.input_destinations_layer = "InputDestinations" + self.job_id
         self.input_origins_layer_obj = None
+        self.input_dests_layer_obj = None
         self.origin_unique_id_field_name = "OriginUniqueID"
         self.dest_unique_id_field_name = "DestinationUniqueID"
+        self.od_pairs = None
 
         # Create a network dataset layer if needed
         if not self.is_service:
@@ -155,28 +170,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
                 [self.network_data_source, nds_layer_name],
             )
         self.network_data_source = nds_layer_name
-
-    def _select_inputs(self, origins_criteria):
-        """Create layers from the origins so the layer contains only the desired inputs for the chunk.
-
-        Args:
-            origins_criteria (list): Origin ObjectID range to select from the input dataset
-        """
-        # Select the origins with ObjectIDs in this range
-        self.logger.debug("Selecting origins for this chunk...")
-        origins_oid_field_name = arcpy.Describe(self.origins).oidFieldName
-        origins_where_clause = (
-            f"{origins_oid_field_name} >= {origins_criteria[0]} "
-            f"And {origins_oid_field_name} <= {origins_criteria[1]}"
-        )
-        self.logger.debug(f"Origins where clause: {origins_where_clause}")
-        self.input_origins_layer_obj = helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.MakeFeatureLayer,
-            [self.origins, self.input_origins_layer, origins_where_clause],
-        ).getOutput(0)
-        num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
-        self.logger.debug(f"Number of origins selected: {num_origins}")
 
     def initialize_rt_solver(self):
         """Initialize a Route solver object and set properties."""
@@ -227,8 +220,40 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.rt_solver.timeOfDay = self.time_of_day
         self.logger.debug(f"timeOfDay: {self.time_of_day}")
 
-    def _insert_stops(self):
-        """Insert the origins and destinations as stops for the Route analysis."""
+    def _add_unique_id_fields(self):
+        """Add fields to input Stops with the origin and destination's original unique IDs."""
+        field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
+                       "Integer": "LONG", "OID": "LONG"}
+        origin_field_def = [self.origin_unique_id_field_name, field_types[self.origin_id_field_obj.type]]
+        if self.origin_id_field_obj.type == "String":
+            origin_field_def += [self.origin_unique_id_field_name, self.origin_id_field_obj.length]
+        dest_field_def = [self.dest_unique_id_field_name, field_types[self.dest_id_field_obj.type]]
+        if self.dest_id_field_obj.type == "String":
+            dest_field_def += [self.dest_unique_id_field_name, self.dest_id_field_obj.length]
+        self.rt_solver.addFields(arcpy.nax.RouteInputDataType.Stops, [origin_field_def, dest_field_def])
+
+    def _select_inputs_one_to_one(self, origins_criteria):
+        """Create layers from the origins so the layer contains only the desired inputs for the chunk.
+
+        Args:
+            origins_criteria (list): Origin ObjectID range to select from the input dataset
+        """
+        # Select the origins with ObjectIDs in this range
+        self.logger.debug("Selecting origins for this chunk...")
+        origins_oid_field_name = arcpy.Describe(self.origins).oidFieldName
+        origins_where_clause = (
+            f"{origins_oid_field_name} >= {origins_criteria[0]} "
+            f"And {origins_oid_field_name} <= {origins_criteria[1]}"
+        )
+        self.logger.debug(f"Origins where clause: {origins_where_clause}")
+        self.input_origins_layer_obj = helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.MakeFeatureLayer,
+            [self.origins, self.input_origins_layer, origins_where_clause],
+        ).getOutput(0)
+        num_origins = int(arcpy.management.GetCount(self.input_origins_layer_obj).getOutput(0))
+        self.logger.debug(f"Number of origins selected: {num_origins}")
+
         # Make a layer for destinations for quicker access
         helpers.run_gp_tool(
             self.logger,
@@ -236,22 +261,66 @@ class Route:  # pylint:disable = too-many-instance-attributes
             [self.destinations, self.input_destinations_layer],
         )
 
-        self.logger.debug(f"Route solver fields transferred from Origins: {self.origin_transfer_fields}")
-        self.logger.debug(f"Route solver fields transferred from Destinations: {self.destination_transfer_fields}")
+    def _get_od_pairs_for_chunk(self, chunk_definition):
+        """Retrieve a list of OD pairs included in this chunk.
 
-        # Add fields to input Stops with the origin and destination's original unique IDs
-        field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
-                       "Integer": "LONG", "OID": "LONG"}
-        origin_id_field = arcpy.ListFields(self.input_origins_layer, wild_card=self.origin_id_field)[0]
-        origin_field_def = [self.origin_unique_id_field_name, field_types[origin_id_field.type]]
-        if origin_id_field.type == "String":
-            origin_field_def += [self.origin_unique_id_field_name, origin_id_field.length]
-        dest_id_field = arcpy.ListFields(self.input_destinations_layer, wild_card=self.dest_id_field)[0]
-        dest_field_def = [self.dest_unique_id_field_name, field_types[dest_id_field.type]]
-        if dest_id_field.type == "String":
-            dest_field_def += [self.dest_unique_id_field_name, dest_id_field.length]
-        self.rt_solver.addFields(arcpy.nax.RouteInputDataType.Stops, [origin_field_def, dest_field_def])
+        Args:
+            chunk_definition (list): A list of [chunk starting row number, chunk size] indicating which records to
+                retrieve from the OD pair table.
+        """
+        # Read the relevant rows from the CSV
+        chunk_num, chunk_size = chunk_definition
+        # Explicitly set data types
+        dtypes = {
+            0: helpers.PD_FIELD_TYPES[self.origin_id_field_obj.type],
+            1: helpers.PD_FIELD_TYPES[self.dest_id_field_obj.type]
+        }
+        df_od_pairs = pd.read_csv(
+            self.od_pair_table,
+            header=None,
+            skiprows=chunk_size*chunk_num,
+            nrows=chunk_size,
+            dtype=dtypes
+        )
+        self.od_pairs = df_od_pairs.values.tolist()
 
+    def _select_inputs_many_to_many(self):
+        """Create layers that include only the origins and destinations relevant to this chunk."""
+        # Select the origins present in this chunk of predefined OD pairs
+        self.logger.debug("Selecting origins for this chunk...")
+        origins_in_chunk = set([pair[0] for pair in self.od_pairs])
+        if isinstance(self.od_pairs[0][0], (int, float,)):
+            origin_string = ", ".join([str(o_id) for o_id in origins_in_chunk])
+        else:
+            origin_string = "'" + "', '".join([str(o_id) for o_id in origins_in_chunk]) + "'"
+        origins_where_clause = f"{self.origin_id_field} IN ({origin_string})"
+        self.logger.debug(f"Origins where clause: {origins_where_clause}")
+        self.input_origins_layer_obj = helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.MakeFeatureLayer,
+            [self.origins, self.input_origins_layer, origins_where_clause]
+        ).getOutput(0)
+        num_origins = int(arcpy.management.GetCount(self.input_origins_layer).getOutput(0))
+        self.logger.debug(f"Number of origins selected: {num_origins}")
+        # Select the destinations present in this chunk of predefined OD pairs
+        self.logger.debug("Selecting destinations for this chunk...")
+        dests_in_chunk = set([pair[1] for pair in self.od_pairs])
+        if isinstance(self.od_pairs[0][1], (int, float,)):
+            dest_string = ", ".join([str(d_id) for d_id in dests_in_chunk])
+        else:
+            dest_string = "'" + "', '".join([str(d_id) for d_id in dests_in_chunk]) + "'"
+        dests_where_clause = f"{self.dest_id_field} IN ({dest_string})"
+        self.logger.debug(f"Destinations where clause: {dests_where_clause}")
+        self.input_dests_layer_obj = helpers.run_gp_tool(
+            self.logger,
+            arcpy.management.MakeFeatureLayer,
+            [self.destinations, self.input_destinations_layer, dests_where_clause]
+        ).getOutput(0)
+        num_dests = int(arcpy.management.GetCount(self.input_destinations_layer).getOutput(0))
+        self.logger.debug(f"Number of destinations selected: {num_dests}")
+
+    def _insert_stops_one_to_one(self):  # pylint: disable=too-many-locals
+        """Insert the origins and destinations as Stops for the Route analysis for the one-to-one case."""
         # Use an insertCursor to insert Stops into the Route analysis
         destinations = {}
         destination_rows = []
@@ -306,20 +375,85 @@ class Route:  # pylint:disable = too-many-instance-attributes
             for row in destination_rows:
                 dcur.insertRow(row)
 
-    def solve(self, origins_criteria):  # pylint: disable=too-many-locals, too-many-statements
-        """Create and solve a Route analysis for the designated chunk of origins and their assigned destinations.
+    def _insert_stops_many_to_many(self):
+        """Insert each predefined OD pair into the Route analysis for the many-to-many case."""
+        # Store data of the relevant origins and destinations in dictionaries for quick lookups and reuse
+        o_data = {}  # {Origin ID: [Shape, transferred fields]}
+        for row in arcpy.da.SearchCursor(  # pylint: disable=no-member
+            self.input_origins_layer,
+            [self.origin_id_field, "SHAPE@"] + self.origin_transfer_fields
+        ):
+            o_data[row[0]] = row[1:]
+        d_data = {}  # {Destination ID: [Shape, transferred fields]}
+        for row in arcpy.da.SearchCursor(  # pylint: disable=no-member
+            self.input_destinations_layer,
+            [self.dest_id_field, "SHAPE@"] + self.destination_transfer_fields
+        ):
+            d_data[row[0]] = row[1:]
+
+        # Insert origins from each OD pair into the Route analysis
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", self.origin_unique_id_field_name, "SHAPE@"] + self.origin_transfer_fields
+        ) as icur:
+            for od_pair in self.od_pairs:
+                origin_id, dest_id = od_pair
+                try:
+                    origin_data = o_data[origin_id]
+                except KeyError:
+                    # This should never happen because we should have preprocessed this out.
+                    self.logger.debug(
+                        f"Origin from OD Pairs not found in inputs. Skipped pair {od_pair}.")
+                    continue
+                route_name = f"{origin_id} - {dest_id}"
+                icur.insertRow((route_name, 1, origin_id) + origin_data)
+
+        # Insert destinations from each OD pair into the Route analysis
+        with self.rt_solver.insertCursor(
+            arcpy.nax.RouteInputDataType.Stops,
+            ["RouteName", "Sequence", self.dest_unique_id_field_name, "SHAPE@"] + self.destination_transfer_fields
+        ) as icur:
+            for od_pair in self.od_pairs:
+                origin_id, dest_id = od_pair
+                try:
+                    dest_data = d_data[dest_id]
+                except KeyError:
+                    # This should never happen because we should have preprocessed this out.
+                    self.logger.debug(
+                        f"Destination from OD Pairs not found in inputs. Skipped pair {od_pair}.")
+                    continue
+                route_name = f"{origin_id} - {dest_id}"
+                icur.insertRow((route_name, 2, dest_id) + dest_data)
+
+    def solve(self, chunk_definition):  # pylint: disable=too-many-locals, too-many-statements, too-many-branches
+        """Create and solve a Route analysis for the designated preassigned origin-destination pairs.
 
         Args:
-            origins_criteria (list): ObjectID range to select from the input origins
+            chunk_definition (list): For one-to-one, the ObjectID range to select from the input origins. For
+                many-to-many, a list of [chunk starting row number, chunk size].
         """
-        # Select the origins to process
-        self._select_inputs(origins_criteria)
+        # Select the inputs to process
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            self._select_inputs_one_to_one(chunk_definition)
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            self._get_od_pairs_for_chunk(chunk_definition)
+            self._select_inputs_many_to_many()
+        else:
+            raise NotImplementedError(f"Invalid PreassignedODPairType: {self.pair_type}")
 
         # Initialize the Route solver object
         self.initialize_rt_solver()
+        self._add_unique_id_fields()
 
         # Insert the origins and destinations
-        self._insert_stops()
+        self.logger.debug(f"Route solver fields transferred from Origins: {self.origin_transfer_fields}")
+        self.logger.debug(f"Route solver fields transferred from Destinations: {self.destination_transfer_fields}")
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+            self._insert_stops_one_to_one()
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
+            self._insert_stops_many_to_many()
+        else:
+            raise NotImplementedError(f"Invalid PreassignedODPairType: {self.pair_type}")
 
         if self.rt_solver.count(arcpy.nax.RouteInputDataType.Stops) == 0:
             # There were no valid destinations for this set of origins
@@ -370,11 +504,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
         self.job_result["solveSucceeded"] = True
 
         # Save output
-        self._export_to_feature_class(origins_criteria)
+        self._export_to_feature_class(chunk_definition)
 
         self.logger.debug("Finished calculating Route.")
 
-    def _export_to_feature_class(self, origins_criteria):
+    def _export_to_feature_class(self, chunk_definition):
         """Export the Route result to a feature class."""
         # Make output gdb
         self.logger.debug("Creating output geodatabase for Route results...")
@@ -386,12 +520,12 @@ class Route:  # pylint:disable = too-many-instance-attributes
         )
 
         # Export routes
-        output_routes = os.path.join(od_workspace, f"Routes_{origins_criteria[0]}_{origins_criteria[1]}")
+        output_routes = os.path.join(od_workspace, f"Routes_{chunk_definition[0]}_{chunk_definition[1]}")
         self.logger.debug(f"Exporting Route Routes output to {output_routes}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Routes, output_routes)
 
         # Export stops
-        output_stops = os.path.join(od_workspace, f"Stops_{origins_criteria[0]}_{origins_criteria[1]}")
+        output_stops = os.path.join(od_workspace, f"Stops_{chunk_definition[0]}_{chunk_definition[1]}")
         self.logger.debug(f"Exporting Route Stops output to {output_stops}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
 
@@ -446,29 +580,34 @@ class Route:  # pylint:disable = too-many-instance-attributes
 
 
 def solve_route(inputs, chunk):
-    """Solve a Route analysis for the given inputs for the given chunk of ObjectIDs.
+    """Solve a Route analysis for the given inputs for the given chunk of preassigned OD pairs.
 
     Args:
         inputs (dict): Dictionary of keyword inputs suitable for initializing the Route class
-        chunk (list): Represents the ObjectID ranges to select from the origins when solving the Route.
+        chunk (list): For one-to-one, the ObjectID range to select from the input origins. For many-to-many, a list of
+            [chunk starting row number, chunk size].
 
     Returns:
         dict: Dictionary of results from the Route class
     """
     rt = Route(**inputs)
-    rt.logger.info(f"Processing origins OID {chunk[0]} to {chunk[1]} as job id {rt.job_id}")
+    if inputs["pair_type"] is helpers.PreassignedODPairType.one_to_one:
+        rt.logger.info(f"Processing origins OID {chunk[0]} to {chunk[1]} as job id {rt.job_id}")
+    elif inputs["pair_type"] is helpers.PreassignedODPairType.many_to_many:
+        rt.logger.info(f"Processing chunk {chunk[0]} as job id {rt.job_id}")
     rt.solve(chunk)
     rt.teardown_logger()
     return rt.job_result
 
 
-class ParallelRoutePairCalculator:
+class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attributes, too-few-public-methods
     """Solves a large Route by chunking the problem, solving in parallel, and combining results."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, origin_id_field, assigned_dest_field, destinations, dest_id_field,
+        self, pair_type_str, origins, origin_id_field, destinations, dest_id_field,
         network_data_source, travel_mode, time_units, distance_units,
-        max_routes, max_processes, out_routes, reverse_direction, scratch_folder, time_of_day=None, barriers=None
+        max_routes, max_processes, out_routes, scratch_folder, reverse_direction=False,
+        assigned_dest_field=None, od_pair_table=None, time_of_day=None, barriers=None
     ):
         """Compute Routes between origins and their assigned destinations in parallel and combine results.
 
@@ -476,9 +615,10 @@ class ParallelRoutePairCalculator:
         This class assumes that the inputs have already been pre-processed and validated.
 
         Args:
+            pair_type_str (str): String representation of the preassigned origin-destination pair type. Must match one
+                of the enum names in helpers.PreassignedODPairType.
             origins (str, layer): Catalog path or layer for the input origins
             origin_id_field (str): Unique ID field of the input origins
-            assigned_dest_field (str): Field in the input origins with the assigned destination ID
             destinations (str, layer): Catalog path or layer for the input destinations
             dest_id_field: (str): Unique ID field of the input destinations
             network_data_source (str, layer): Catalog path, layer, or URL for the input network dataset
@@ -488,13 +628,19 @@ class ParallelRoutePairCalculator:
             max_routes (int): Maximum number of origin-destination pairs that can be in one chunk
             max_processes (int): Maximum number of allowed parallel processes
             out_routes (str): Catalog path to the output routes feature class
-            reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
-                destination to origin instead of origin to destination. Defaults to False.
             scratch_folder (str): Catalog path to the folder where intermediate outputs will be written.
-            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
+            reverse_direction (bool, optional): Whether to reverse the direction of travel and calculate routes from
+                destination to origin instead of origin to destination. Defaults to False. Only applicable for the
+                one_to_one pair type.
+            assigned_dest_field (str): Field in the input origins with the assigned destination ID
+            od_pair_table (str): CSV file containing preassigned origin-destination pairs. Must have no headers. The
+                first column contains origin ID, and the second column contains destination IDs.
+            time_of_day (str): String representation of the start time for the analysis (required format defined in
+                helpers.DATETIME_FORMAT)
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
-                 to use. Defaults to None.
+                to use. Defaults to None.
         """
+        pair_type = helpers.PreassignedODPairType[pair_type_str]
         self.origins = origins
         self.destinations = destinations
         self.out_routes = out_routes
@@ -511,9 +657,9 @@ class ParallelRoutePairCalculator:
 
         # Initialize the dictionary of inputs to send to each OD solve
         self.rt_inputs = {
+            "pair_type": pair_type,
             "origins": self.origins,
             "origin_id_field": origin_id_field,
-            "assigned_dest_field": assigned_dest_field,
             "destinations": self.destinations,
             "dest_id_field": dest_id_field,
             "network_data_source": network_data_source,
@@ -523,6 +669,8 @@ class ParallelRoutePairCalculator:
             "time_of_day": time_of_day,
             "reverse_direction": reverse_direction,
             "scratch_folder": self.scratch_folder,
+            "assigned_dest_field": assigned_dest_field,
+            "od_pair_table": od_pair_table,
             "barriers": barriers,
             "origin_transfer_fields": [],  # Populate later
             "destination_transfer_fields": []  # Populate later
@@ -532,10 +680,20 @@ class ParallelRoutePairCalculator:
         self.route_fcs = []
 
         # Construct OID ranges for chunks of origins and destinations
-        self.origin_ranges = helpers.get_oid_ranges_for_input(origins, max_routes)
+        if pair_type is helpers.PreassignedODPairType.one_to_one:
+            # Chunks are of the format [first origin ID, second origin ID]
+            self.chunks = helpers.get_oid_ranges_for_input(origins, max_routes)
+        elif pair_type is helpers.PreassignedODPairType.many_to_many:
+            # Chunks are of the format [chunk_num, chunk_size]
+            num_od_pairs = 0
+            with open(od_pair_table, "r", encoding="utf-8") as f:
+                for _ in f:
+                    num_od_pairs += 1
+            num_chunks = ceil(num_od_pairs / max_routes)
+            self.chunks = [[i, max_routes] for i in range(num_chunks)]
 
         # Calculate the total number of jobs to use in logging
-        self.total_jobs = len(self.origin_ranges)
+        self.total_jobs = len(self.chunks)
 
         self.optimized_cost_field = None
 
@@ -621,19 +779,20 @@ class ParallelRoutePairCalculator:
         """Solve the Route in chunks and post-process the results."""
         # Validate Route settings. Essentially, create a dummy Route class instance and set up the
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
-        # the optimized that are guaranteed to all fail.
+        # that are guaranteed to all fail.
         self._validate_route_settings()
 
         # Check if the input origins and destinations have any fields we should use in the route analysis
         self._populate_input_data_transfer_fields()
 
         # Compute Route in parallel
+        LOGGER.info(f"Beginning parallelized Route solves ({self.total_jobs} chunks)")
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
         # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the routes
         with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
             # Each parallel process calls the solve_route() function with the rt_inputs dictionary for the
             # given origin ranges and their assigned destinations.
-            jobs = {executor.submit(solve_route, self.rt_inputs, range): range for range in self.origin_ranges}
+            jobs = {executor.submit(solve_route, self.rt_inputs, range): range for range in self.chunks}
             # As each job is completed, add some logging information and store the results to post-process later
             for future in futures.as_completed(jobs):
                 completed_jobs += 1
@@ -725,6 +884,10 @@ def launch_parallel_rt_pairs():
 
     # Define Arguments supported by the command line utility
 
+    # --pair-type parameter
+    help_string = "The type of origin-destination pair assignment to use. Either one_to_one or many_to_many."
+    parser.add_argument("-pt", "--pair-type", action="store", dest="pair_type_str", help=help_string, required=True)
+
     # --origins parameter
     help_string = "The full catalog path to the feature class containing the origins."
     parser.add_argument("-o", "--origins", action="store", dest="origins", help=help_string, required=True)
@@ -733,11 +896,6 @@ def launch_parallel_rt_pairs():
     help_string = "The name of the unique ID field in origins."
     parser.add_argument(
         "-oif", "--origins-id-field", action="store", dest="origin_id_field", help=help_string, required=True)
-
-    # --assigned-dest-field parameter
-    help_string = "The name of the field in origins indicating the assigned destination."
-    parser.add_argument(
-        "-adf", "--assigned-dest-field", action="store", dest="assigned_dest_field", help=help_string, required=True)
 
     # --destinations parameter
     help_string = "The full catalog path to the feature class containing the destinations."
@@ -794,6 +952,17 @@ def launch_parallel_rt_pairs():
     parser.add_argument(
         "-sf", "--scratch-folder", action="store", dest="scratch_folder", help=help_string, required=True)
 
+    # --assigned-dest-field parameter
+    help_string = ("The name of the field in origins indicating the assigned destination. "
+                   "Required for one_to_one pair-type")
+    parser.add_argument(
+        "-adf", "--assigned-dest-field", action="store", dest="assigned_dest_field", help=help_string, required=False)
+
+    # --od-pair-table parameter
+    help_string = "CSV file holding preassigned OD pairs. Required for many_to_many pair-type."
+    parser.add_argument(
+        "-odp", "--od-pair-table", action="store", dest="od_pair_table", help=help_string, required=False)
+
     # --time-of-day parameter
     help_string = (f"The time of day for the analysis. Must be in {helpers.DATETIME_FORMAT} format. Set to None for "
                    "time neutral.")
@@ -804,15 +973,23 @@ def launch_parallel_rt_pairs():
     parser.add_argument(
         "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
 
-    # Get arguments as dictionary.
-    args = vars(parser.parse_args())
+    try:
+        # Get arguments as dictionary.
+        args = vars(parser.parse_args())
 
-    # Initialize a parallel Route calculator class
-    rt_calculator = ParallelRoutePairCalculator(**args)
-    # Solve the Route in parallel chunks
-    start_time = time.time()
-    rt_calculator.solve_route_in_parallel()
-    LOGGER.info(f"Parallel Route calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
+        # Initialize a parallel Route calculator class
+        rt_calculator = ParallelRoutePairCalculator(**args)
+        # Solve the Route in parallel chunks
+        start_time = time.time()
+        rt_calculator.solve_route_in_parallel()
+        LOGGER.info(f"Parallel Route calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
+
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.error("Error in parallelization subprocess.")
+        errs = traceback.format_exc().splitlines()
+        for err in errs:
+            LOGGER.error(err)
+        raise
 
 
 if __name__ == "__main__":
