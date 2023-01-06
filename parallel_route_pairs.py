@@ -972,15 +972,23 @@ def launch_parallel_rt_pairs():
     parser.add_argument(
         "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
 
-    # Get arguments as dictionary.
-    args = vars(parser.parse_args())
+    try:
+        # Get arguments as dictionary.
+        args = vars(parser.parse_args())
 
-    # Initialize a parallel Route calculator class
-    rt_calculator = ParallelRoutePairCalculator(**args)
-    # Solve the Route in parallel chunks
-    start_time = time.time()
-    rt_calculator.solve_route_in_parallel()
-    LOGGER.info(f"Parallel Route calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
+        # Initialize a parallel Route calculator class
+        rt_calculator = ParallelRoutePairCalculator(**args)
+        # Solve the Route in parallel chunks
+        start_time = time.time()
+        rt_calculator.solve_route_in_parallel()
+        LOGGER.info(f"Parallel Route calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
+
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.error("Error in parallelization subprocess.")
+        errs = traceback.format_exc().splitlines()
+        for err in errs:
+            LOGGER.error(err)
+        raise
 
 
 if __name__ == "__main__":
