@@ -26,7 +26,8 @@ import input_data_helper
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import solve_large_route_pair_analysis  # noqa: E402, pylint: disable=wrong-import-position
-from helpers import arcgis_version, PreassignedODPairType  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version, PreassignedODPairType, \
+    MAX_ALLOWED_MAX_PROCESSES  # noqa: E402, pylint: disable=wrong-import-position
 
 
 class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
@@ -111,6 +112,10 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         invalid_inputs = [
             ("chunk_size", -5, ValueError, "Chunk size must be greater than 0."),
             ("max_processes", 0, ValueError, "Maximum allowed parallel processes must be greater than 0."),
+            ("max_processes", 5000, ValueError, (
+                f"The maximum allowed parallel processes cannot exceed {MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            )),
             ("time_units", "BadUnits", ValueError, "Invalid time units: BadUnits"),
             ("distance_units", "BadUnits", ValueError, "Invalid distance units: BadUnits"),
             ("origins", does_not_exist, ValueError, f"Input dataset {does_not_exist} does not exist."),

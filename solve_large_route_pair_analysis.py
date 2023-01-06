@@ -144,6 +144,13 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             err = "Maximum allowed parallel processes must be greater than 0."
             arcpy.AddError(err)
             raise ValueError(err)
+        if self.max_processes > helpers.MAX_ALLOWED_MAX_PROCESSES:
+            err = (
+                f"The maximum allowed parallel processes cannot exceed {helpers.MAX_ALLOWED_MAX_PROCESSES:} due "
+                "to limitations imposed by Python's concurrent.futures module."
+            )
+            arcpy.AddError(err)
+            raise ValueError(err)
 
         # Validate time of day
         if self.time_of_day:
