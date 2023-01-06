@@ -786,6 +786,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         self._populate_input_data_transfer_fields()
 
         # Compute Route in parallel
+        LOGGER.info(f"Beginning parallelized Route solves ({self.total_jobs} chunks)")
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
         # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the routes
         with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:

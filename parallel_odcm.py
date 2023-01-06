@@ -12,7 +12,7 @@ within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -847,6 +847,7 @@ class ParallelODCalculator:
         self.optimized_cost_field = self._validate_od_settings()
 
         # Compute OD cost matrix in parallel
+        LOGGER.info(f"Beginning parallelized OD Cost Matrix solves ({self.total_jobs} chunks)")
         completed_jobs = 0  # Track the number of jobs completed so far to use in logging
         # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
         with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:

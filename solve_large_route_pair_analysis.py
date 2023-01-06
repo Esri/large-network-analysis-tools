@@ -640,7 +640,11 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
     def solve_large_route_pair_analysis(self):
         """Solve the large multi-route with known OD pairs in parallel."""
+        # Set the progressor so the user is informed of progress
+        arcpy.SetProgressor("default")
+
         try:
+            arcpy.SetProgressorLabel("Validating inputs...")
             self._validate_inputs()
             arcpy.AddMessage("Inputs successfully validated.")
         except Exception:  # pylint: disable=broad-except
@@ -649,6 +653,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         # Preprocess inputs
         try:
+            arcpy.SetProgressorLabel("Preprocessing inputs...")
             self._preprocess_inputs()
             arcpy.AddMessage("Inputs successfully preprocessed.")
         except Exception:  # pylint: disable=broad-except
@@ -656,6 +661,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             return
 
         # Solve the analysis
+        arcpy.SetProgressorLabel("Solving analysis in parallel...")
         self._execute_solve()
 
 
