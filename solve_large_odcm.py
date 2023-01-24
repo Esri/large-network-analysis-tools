@@ -103,7 +103,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
         self.output_od_lines = output_od_lines
         self.output_data_folder = output_data_folder
 
-        self.same_origins_destinations = bool(self.origins == self.destinations)
+        self.same_origins_destinations = helpers.are_input_layers_the_same(self.origins, self.destinations)
 
         self.max_origins = self.chunk_size
         self.max_destinations = self.chunk_size

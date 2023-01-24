@@ -1,6 +1,6 @@
 """Unit tests for the helpers.py module.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -134,6 +134,37 @@ class TestHelpers(unittest.TestCase):
             with self.assertRaises(ValueError) as ex:
                 helpers.validate_input_feature_class(input_fc)
             self.assertEqual(f"Input dataset {input_fc} has no rows.", str(ex.exception))
+
+    def test_are_input_layers_the_same(self):
+        """Test the are_input_layers_the_same function."""
+        fc1 = os.path.join(self.sf_gdb, "Analysis", "TractCentroids")
+        fc2 = os.path.join(self.sf_gdb, "Analysis", "Hospitals")
+        lyr1_name = "Layer1"
+        lyr2_name = "Layer2"
+        lyr1_obj = arcpy.management.MakeFeatureLayer(fc1, lyr1_name)
+        lyr1_obj_again = arcpy.management.MakeFeatureLayer(fc1, "Layer1 again")
+        lyr2_obj = arcpy.management.MakeFeatureLayer(fc2, lyr2_name)
+        lyr1_file = os.path.join(self.scratch_folder, "lyr1.lyrx")
+        lyr2_file = os.path.join(self.scratch_folder, "lyr2.lyrx")
+        arcpy.management.SaveToLayerFile(lyr1_obj, lyr1_file)
+        arcpy.management.SaveToLayerFile(lyr2_obj, lyr2_file)
+        fset_1 = arcpy.FeatureSet(fc1)
+        fset_2 = arcpy.FeatureSet(fc2)
+
+        # Feature class catalog path inputs
+        self.assertFalse(helpers.are_input_layers_the_same(fc1, fc2))
+        self.assertTrue(helpers.are_input_layers_the_same(fc1, fc1))
+        # Layer inputs
+        self.assertFalse(helpers.are_input_layers_the_same(lyr1_name, lyr2_name))
+        self.assertTrue(helpers.are_input_layers_the_same(lyr1_name, lyr1_name))
+        self.assertFalse(helpers.are_input_layers_the_same(lyr1_obj, lyr2_obj))
+        self.assertTrue(helpers.are_input_layers_the_same(lyr1_obj, lyr1_obj))
+        self.assertFalse(helpers.are_input_layers_the_same(lyr1_obj, lyr1_obj_again))
+        self.assertFalse(helpers.are_input_layers_the_same(lyr1_file, lyr2_file))
+        self.assertTrue(helpers.are_input_layers_the_same(lyr1_file, lyr1_file))
+        # Feature set inputs
+        self.assertFalse(helpers.are_input_layers_the_same(fset_1, fset_2))
+        self.assertTrue(helpers.are_input_layers_the_same(fset_1, fset_1))
 
     def test_validate_network_data_source(self):
         """Test the validate_network_data_source function."""
