@@ -87,6 +87,24 @@ arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
 
 You can also run the provided scripts by directly calling solve_large_odcm.py from the command line instead of using the geoprocessing tool as the code's gateway. Call `python solve_large_odcm.py -h` to print the command line help to show you how to do this.
 
+### Recommended settings for best performance
+
+The tool includes several settings that can impact the overall run time.
+
+For best performance, use the "CSV files" or "Apache Arrow files" option for the **Output OD Cost Matrix Format** instead of the "Feature class" option, which is much slower to process.
+
+The other main consideration is what type of network data source is being used for the analysis, and the optimal chunk size and number of parallel processes depend on this choice.
+
+If the network data source is ArcGIS Online, the **Maximum Number of Parallel Processes** parameter is capped at 4 concurrent processes so as not to overload the service for other users.  The ArcGIS Online OD Cost Matrix service also limits the number of origins and destinations allowed in a single problem.  As of this writing, that number is 1000, so the **Maximum Origins and Destinations per Chunk** parameter value cannot be greater than 1000.  If you enter a larger number, the tool will automatically reduce the chunk size to the maximum allowed.
+
+If the network data source is an ArcGIS Enterprise service, the service configuration may limit the number of allowed concurrent processes, and this number should not be exceeded for the **Maximum Number of Parallel Processes** parameter.  (If you are the service administrator, you can update the service configuration to increase this number.)  However, you also shouldn't exceed the number of logical processors of your machine (the client) because the client manages the jobs sent to the server and cannot manage more concurrent processes than it has logical cores available.  Uncommonly, ArcGIS Enterprise services also limit the number of allowed inputs, and in this case the tool will automatically adjust the **Maximum Origins and Destinations per Chunk** to that limit if the input value is too large.  However, usually ArcGIS Enterprise services do not include such limits, and the recommended chunk size depends on whether the service's network dataset is in a file geodatabase or a mobile geodatabase as discussed below.
+
+If the network data source is a network dataset in a file geodatabase, set the **Maximum Number of Parallel Processes** to the number of logical processors of your machine.  A **Maximum Origins and Destinations per Chunk** value of around 1000 or 2000 typically works best, even for very large input datasets, because these small chunks solve very quickly.
+
+If the network data source is a network dataset in a mobile geodatabase, the internal OD Cost Matrix solver functions a little differently than it does for file geodatabase network datasets.  The internal solver does its own multithreaded, parallelized operations spread across your machine's resources, so additional parallelization on the client side will not improve performance.  A **Maximum Number of Parallel Processes** value of 2 to 4 is recommended.  Additionally, because of this internal parallelization, larger OD Cost Matrix problems solve more quickly than with file geodatabase data, so you may have better overall tool run times using a **Maximum Origins and Destinations per Chunk** value around 10,000.
+
+To some extent, the best chunk size depends on the configuration of your input data.  The tool will spatially sort the input data if you have the Advanced license, and sorted data allows for smarter chunking.  Before solving the OD Cost Matrix for each chunk of origins and destinations, it first does a simple and quick straight-line filter to remove any destinations that are very far away, and if all destinations are filtered out, the chunk will be skipped.  Smaller chunks are more likely to be skipped than larger chunks, particularly if your data is highly clustered.
+
 ### Technical explanation of how this tool works
 
 The tool consists of several scripts:

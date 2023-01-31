@@ -16,6 +16,7 @@ Copyright 2023 Esri
 # Disable a bunch of linter errors caused by the standard python toolbox class definitions that we cannot change
 # pylint: disable=invalid-name, useless-object-inheritance, too-few-public-methods, too-many-locals
 # pylint: disable=useless-return, unused-argument
+import os
 from os import cpu_count
 import arcpy
 
@@ -267,10 +268,19 @@ class SolveLargeODCostMatrix(object):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
         param_network = parameters[2]
+        param_chunk_size = parameters[6]
         param_max_processes = parameters[7]
         param_output_format = parameters[10]
         param_out_od_lines = parameters[11]
         param_out_folder = parameters[12]
+
+        # Give a warning for very large chunk sizes
+        if param_chunk_size.altered and param_chunk_size.valueAsText:
+            if int(param_chunk_size.valueAsText) > 15000:
+                param_chunk_size.setWarningMessage((
+                    "The tool will likely run faster with smaller chunk sizes. Consult the user's guide for "
+                    "recommendations."
+                ))
 
         # Validate max processes and cap it when necessary
         cap_max_processes(param_network, param_max_processes)
@@ -785,6 +795,22 @@ def cap_max_processes(param_network, param_max_processes):
                 "ArcGIS Online service is used as the network data source."
             ))
             return
+        # If the network data source is mgdb and the user has put more processes than the max recommended for
+        # the mgdb solvers, set a warning.
+        if (
+            max_processes > helpers.MAX_RECOMMENDED_MGDB_PROCESSES and
+            param_network.altered and
+            param_network.valueAsText
+        ):
+            network_path = get_catalog_path(param_network)
+            desc = arcpy.Describe(os.path.dirname(os.path.dirname(network_path)))
+            if desc.workspaceFactoryProgID.startswith("esriDataSourcesGDB.SqliteWorkspaceFactory"):
+                param_max_processes.setWarningMessage((
+                    "The maximum number of parallel processes is greater than the maximum recommended number "
+                    f"({helpers.MAX_RECOMMENDED_MGDB_PROCESSES}) to use with a network dataset in a "
+                    "mobile geodatabase."
+                ))
+                return
         # Set a warning if the user has put more processes than the number of logical cores on their machine
         if max_processes > cpu_count():
             param_max_processes.setWarningMessage((
