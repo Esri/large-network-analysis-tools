@@ -800,7 +800,8 @@ def cap_max_processes(param_network, param_max_processes):
         if (
             max_processes > helpers.MAX_RECOMMENDED_MGDB_PROCESSES and
             param_network.altered and
-            param_network.valueAsText
+            param_network.valueAsText and
+            not helpers.is_nds_service(param_network.valueAsText)
         ):
             network_path = get_catalog_path(param_network)
             desc = arcpy.Describe(os.path.dirname(os.path.dirname(network_path)))
