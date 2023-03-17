@@ -36,6 +36,7 @@ if arcgis_version >= "2.9":
 MAX_AGOL_PROCESSES = 4  # AGOL concurrent processes are limited so as not to overload the service for other users.
 MAX_RECOMMENDED_MGDB_PROCESSES = 4  # Max recommended concurrent processes with mgdb network datasets
 MAX_ALLOWED_MAX_PROCESSES = 61  # Windows limitation for concurrent.futures ProcessPoolExecutor
+MAX_RETRIES = 3  # Max allowed retries if a parallel process errors (eg, temporary service glitch or read/write error)
 DATETIME_FORMAT = "%Y%m%d %H:%M"  # Used for converting between datetime and string
 
 # Conversion between ArcGIS field types and python types for use when creating dataframes
