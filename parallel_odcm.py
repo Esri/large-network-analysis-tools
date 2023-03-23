@@ -69,7 +69,9 @@ LOGGER.addHandler(console_handler)
 DELETE_INTERMEDIATE_OD_OUTPUTS = True  # Set to False for debugging purposes
 
 
-class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
+class ODCostMatrix(
+    helpers.JobFolderMixin, helpers.LoggingMixin, helpers.MakeNDSLayerMixin
+):  # pylint:disable = too-many-instance-attributes
     """Used for solving an OD Cost Matrix problem in parallel for a designated chunk of the input datasets."""
 
     def __init__(self, **kwargs):
@@ -107,16 +109,11 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             self.barriers = kwargs["barriers"]
 
         # Create a job ID and a folder and scratch gdb for this job
-        self.job_id = uuid.uuid4().hex
-        self.job_folder = os.path.join(self.scratch_folder, self.job_id)
-        os.mkdir(self.job_folder)
+        self.create_job_folder()
 
         # Setup the class logger. Logs for each parallel process are not written to the console but instead to a
         # process-specific log file.
-        self.log_file = os.path.join(self.job_folder, 'ODCostMatrix.log')
-        cls_logger = logging.getLogger("ODCostMatrix_" + self.job_id)
-        self.setup_logger(cls_logger)
-        self.logger = cls_logger
+        self.setup_logger("ODCostMatrix")
 
         # Set up other instance attributes
         self.is_service = helpers.is_nds_service(self.network_data_source)
@@ -158,25 +155,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
         self.destinations_fields = desc_destinations.fields
         self.orig_origin_oid_field = "Orig_Origin_OID"
         self.orig_dest_oid_field = "Orig_Dest_OID"
-
-    def _make_nds_layer(self):
-        """Create a network dataset layer if one does not already exist."""
-        if self.is_service:
-            return
-        nds_layer_name = os.path.basename(self.network_data_source)
-        if arcpy.Exists(nds_layer_name):
-            # The network dataset layer already exists in this process, so we can re-use it without having to spend
-            # time re-opening the network dataset and making a fresh layer.
-            self.logger.debug(f"Using existing network dataset layer: {nds_layer_name}")
-        else:
-            # The network dataset layer does not exist in this process, so create the layer.
-            self.logger.debug("Creating network dataset layer...")
-            helpers.run_gp_tool(
-                self.logger,
-                arcpy.na.MakeNetworkDatasetLayer,
-                [self.network_data_source, nds_layer_name],
-            )
-        self.network_data_source = nds_layer_name
 
     def initialize_od_solver(self):
         """Initialize an OD solver object and set properties."""
@@ -661,27 +639,6 @@ class ODCostMatrix:  # pylint:disable = too-many-instance-attributes
             self.optimized_field_name = "Total_Time"
         else:
             self.optimized_field_name = "Total_Distance"
-
-    def setup_logger(self, logger_obj):
-        """Set up the logger used for logging messages for this process. Logs are written to a text file.
-
-        Args:
-            logger_obj: The logger instance.
-        """
-        logger_obj.setLevel(logging.DEBUG)
-        if len(logger_obj.handlers) <= 1:
-            file_handler = logging.FileHandler(self.log_file)
-            file_handler.setLevel(logging.DEBUG)
-            logger_obj.addHandler(file_handler)
-            formatter = logging.Formatter("%(process)d | %(message)s")
-            file_handler.setFormatter(formatter)
-            logger_obj.addHandler(file_handler)
-
-    def teardown_logger(self):
-        """Clean up and close the logger."""
-        for handler in self.logger.handlers:
-            handler.close()
-            self.logger.removeHandler(handler)
 
 
 def solve_od_cost_matrix(inputs, chunk):

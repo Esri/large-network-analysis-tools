@@ -30,7 +30,6 @@ Copyright 2023 Esri
 from concurrent import futures
 import os
 import sys
-import uuid
 import logging
 import shutil
 import time
@@ -65,7 +64,9 @@ LOGGER.addHandler(console_handler)
 DELETE_INTERMEDIATE_OUTPUTS = True  # Set to False for debugging purposes
 
 
-class Route:  # pylint:disable = too-many-instance-attributes
+class Route(
+    helpers.JobFolderMixin, helpers.LoggingMixin, helpers.MakeNDSLayerMixin
+):  # pylint:disable = too-many-instance-attributes
     """Used for solving a Route problem in parallel for a designated chunk of the input datasets."""
 
     def __init__(self, **kwargs):
@@ -111,16 +112,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
             self.barriers = kwargs["barriers"]
 
         # Create a job ID and a folder and scratch gdb for this job
-        self.job_id = uuid.uuid4().hex
-        self.job_folder = os.path.join(self.scratch_folder, self.job_id)
-        os.mkdir(self.job_folder)
+        self.create_job_folder()
 
         # Setup the class logger. Logs for each parallel process are not written to the console but instead to a
         # process-specific log file.
-        self.log_file = os.path.join(self.job_folder, 'RoutePairs.log')
-        cls_logger = logging.getLogger("RoutePairs_" + self.job_id)
-        self.setup_logger(cls_logger)
-        self.logger = cls_logger
+        self.setup_logger("RoutePairs")
 
         # Get field objects for the origin and destination ID fields since we need this in multiple places
         self.origin_id_field_obj = arcpy.ListFields(self.origins, wild_card=self.origin_id_field)[0]
@@ -151,25 +147,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
             "outputRoutes": "",
             "logFile": self.log_file
         }
-
-    def _make_nds_layer(self):
-        """Create a network dataset layer if one does not already exist."""
-        if self.is_service:
-            return
-        nds_layer_name = os.path.basename(self.network_data_source)
-        if arcpy.Exists(nds_layer_name):
-            # The network dataset layer already exists in this process, so we can re-use it without having to spend
-            # time re-opening the network dataset and making a fresh layer.
-            self.logger.debug(f"Using existing network dataset layer: {nds_layer_name}")
-        else:
-            # The network dataset layer does not exist in this process, so create the layer.
-            self.logger.debug("Creating network dataset layer...")
-            helpers.run_gp_tool(
-                self.logger,
-                arcpy.na.MakeNetworkDatasetLayer,
-                [self.network_data_source, nds_layer_name],
-            )
-        self.network_data_source = nds_layer_name
 
     def initialize_rt_solver(self):
         """Initialize a Route solver object and set properties."""
@@ -556,27 +533,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
         )
 
         self.job_result["outputRoutes"] = output_routes
-
-    def setup_logger(self, logger_obj):
-        """Set up the logger used for logging messages for this process. Logs are written to a text file.
-
-        Args:
-            logger_obj: The logger instance.
-        """
-        logger_obj.setLevel(logging.DEBUG)
-        if len(logger_obj.handlers) <= 1:
-            file_handler = logging.FileHandler(self.log_file)
-            file_handler.setLevel(logging.DEBUG)
-            logger_obj.addHandler(file_handler)
-            formatter = logging.Formatter("%(process)d | %(message)s")
-            file_handler.setFormatter(formatter)
-            logger_obj.addHandler(file_handler)
-
-    def teardown_logger(self):
-        """Clean up and close the logger."""
-        for handler in self.logger.handlers:
-            handler.close()
-            self.logger.removeHandler(handler)
 
 
 def solve_route(inputs, chunk):

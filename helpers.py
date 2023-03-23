@@ -13,8 +13,11 @@ Copyright 2023 Esri
    See the License for the specific language governing permissions and
    limitations under the License.
 """
+import os
+import uuid
 import enum
 import traceback
+import logging
 import arcpy
 
 arcgis_version = arcpy.GetInstallInfo()["Version"]
@@ -473,3 +476,64 @@ def run_gp_tool(log_to_use, tool, tool_args=None, tool_kwargs=None):
 
     log_to_use.debug(f"Finished running geoprocessing tool {tool_name}.")
     return result
+
+
+class JobFolderMixin:  # pylint:disable = too-few-public-methods
+    """Used to define and create a job folder for a parallel process."""
+
+    def create_job_folder(self):
+        """Create a job ID and a folder and scratch gdb for this job."""
+        self.job_id = uuid.uuid4().hex
+        self.job_folder = os.path.join(self.scratch_folder, self.job_id)
+        os.mkdir(self.job_folder)
+
+
+class LoggingMixin:
+    """Used to set up and tear down logging for a parallel process."""
+
+    def setup_logger(self, name_prefix):
+        """Set up the logger used for logging messages for this process. Logs are written to a text file.
+
+        Args:
+            logger_obj: The logger instance.
+        """
+        self.log_file = os.path.join(self.job_folder, name_prefix + ".log")
+        self.logger = logging.getLogger(f"{name_prefix}_{self.job_id}")
+
+        self.logger.setLevel(logging.DEBUG)
+        if len(self.logger.handlers) <= 1:
+            file_handler = logging.FileHandler(self.log_file)
+            file_handler.setLevel(logging.DEBUG)
+            self.logger.addHandler(file_handler)
+            formatter = logging.Formatter("%(process)d | %(message)s")
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+
+    def teardown_logger(self):
+        """Clean up and close the logger."""
+        for handler in self.logger.handlers:
+            handler.close()
+            self.logger.removeHandler(handler)
+
+
+class MakeNDSLayerMixin:  # pylint:disable = too-few-public-methods
+    """Used to make a network dataset layer for a parallel process."""
+
+    def _make_nds_layer(self):
+        """Create a network dataset layer if one does not already exist."""
+        if self.is_service:
+            return
+        nds_layer_name = os.path.basename(self.network_data_source)
+        if arcpy.Exists(nds_layer_name):
+            # The network dataset layer already exists in this process, so we can re-use it without having to spend
+            # time re-opening the network dataset and making a fresh layer.
+            self.logger.debug(f"Using existing network dataset layer: {nds_layer_name}")
+        else:
+            # The network dataset layer does not exist in this process, so create the layer.
+            self.logger.debug("Creating network dataset layer...")
+            run_gp_tool(
+                self.logger,
+                arcpy.na.MakeNetworkDatasetLayer,
+                [self.network_data_source, nds_layer_name],
+            )
+        self.network_data_source = nds_layer_name
