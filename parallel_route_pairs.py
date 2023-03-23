@@ -112,7 +112,7 @@ class Route(
             self.barriers = kwargs["barriers"]
 
         # Create a job ID and a folder and scratch gdb for this job
-        self.create_job_folder()
+        self._create_job_folder()
 
         # Setup the class logger. Logs for each parallel process are not written to the console but instead to a
         # process-specific log file.
@@ -488,21 +488,15 @@ class Route(
     def _export_to_feature_class(self, chunk_definition):
         """Export the Route result to a feature class."""
         # Make output gdb
-        self.logger.debug("Creating output geodatabase for Route results...")
-        od_workspace = os.path.join(self.job_folder, "scratch.gdb")
-        helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.CreateFileGDB,
-            [os.path.dirname(od_workspace), os.path.basename(od_workspace)],
-        )
+        rt_workspace = self._create_output_gdb()
 
         # Export routes
-        output_routes = os.path.join(od_workspace, f"Routes_{chunk_definition[0]}_{chunk_definition[1]}")
+        output_routes = os.path.join(rt_workspace, f"Routes_{chunk_definition[0]}_{chunk_definition[1]}")
         self.logger.debug(f"Exporting Route Routes output to {output_routes}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Routes, output_routes)
 
         # Export stops
-        output_stops = os.path.join(od_workspace, f"Stops_{chunk_definition[0]}_{chunk_definition[1]}")
+        output_stops = os.path.join(rt_workspace, f"Stops_{chunk_definition[0]}_{chunk_definition[1]}")
         self.logger.debug(f"Exporting Route Stops output to {output_stops}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
 

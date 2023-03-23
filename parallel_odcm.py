@@ -109,7 +109,7 @@ class ODCostMatrix(
             self.barriers = kwargs["barriers"]
 
         # Create a job ID and a folder and scratch gdb for this job
-        self.create_job_folder()
+        self._create_job_folder()
 
         # Setup the class logger. Logs for each parallel process are not written to the console but instead to a
         # process-specific log file.
@@ -345,13 +345,7 @@ class ODCostMatrix(
     def _export_to_feature_class(self, out_fc_name):
         """Export the OD Lines result to a feature class."""
         # Make output gdb
-        self.logger.debug("Creating output geodatabase for OD cost matrix results...")
-        od_workspace = os.path.join(self.job_folder, "scratch.gdb")
-        helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.CreateFileGDB,
-            [os.path.dirname(od_workspace), os.path.basename(od_workspace)],
-        )
+        od_workspace = self._create_output_gdb()
 
         output_od_lines = os.path.join(od_workspace, out_fc_name)
         self.logger.debug(f"Exporting OD cost matrix Lines output to {output_od_lines}...")

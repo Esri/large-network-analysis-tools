@@ -481,11 +481,26 @@ def run_gp_tool(log_to_use, tool, tool_args=None, tool_kwargs=None):
 class JobFolderMixin:  # pylint:disable = too-few-public-methods
     """Used to define and create a job folder for a parallel process."""
 
-    def create_job_folder(self):
+    def _create_job_folder(self):
         """Create a job ID and a folder and scratch gdb for this job."""
         self.job_id = uuid.uuid4().hex
         self.job_folder = os.path.join(self.scratch_folder, self.job_id)
         os.mkdir(self.job_folder)
+
+    def _create_output_gdb(self):
+        """Create a scratch geodatabase in the job folder.
+
+        Returns:
+            str: Catalog path to output geodatabase
+        """
+        self.logger.debug("Creating output geodatabase...")
+        out_gdb = os.path.join(self.job_folder, "scratch.gdb")
+        run_gp_tool(
+            self.logger,
+            arcpy.management.CreateFileGDB,
+            [os.path.dirname(out_gdb), os.path.basename(out_gdb)],
+        )
+        return out_gdb
 
 
 class LoggingMixin:
