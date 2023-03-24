@@ -61,27 +61,23 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
     """Used for calculating network locations for a designated chunk of the input datasets."""
 
     def __init__(self, **kwargs):
-        """Initialize the OD Cost Matrix analysis for the given inputs.
+        """Initialize the location calculator for the given inputs.
 
         Expected arguments:
-        - origins
-        - destinations
-        - output_format
-        - output_od_location
+        - input_fc
         - network_data_source
         - travel_mode
-        - time_units
-        - distance_units
-        - cutoff
-        - num_destinations
-        - time_of_day
+        - search_tolerance
+        - search_criteria
+        - search_query
         - scratch_folder
-        - barriers
         """
         self.input_fc = kwargs["input_fc"]
         self.network_data_source = kwargs["network_data_source"]
         self.travel_mode = kwargs["travel_mode"]
-        self.config_file_props = kwargs["config_file_props"]
+        self.search_tolerance = kwargs["search_tolerance"]
+        self.search_criteria = kwargs["search_criteria"]
+        self.search_query = kwargs["search_query"]
         self.scratch_folder = kwargs["scratch_folder"]
 
         # Create a job ID and a folder for this job
@@ -132,8 +128,14 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
         """Calculate locations for a chunk of the input feature class with the designated OID range."""
         self._subset_inputs(oid_range)
         self.logger.debug("Calculating locations...")
-        helpers.precalculate_network_locations(
-            self.out_fc, self.network_data_source, self.travel_mode, self.config_file_props)
+        arcpy.na.CalculateLocations(
+            self.out_fc,
+            self.network_data_source,
+            search_tolerance=self.search_tolerance,
+            search_criteria=self.search_criteria,
+            search_query=self.search_query,
+            travel_mode=self.travel_mode
+        )
         self.job_result["outputFC"] = self.out_fc
 
 
@@ -148,35 +150,24 @@ class ParallelLocationCalculator:
     """Calculates network locations for a large dataset by chunking the dataset and calculating in parallel."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, input_features, network_data_source, travel_mode, chunk_size, max_processes, config_file_props
+        self, input_features, network_data_source, chunk_size, max_processes,
+        travel_mode=None, search_tolerance=None, search_criteria=None, search_query=None
     ):
-        """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
+        """Calculate network locations for the input features in parallel.
 
-        Compute OD cost matrices in parallel and combine and post-process the results.
-        This class assumes that the inputs have already been pre-processed and validated.
+        Run the Calculate Locations tool on chunks of the input dataset in parallel and and recombine the results.
+        Refer to the Calculate Locations tool documentation for more information about the input parameters.
+        https://pro.arcgis.com/en/pro-app/latest/tool-reference/network-analyst/calculate-locations.htm
 
         Args:
-            origins (str): Catalog path to origins
-            destinations (str): Catalog path to destinations
-            network_data_source (str): Network data source catalog path or URL
-            travel_mode (str): String-based representation of a travel mode (name or JSON)
-            output_format (str): String representation of the output format
-            output_od_location (str): Catalog path to the output feature class or folder where the OD Lines output will
-                be stored.
-            max_origins (int): Maximum origins allowed in a chunk
-            max_destinations (int): Maximum destinations allowed in a chunk
+            input_features (str): Catalog path to input features to calculate locations for
+            network_data_source (str): Network data source catalog path
+            chunk_size (int): Maximum features to be processed in one chunk
             max_processes (int): Maximum number of parallel processes allowed
-            time_units (str): String representation of time units
-            distance_units (str): String representation of distance units
-            cutoff (float, optional): Impedance cutoff to limit the OD Cost Matrix solve. Interpreted in the time_units
-                if the travel mode is time-based. Interpreted in the distance-units if the travel mode is distance-
-                based. Interpreted in the impedance units if the travel mode is neither time- nor distance-based.
-                Defaults to None. When None, do not use a cutoff.
-            num_destinations (int, optional): The number of destinations to find for each origin. Defaults to None,
-                which means to find all destinations.
-            time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
-            barriers (list(str), optional): List of catalog paths to point, line, and polygon barriers to use.
-                Defaults to None.
+            travel_mode (str, optional): String-based representation of a travel mode (name or JSON)
+            search_tolerance (str, optional): Linear Unit string representing the search distance to use when locating
+            search_criteria (list, optional): Defines the network sources that can be used for locating
+            search_query (list, optional): Defines queries to use per network source when locating.
         """
         self.input_features = input_features
         self.max_processes = max_processes
@@ -192,7 +183,9 @@ class ParallelLocationCalculator:
             "input_fc": self.input_features,
             "network_data_source": network_data_source,
             "travel_mode": travel_mode,
-            "config_file_props": config_file_props,
+            "search_tolerance": search_tolerance,
+            "search_criteria": search_criteria,
+            "search_query": search_query,
             "scratch_folder": self.scratch_folder
         }
 
@@ -263,10 +256,132 @@ class ParallelLocationCalculator:
                 # If we got this far, the job completed successfully and we retrieved results.
                 completed_jobs += 1
                 LOGGER.info(
-                    f"Finished Calculate Locations chunk {completed_jobs} of {self.total_jobs}.")
+                    f"Finished Calculate Locations chunk {completed_jobs} of {total_jobs}.")
 
                 # Parse the results dictionary and store components for post-processing.
                 self.temp_out_fcs.append(result["outputFC"])
+
+        # Rejoin the chunked feature classes into one.
+        LOGGER.info("Rejoining chunked data...")
+        self._rejoin_chunked_output()
+
+        # Clean up
+        # Delete the job folders if the job succeeded
+        if DELETE_INTERMEDIATE_OUTPUTS:
+            LOGGER.info("Deleting intermediate outputs...")
+            try:
+                shutil.rmtree(self.scratch_folder, ignore_errors=True)
+            except Exception:  # pylint: disable=broad-except
+                # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
+                LOGGER.warning(
+                    f"Unable to delete intermediate Calculate Locations output folder {self.scratch_folder}.")
+
+        LOGGER.info("Finished calculating locations in parallel.")
+
+    def _rejoin_chunked_output(self):
+        """Merge the chunks into a single feature class.
+
+        Create an empty final output feature class and populate it using InsertCursor, as this tends to be faster than
+        using the Merge geoprocessing tool.
+        """
+        # Create the final output feature class
+        desc = arcpy.Describe(self.temp_out_fcs[0])
+        ## TODO: How to handle output feature class?
+        helpers.run_gp_tool(
+            LOGGER,
+            arcpy.management.CreateFeatureclass, [
+                os.path.dirname(self.out_routes),
+                os.path.basename(self.out_routes),
+                "POLYLINE",
+                self.temp_out_fcs[0],  # template feature class to transfer full schema
+                "SAME_AS_TEMPLATE",
+                "SAME_AS_TEMPLATE",
+                desc.spatialReference
+            ]
+        )
+
+        # Insert the rows from all the individual output feature classes into the final output
+        fields = ["SHAPE@"] + [f.name for f in desc.fields]
+        with arcpy.da.InsertCursor(self.out_routes, fields) as cur:  # pylint: disable=no-member
+            # TODO: How to sort in correct order?
+            for fc in self.temp_out_fcs:
+                for row in arcpy.da.SearchCursor(fc, fields):  # pylint: disable=no-member
+                    cur.insertRow(row)
+
+
+def launch_parallel_calc_locs():
+    """Read arguments passed in via subprocess and run the parallel calculate locations.
+
+    This script is intended to be called via subprocess via a client module.  Users should not call this script
+    directly from the command line.
+
+    We must launch this script via subprocess in order to support parallel processing from an ArcGIS Pro script tool,
+    which cannot do parallel processing directly.
+    """
+    # Create the parser
+    parser = argparse.ArgumentParser(description=globals().get("__doc__", ""), fromfile_prefix_chars='@')
+
+    # Define Arguments supported by the command line utility
+
+    # --input-features parameter
+    help_string = "The full catalog path to the input features to calculate locations for."
+    parser.add_argument(
+        "-if", "--input-features", action="store", dest="input_features", help=help_string, required=True)
+
+    # --network-data-source parameter
+    help_string = "The full catalog path to the network dataset that will be used for calculating locations."
+    parser.add_argument(
+        "-n", "--network-data-source", action="store", dest="network_data_source", help=help_string, required=True)
+
+    # --chunk-size parameter
+    help_string = "Maximum number of features that can be in one chunk for parallel processing."
+    parser.add_argument(
+        "-ch", "--chunk-size", action="store", dest="chunk_size", type=int, help=help_string, required=True)
+
+    # --max-processes parameter
+    help_string = "Maximum number parallel processes to use for calculating locations."
+    parser.add_argument(
+        "-mp", "--max-processes", action="store", dest="max_processes", type=int, help=help_string, required=True)
+
+    # --travel-mode parameter
+    help_string = (
+        "The name or JSON string representation of the travel mode from the network data source that will be used for "
+        "calculating locations."
+    )
+    parser.add_argument("-tm", "--travel-mode", action="store", dest="travel_mode", help=help_string, required=False)
+
+    # --search-tolerance parameter
+    help_string = "Linear Unit string representing the search distance to use when locating."
+    parser.add_argument(
+        "-st", "--search-tolerance", action="store", dest="search_tolerance", help=help_string, required=False)
+
+    # --search-criteria parameter
+    help_string = "Defines the network sources that can be used for locating."
+    parser.add_argument(
+        "-sc", "--search-criteria", action="store", dest="search_criteria", help=help_string, required=False)
+
+    # --search-query parameter
+    help_string = "Defines queries to use per network source when locating."
+    parser.add_argument(
+        "-sq", "--search-query", action="store", dest="search_query", help=help_string, required=False)
+
+    try:
+        # Get arguments as dictionary.
+        args = vars(parser.parse_args())
+
+        # Initialize a parallel location calculator class
+        cl_calculator = ParallelLocationCalculator(**args)
+        # Calcluate network locations in parallel chunks
+        start_time = time.time()
+        cl_calculator.calc_locs_in_parallel()
+        LOGGER.info(f"Parallel Calculate Locations completed in {round((time.time() - start_time) / 60, 2)} minutes")
+
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.error("Error in parallelization subprocess.")
+        errs = traceback.format_exc().splitlines()
+        for err in errs:
+            LOGGER.error(err)
+        raise
 
 
 if __name__ == "__main__":
