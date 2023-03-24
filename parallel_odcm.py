@@ -108,7 +108,7 @@ class ODCostMatrix(
         if "barriers" in kwargs:
             self.barriers = kwargs["barriers"]
 
-        # Create a job ID and a folder and scratch gdb for this job
+        # Create a job ID and a folder for this job
         self._create_job_folder()
 
         # Setup the class logger. Logs for each parallel process are not written to the console but instead to a
