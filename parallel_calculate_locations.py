@@ -28,13 +28,9 @@ import sys
 import uuid
 import logging
 import shutil
-import itertools
 import time
-import datetime
 import traceback
 import argparse
-import csv
-import pandas as pd
 
 import arcpy
 
@@ -98,6 +94,7 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
             "jobId": self.job_id,
             "jobFolder": self.job_folder,
             "outputFC": "",
+            "oidRange": None,
             "logFile": self.log_file
         }
 
@@ -137,6 +134,7 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
             travel_mode=self.travel_mode
         )
         self.job_result["outputFC"] = self.out_fc
+        self.job_result["oidRange"] = tuple(oid_range)
 
 
 def calculate_locations_for_chunk(calc_locs_settings, chunk):
@@ -147,7 +145,7 @@ def calculate_locations_for_chunk(calc_locs_settings, chunk):
 
 
 class ParallelLocationCalculator:
-    """Calculates network locations for a large dataset by chunking the dataset and calculating in parallel."""
+    """Calculate network locations for a large dataset by chunking the dataset and calculating in parallel."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
         self, input_features, network_data_source, chunk_size, max_processes,
@@ -190,7 +188,7 @@ class ParallelLocationCalculator:
         }
 
         # List of intermediate output feature classes created by each process
-        self.temp_out_fcs = []
+        self.temp_out_fcs = {}
 
         # Construct OID ranges for the input data chunks
         self.ranges = helpers.get_oid_ranges_for_input(self.input_features, chunk_size)
@@ -259,7 +257,8 @@ class ParallelLocationCalculator:
                     f"Finished Calculate Locations chunk {completed_jobs} of {total_jobs}.")
 
                 # Parse the results dictionary and store components for post-processing.
-                self.temp_out_fcs.append(result["outputFC"])
+                # Store the ranges as dictionary keys to facilitate sorting.
+                self.temp_out_fcs[result["oidRange"]] = result["outputFC"]
 
         # Rejoin the chunked feature classes into one.
         LOGGER.info("Rejoining chunked data...")
@@ -303,9 +302,9 @@ class ParallelLocationCalculator:
         # Insert the rows from all the individual output feature classes into the final output
         fields = ["SHAPE@"] + [f.name for f in desc.fields]
         with arcpy.da.InsertCursor(self.out_routes, fields) as cur:  # pylint: disable=no-member
-            # TODO: How to sort in correct order?
-            for fc in self.temp_out_fcs:
-                for row in arcpy.da.SearchCursor(fc, fields):  # pylint: disable=no-member
+            # Get rows from the output feature class from each chunk in the original order
+            for chunk in self.ranges:
+                for row in arcpy.da.SearchCursor(self.temp_out_fcs[tuple(chunk)], fields):  # pylint: disable=no-member
                     cur.insertRow(row)
 
 
@@ -371,7 +370,7 @@ def launch_parallel_calc_locs():
 
         # Initialize a parallel location calculator class
         cl_calculator = ParallelLocationCalculator(**args)
-        # Calcluate network locations in parallel chunks
+        # Calculate network locations in parallel chunks
         start_time = time.time()
         cl_calculator.calc_locs_in_parallel()
         LOGGER.info(f"Parallel Calculate Locations completed in {round((time.time() - start_time) / 60, 2)} minutes")
