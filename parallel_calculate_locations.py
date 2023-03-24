@@ -3,6 +3,14 @@ inputs and solving in parallel.
 
 This is a sample script users can modify to fit their specific needs.
 
+Note: Unlike in the core Calculate Locations tool, this tool generates
+a new feature class instead of merely adding fields to the original.
+A new feature class must be generated during the parallel processing,
+and as a result, the ObjectIDs may change, so we ask the user to specify
+an output feature class path instead of overwriting the original.  If you
+need the original ObjectIDs, please calculate an additional field to track
+them before calling this tool.
+
 This script is intended to be called as a subprocess from a other scripts
 so that it can launch parallel processes with concurrent.futures. It must be
 called as a subprocess because the main script tool process, when running
