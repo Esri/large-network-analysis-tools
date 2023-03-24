@@ -153,7 +153,7 @@ class ParallelLocationCalculator:
     """Calculate network locations for a large dataset by chunking the dataset and calculating in parallel."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, input_features, network_data_source, chunk_size, max_processes,
+        self, input_features, output_features, network_data_source, chunk_size, max_processes,
         travel_mode=None, search_tolerance=None, search_criteria=None, search_query=None
     ):
         """Calculate network locations for the input features in parallel.
@@ -164,6 +164,12 @@ class ParallelLocationCalculator:
 
         Args:
             input_features (str): Catalog path to input features to calculate locations for
+            output_features (str): Catalog path to the location where the output updated feature class will be saved.
+                Unlike in the core Calculate Locations tool, this tool generates a new feature class instead of merely
+                adding fields to the original.  A new feature class must be generated during the parallel processing,
+                and as a result, the ObjectIDs may change, so we ask the user to specify an output feature class path
+                instead of overwriting the original.  If you need the original ObjectIDs, please calculate an additional
+                field to track them before calling this tool.
             network_data_source (str): Network data source catalog path
             chunk_size (int): Maximum features to be processed in one chunk
             max_processes (int): Maximum number of parallel processes allowed
@@ -173,6 +179,7 @@ class ParallelLocationCalculator:
             search_query (list, optional): Defines queries to use per network source when locating.
         """
         self.input_features = input_features
+        self.output_features = output_features
         self.max_processes = max_processes
 
         # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
@@ -289,13 +296,13 @@ class ParallelLocationCalculator:
         using the Merge geoprocessing tool.
         """
         # Create the final output feature class
+        LOGGER.debug("Creating output feature class...")
         desc = arcpy.Describe(self.temp_out_fcs[0])
-        ## TODO: How to handle output feature class?
         helpers.run_gp_tool(
             LOGGER,
             arcpy.management.CreateFeatureclass, [
-                os.path.dirname(self.out_routes),
-                os.path.basename(self.out_routes),
+                os.path.dirname(self.output_features),
+                os.path.basename(self.output_features),
                 "POLYLINE",
                 self.temp_out_fcs[0],  # template feature class to transfer full schema
                 "SAME_AS_TEMPLATE",
@@ -305,8 +312,9 @@ class ParallelLocationCalculator:
         )
 
         # Insert the rows from all the individual output feature classes into the final output
+        LOGGER.debug("Inserting rows into output feature class from output chunks...")
         fields = ["SHAPE@"] + [f.name for f in desc.fields]
-        with arcpy.da.InsertCursor(self.out_routes, fields) as cur:  # pylint: disable=no-member
+        with arcpy.da.InsertCursor(self.output_features, fields) as cur:  # pylint: disable=no-member
             # Get rows from the output feature class from each chunk in the original order
             for chunk in self.ranges:
                 for row in arcpy.da.SearchCursor(self.temp_out_fcs[tuple(chunk)], fields):  # pylint: disable=no-member
@@ -331,6 +339,11 @@ def launch_parallel_calc_locs():
     help_string = "The full catalog path to the input features to calculate locations for."
     parser.add_argument(
         "-if", "--input-features", action="store", dest="input_features", help=help_string, required=True)
+
+    # --output-features parameter
+    help_string = "The full catalog path to the output features."
+    parser.add_argument(
+        "-of", "--output-features", action="store", dest="output_features", help=help_string, required=True)
 
     # --network-data-source parameter
     help_string = "The full catalog path to the network dataset that will be used for calculating locations."
