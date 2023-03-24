@@ -125,13 +125,18 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
         """Calculate locations for a chunk of the input feature class with the designated OID range."""
         self._subset_inputs(oid_range)
         self.logger.debug("Calculating locations...")
-        arcpy.na.CalculateLocations(
-            self.out_fc,
-            self.network_data_source,
-            search_tolerance=self.search_tolerance,
-            search_criteria=self.search_criteria,
-            search_query=self.search_query,
-            travel_mode=self.travel_mode
+        helpers.run_gp_tool(
+            self.logger,
+            arcpy.na.CalculateLocations,
+            [
+                self.out_fc,
+                self.network_data_source
+            ], {
+                "search_tolerance": self.search_tolerance,
+                "search_criteria": self.search_criteria,
+                "search_query": self.search_query,
+                "travel_mode": self.travel_mode
+            }
         )
         self.job_result["outputFC"] = self.out_fc
         self.job_result["oidRange"] = tuple(oid_range)
