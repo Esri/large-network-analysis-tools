@@ -151,6 +151,15 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
 
 
 def calculate_locations_for_chunk(calc_locs_settings, chunk):
+    """Calculate locations for a range of OIDs in the input dataset.
+
+    Args:
+        calc_locs_settings (dict): Dictionary of kwargs for the LocationCalculator class.
+        chunk (list): OID range to calculate locations for. Specified as a list of [start range, end range], inclusive.
+
+    Returns:
+        dict: Dictionary of job results for the chunk
+    """
     location_calculator = LocationCalculator(**calc_locs_settings)
     location_calculator.calculate_locations(chunk)
     location_calculator.teardown_logger()
@@ -192,7 +201,8 @@ class ParallelLocationCalculator:
 
         # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
         unique_id = uuid.uuid4().hex
-        self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "CalcLocs_" + unique_id)  # pylint: disable=no-member
+        self.scratch_folder = os.path.join(
+            arcpy.env.scratchFolder, "CalcLocs_" + unique_id)  # pylint: disable=no-member
         LOGGER.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
         os.mkdir(self.scratch_folder)
 
