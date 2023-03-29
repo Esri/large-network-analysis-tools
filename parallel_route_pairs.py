@@ -164,7 +164,7 @@ class Route(
         # The properties have been extracted to the config file to make them easier to find and set so users don't have
         # to dig through the code to change them.
         self.logger.debug("Setting Route analysis properties from OD config file...")
-        for prop in RT_PROPS:
+        for prop, value in RT_PROPS.items():
             if prop in RT_PROPS_SET_BY_TOOL:
                 self.logger.warning((
                     f"Route config file property {prop} is handled explicitly by the tool parameters and will be "
@@ -172,11 +172,11 @@ class Route(
                 ))
                 continue
             try:
-                setattr(self.rt_solver, prop, RT_PROPS[prop])
-                if hasattr(RT_PROPS[prop], "name"):
-                    self.logger.debug(f"{prop}: {RT_PROPS[prop].name}")
+                setattr(self.rt_solver, prop, value)
+                if hasattr(value, "name"):
+                    self.logger.debug(f"{prop}: {value.name}")
                 else:
-                    self.logger.debug(f"{prop}: {RT_PROPS[prop]}")
+                    self.logger.debug(f"{prop}: {value}")
             except Exception as ex:  # pylint: disable=broad-except
                 # Suppress warnings for older services (pre 11.0) that don't support locate settings and services
                 # that don't support accumulating attributes because we don't want the tool to always throw a warning.
