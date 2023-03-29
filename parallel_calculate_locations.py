@@ -9,7 +9,8 @@ A new feature class must be generated during the parallel processing,
 and as a result, the ObjectIDs may change, so we ask the user to specify
 an output feature class path instead of overwriting the original.  If you
 need the original ObjectIDs, please calculate an additional field to track
-them before calling this tool.
+them before calling this tool.  We also do this to avoid accidentally deleting
+the user's original data if the tool errors.
 
 This script is intended to be called as a subprocess from a other scripts
 so that it can launch parallel processes with concurrent.futures. It must be
@@ -61,7 +62,9 @@ LOGGER.addHandler(console_handler)
 DELETE_INTERMEDIATE_OUTPUTS = True  # Set to False for debugging purposes
 
 
-class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.MakeNDSLayerMixin):
+class LocationCalculator(
+    helpers.JobFolderMixin, helpers.LoggingMixin, helpers.MakeNDSLayerMixin
+):  # pylint:disable = too-many-instance-attributes
     """Used for calculating network locations for a designated chunk of the input datasets."""
 
     def __init__(self, **kwargs):
@@ -79,10 +82,10 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
         self.input_fc = kwargs["input_fc"]
         self.network_data_source = kwargs["network_data_source"]
         self.travel_mode = kwargs["travel_mode"]
-        self.search_tolerance = kwargs["search_tolerance"]
-        self.search_criteria = kwargs["search_criteria"]
-        self.search_query = kwargs["search_query"]
         self.scratch_folder = kwargs["scratch_folder"]
+        self.search_tolerance = kwargs.get("search_tolerance", None)
+        self.search_criteria = kwargs.get("search_criteria", None)
+        self.search_query = kwargs.get("search_query", None)
 
         # Create a job ID and a folder for this job
         self._create_job_folder()
@@ -124,9 +127,10 @@ class LocationCalculator(helpers.JobFolderMixin, helpers.LoggingMixin, helpers.M
         )
         self.logger.debug(f"Where clause: {where_clause}")
         arcpy.conversion.FeatureClassToFeatureClass(
-            self.out_fc,
+            self.input_fc,
             os.path.dirname(self.out_fc),
-            os.path.basename(self.out_fc)
+            os.path.basename(self.out_fc),
+            where_clause
         )
 
     def calculate_locations(self, oid_range):
@@ -315,14 +319,15 @@ class ParallelLocationCalculator:
         """
         # Create the final output feature class
         LOGGER.debug("Creating output feature class...")
-        desc = arcpy.Describe(self.temp_out_fcs[0])
+        template_fc = self.temp_out_fcs[tuple(self.ranges[0])]
+        desc = arcpy.Describe(template_fc)
         helpers.run_gp_tool(
             LOGGER,
             arcpy.management.CreateFeatureclass, [
                 os.path.dirname(self.output_features),
                 os.path.basename(self.output_features),
-                "POLYLINE",
-                self.temp_out_fcs[0],  # template feature class to transfer full schema
+                "POINT",
+                template_fc,  # template feature class to transfer full schema
                 "SAME_AS_TEMPLATE",
                 "SAME_AS_TEMPLATE",
                 desc.spatialReference
