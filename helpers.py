@@ -320,9 +320,9 @@ def validate_network_data_source(network_data_source):
 
 def get_locate_settings_from_config_file(config_file_props, network_dataset):
     """Get location settings from config file if present."""
-    search_tolerance = None
-    search_criteria = None
-    search_query = None
+    search_tolerance = ""
+    search_criteria = ""
+    search_query = ""
     if "searchTolerance" in config_file_props and "searchToleranceUnits" in config_file_props:
         search_tolerance = f"{config_file_props['searchTolerance']} {config_file_props['searchToleranceUnits'].name}"
     if "searchSources" in config_file_props:
@@ -345,8 +345,8 @@ def get_locate_settings_from_config_file(config_file_props, network_dataset):
         # searchQuery is only used if searchSources is not present.
         search_query = config_file_props["searchQuery"]
         if not search_query:
-            # Reset to None in case it was an empty list
-            search_query = None
+            # Reset to empty string in case it was an empty list
+            search_query = ""
     # Convert the search_query to string format to allow it to be passed through to a subprocess CLI
     # Use a value table to ensure proper conversion of SQL expressions
     if search_query:

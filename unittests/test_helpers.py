@@ -194,7 +194,9 @@ class TestHelpers(unittest.TestCase):
         search_tolerance, search_criteria, search_query = helpers.get_locate_settings_from_config_file(
             config_props, self.local_nd)
         self.assertEqual("1000 Feet", search_tolerance, "Incorrect search tolerance.")
-        self.assertIsNone(search_criteria, "Search criteria should be None when searchSources is not used.")
+        self.assertEqual(
+            "", search_criteria,
+            "Search criteria should be an empty string when searchSources is not used.")
         self.assertEqual("Streets 'ObjectID <> 1';Streets_ND_Junctions #", search_query, "Incorrect search query.")
 
         # Test searchSources
@@ -204,9 +206,10 @@ class TestHelpers(unittest.TestCase):
         }
         search_tolerance, search_criteria, search_query = helpers.get_locate_settings_from_config_file(
             config_props, self.local_nd)
-        self.assertIsNone(
-            search_tolerance,
-            "Search tolerance should be None when both searchTolerance and searchToleranceUnits are not set.")
+        self.assertEqual(
+            "", search_tolerance,
+            "Search tolerance should be an empty string when both searchTolerance and searchToleranceUnits are not set."
+        )
         self.assertEqual(
             "Streets SHAPE;Streets_ND_Junctions NONE", search_criteria,
             "Incorrect search criteria.")
