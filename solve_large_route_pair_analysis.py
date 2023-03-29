@@ -37,7 +37,7 @@ import pandas as pd
 import arcpy
 
 import helpers
-from rt_config import RT_PROPS  # Import Route settings from config file
+from rt_config import RT_PROPS, RT_PROPS_SET_BY_TOOL  # Import Route settings from config file
 
 arcpy.env.overwriteOutput = True
 
@@ -345,6 +345,20 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             for err in errs:
                 arcpy.AddError(err)
             raise
+        # Set properties from config file
+        for prop, value in RT_PROPS.items():
+            if prop not in RT_PROPS_SET_BY_TOOL:
+                try:
+                    setattr(rt, prop, value)
+                except Exception:  # pylint: disable=broad-except
+                    # Suppress errors for older services (pre 11.0) that don't support locate settings and services
+                    # that don't support accumulating attributes because we don't want the tool to always fail.
+                    if not (self.is_service and prop in [
+                        "searchTolerance", "searchToleranceUnits", "accumulateAttributeNames"
+                    ]):
+                        err = f"Failed to set property {prop} from OD config file."
+                        arcpy.AddError(err)
+                        raise
 
         # Return a JSON string representation of the travel mode to pass to the subprocess
         return rt.travelMode._JSON  # pylint: disable=protected-access
