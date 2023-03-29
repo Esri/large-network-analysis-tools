@@ -14,10 +14,13 @@ Copyright 2023 Esri
    limitations under the License.
 """
 import os
+import sys
+import time
 import uuid
 import enum
 import traceback
 import logging
+import subprocess
 import arcpy
 
 arcgis_version = arcpy.GetInstallInfo()["Version"]
@@ -393,6 +396,67 @@ def get_oid_ranges_for_input(input_fc, max_chunk_size):
         ranges.append(current_range)
 
     return ranges
+
+
+def execute_subprocess(script_name, inputs):
+    """Execute a subprocess with the designated inputs and write the returned messages to the GP UI.
+
+    This is used by the tools in this toolset to launch the scripts that parallelize processes using concurrent.futures.
+    It is necessary to launch these parallelization scripts as subprocess so they can spawn parallel processes because a
+    tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
+
+    Args:
+        script_name (str): The name of the Python file to run as a subprocess, like parallel_route_pairs.py.
+        inputs (list): A list that includes each command line argument flag followed by its value appropriate for
+            calling a subprocess.  Do not include the Python executable path or the script path in this list because
+            the function will automatically add them. Ex: ["--my-param1", "my_value_1", "--my-param2", "my_value_2]
+    """
+    # Set up inputs to run the designated module with the designated inputs
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    inputs = [
+        os.path.join(sys.exec_prefix, "python.exe"),
+        os.path.join(cwd, script_name)
+    ] + inputs
+
+    # We do not want to show the console window when calling the command line tool from within our GP tool.
+    # This can be done by setting this hex code.
+    create_no_window = 0x08000000
+
+    # Launch the subprocess and periodically check results
+    with subprocess.Popen(
+        inputs,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        creationflags=create_no_window
+    ) as process:
+        # The while loop reads the subprocess's stdout in real time and writes the stdout messages to the GP UI.
+        # This is the only way to write the subprocess's status messages in a way that a user running the tool from
+        # the ArcGIS Pro UI can actually see them.
+        # When process.poll() returns anything other than None, the process has completed, and we should stop
+        # checking and move on.
+        while process.poll() is None:
+            output = process.stdout.readline()
+            if output:
+                msg_string = output.strip().decode()
+                parse_std_and_write_to_gp_ui(msg_string)
+            time.sleep(.1)
+
+        # Once the process is finished, check if any additional errors were returned. Messages that came after the
+        # last process.poll() above will still be in the queue here. This is especially important for detecting
+        # messages from raised exceptions, especially those with tracebacks.
+        output, _ = process.communicate()
+        if output:
+            out_msgs = output.decode().splitlines()
+            for msg in out_msgs:
+                parse_std_and_write_to_gp_ui(msg)
+
+        # In case something truly horrendous happened and none of the logging caught our errors, at least fail the
+        # tool when the subprocess returns an error code. That way the tool at least doesn't happily succeed but not
+        # actually do anything.
+        return_code = process.returncode
+        if return_code != 0:
+            err = f"Parallelization using {script_name} failed."
+            arcpy.AddError(err)
+            raise RuntimeError(err)
 
 
 def parse_std_and_write_to_gp_ui(msg_string):
