@@ -163,7 +163,7 @@ class Route(
         # Route properties documentation: https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route.htm
         # The properties have been extracted to the config file to make them easier to find and set so users don't have
         # to dig through the code to change them.
-        self.logger.debug("Setting Route analysis properties from OD config file...")
+        self.logger.debug("Setting Route analysis properties from RT config file...")
         for prop, value in RT_PROPS.items():
             if prop in RT_PROPS_SET_BY_TOOL:
                 self.logger.warning((
@@ -184,7 +184,7 @@ class Route(
                     "searchTolerance", "searchToleranceUnits", "accumulateAttributeNames"
                 ]):
                     self.logger.warning(
-                        f"Failed to set property {prop} from OD config file. Default will be used instead.")
+                        f"Failed to set property {prop} from RT config file. Default will be used instead.")
                     self.logger.warning(str(ex))
         # Set properties explicitly specified in the tool UI as arguments
         self.logger.debug("Setting Route analysis properties specified tool inputs...")
