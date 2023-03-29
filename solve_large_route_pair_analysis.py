@@ -23,13 +23,10 @@ Copyright 2023 Esri
    limitations under the License.
 """
 import os
-import sys
-import time
 import datetime
 import uuid
 import traceback
 import argparse
-import subprocess
 from math import floor
 from distutils.util import strtobool
 import pandas as pd
@@ -383,6 +380,39 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         arcpy.management.Sort(self.output_origins, sorted_origins, [[self.assigned_dest_field, "ASCENDING"]])
         self.output_origins = sorted_origins
 
+    def _precalculate_locations(self, fc_to_precalculate):
+        search_tolerance, search_criteria, search_query = helpers.get_locate_settings_from_config_file(
+            RT_PROPS, self.network_data_source)
+        num_features = int(arcpy.management.GetCount(fc_to_precalculate).getOutput(0))
+        if num_features <= self.chunk_size:
+            # Do not parallelize Calculate Locations since the number of features is less than the chunk size, and it's
+            # more efficient to run the tool directly.
+            arcpy.nax.CalculateLocations(
+                fc_to_precalculate,
+                self.network_data_source,
+                search_tolerance,
+                search_criteria,
+                search_query=search_query,
+                travel_mode=self.travel_mode
+            )
+        else:
+            # Run Calculate Locations in parallel.
+            precalculated_fc = fc_to_precalculate + "_Precalc"
+            cl_inputs = [
+                "--input-features", fc_to_precalculate,
+                "--output-features", precalculated_fc,
+                "--network-data-source", self.network_data_source,
+                "--chunk-size", str(self.chunk_size),
+                "--max-processes", str(self.max_processes),
+                "--travel-mode", self.travel_mode,
+                "--search-tolerance", search_tolerance,
+                "--search-criteria", search_criteria,
+                "--search-query", search_query
+            ]
+            helpers.execute_subprocess("parallel_calculate_locations.py", cl_inputs)
+            fc_to_precalculate = precalculated_fc
+        return fc_to_precalculate  # Updated feature class
+
     def _make_field_mappings(self, input_fc, oid_field_name):
         """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID.
 
@@ -572,23 +602,17 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
-            helpers.precalculate_network_locations(
-                self.output_destinations, self.network_data_source, self.travel_mode, RT_PROPS)
+            self.output_destinations = self._precalculate_locations(self.output_destinations)
             if self.pair_type is helpers.PreassignedODPairType.many_to_many:
-                helpers.precalculate_network_locations(
-                    self.output_origins, self.network_data_source, self.travel_mode, RT_PROPS)
+                self.output_origins = self._precalculate_locations(self.output_origins)
+            updated_barriers = []
             for barrier_fc in self.barriers:
-                helpers.precalculate_network_locations(
-                    barrier_fc, self.network_data_source, self.travel_mode, RT_PROPS)
+                updated_barriers.append(self._precalculate_locations(barrier_fc))
+            self.barriers = updated_barriers
 
     def _execute_solve(self):
         """Execute the solve in a subprocess."""
-        # Launch the parallel_route_pairs script as a subprocess so it can spawn parallel processes. We have to do this
-        # because a tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
-        cwd = os.path.dirname(os.path.abspath(__file__))
         rt_inputs = [
-            os.path.join(sys.exec_prefix, "python.exe"),
-            os.path.join(cwd, "parallel_route_pairs.py"),
             "--pair-type", self.pair_type.name,
             "--origins", self.output_origins,
             "--origins-id-field", self.origin_id_field,
@@ -616,41 +640,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         if self.time_of_day:
             rt_inputs += ["--time-of-day", self.time_of_day]
 
-        # We do not want to show the console window when calling the command line tool from within our GP tool.
-        # This can be done by setting this hex code.
-        create_no_window = 0x08000000
-        with subprocess.Popen(
-            rt_inputs,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=create_no_window
-        ) as process:
-            # The while loop reads the subprocess's stdout in real time and writes the stdout messages to the GP UI.
-            # This is the only way to write the subprocess's status messages in a way that a user running the tool from
-            # the ArcGIS Pro UI can actually see them.
-            # When process.poll() returns anything other than None, the process has completed, and we should stop
-            # checking and move on.
-            while process.poll() is None:
-                output = process.stdout.readline()
-                if output:
-                    msg_string = output.strip().decode()
-                    helpers.parse_std_and_write_to_gp_ui(msg_string)
-                time.sleep(.1)
-
-            # Once the process is finished, check if any additional errors were returned. Messages that came after the
-            # last process.poll() above will still be in the queue here. This is especially important for detecting
-            # messages from raised exceptions, especially those with tracebacks.
-            output, _ = process.communicate()
-            if output:
-                out_msgs = output.decode().splitlines()
-                for msg in out_msgs:
-                    helpers.parse_std_and_write_to_gp_ui(msg)
-
-            # In case something truly horrendous happened and none of the logging caught our errors, at least fail the
-            # tool when the subprocess returns an error code. That way the tool at least doesn't happily succeed but not
-            # actually do anything.
-            return_code = process.returncode
-            if return_code != 0:
-                arcpy.AddError("Route script failed.")
+        # Run the subprocess
+        helpers.execute_subprocess("parallel_route_pairs.py", rt_inputs)
 
     def solve_large_route_pair_analysis(self):
         """Solve the large multi-route with known OD pairs in parallel."""
