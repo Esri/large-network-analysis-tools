@@ -172,18 +172,18 @@ class ODCostMatrix(
         # The properties have been extracted to the config file to make them easier to find and set so users don't have
         # to dig through the code to change them.
         self.logger.debug("Setting OD Cost Matrix analysis properties from OD config file...")
-        for prop in OD_PROPS:
+        for prop, value in OD_PROPS.items():
             if prop in OD_PROPS_SET_BY_TOOL:
                 self.logger.warning(
                     f"OD config file property {prop} is handled explicitly by the tool parameters and will be ignored."
                 )
                 continue
             try:
-                setattr(self.od_solver, prop, OD_PROPS[prop])
-                if hasattr(OD_PROPS[prop], "name"):
-                    self.logger.debug(f"{prop}: {OD_PROPS[prop].name}")
+                setattr(self.od_solver, prop, value)
+                if hasattr(value, "name"):
+                    self.logger.debug(f"{prop}: {value.name}")
                 else:
-                    self.logger.debug(f"{prop}: {OD_PROPS[prop]}")
+                    self.logger.debug(f"{prop}: {value}")
             except Exception as ex:  # pylint: disable=broad-except
                 # Suppress warnings for older services (pre 11.0) that don't support locate settings and services
                 # that don't support accumulating attributes because we don't want the tool to always throw a warning.
