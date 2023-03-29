@@ -30,7 +30,7 @@ from distutils.util import strtobool
 import arcpy
 
 import helpers
-from od_config import OD_PROPS  # Import OD Cost Matrix settings from config file
+from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL  # Import OD Cost Matrix settings from config file
 
 arcpy.env.overwriteOutput = True
 
@@ -226,6 +226,20 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             for err in errs:
                 arcpy.AddError(err)
             raise
+        # Set properties from config file
+        for prop, value in OD_PROPS.items():
+            if prop not in OD_PROPS_SET_BY_TOOL:
+                try:
+                    setattr(odcm, prop, value)
+                except Exception:  # pylint: disable=broad-except
+                    # Suppress errors for older services (pre 11.0) that don't support locate settings and services
+                    # that don't support accumulating attributes because we don't want the tool to always fail.
+                    if not (self.is_service and prop in [
+                        "searchTolerance", "searchToleranceUnits", "accumulateAttributeNames"
+                    ]):
+                        err = f"Failed to set property {prop} from OD config file."
+                        arcpy.AddError(err)
+                        raise
 
         # Return a JSON string representation of the travel mode to pass to the subprocess
         return odcm.travelMode._JSON  # pylint: disable=protected-access
