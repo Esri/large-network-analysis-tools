@@ -318,33 +318,43 @@ def validate_network_data_source(network_data_source):
     return network_data_source
 
 
-def precalculate_network_locations(input_features, network_data_source, travel_mode, config_file_props):
-    """Precalculate network location fields if possible for faster loading and solving later.
-
-    Cannot be used if the network data source is a service. Uses the searchTolerance, searchToleranceUnits, and
-    searchQuery properties set in the config file.
-
-    Args:
-        input_features (feature class catalog path): Feature class to calculate network locations for
-        network_data_source (network dataset catalog path): Network dataset to use to calculate locations
-        travel_mode (travel mode): Travel mode name, object, or json representation to use when calculating locations.
-        config_file_props (dict): Dictionary of solver object properties from config file.
-    """
-    arcpy.AddMessage(f"Precalculating network location fields for {input_features}...")
-
-    # Get location settings from config file if present
+def get_locate_settings_from_config_file(config_file_props, network_dataset):
+    """Get location settings from config file if present."""
     search_tolerance = None
+    search_criteria = None
+    search_query = None
     if "searchTolerance" in config_file_props and "searchToleranceUnits" in config_file_props:
         search_tolerance = f"{config_file_props['searchTolerance']} {config_file_props['searchToleranceUnits'].name}"
-    search_query = config_file_props.get("search_query", None)
-
-    # Calculate network location fields if network data source is local
-    arcpy.na.CalculateLocations(
-        input_features, network_data_source,
-        search_tolerance=search_tolerance,
-        search_query=search_query,
-        travel_mode=travel_mode
-    )
+    if "searchSources" in config_file_props:
+        # searchSources covers both search_criteria and search_tolerance.
+        search_sources = config_file_props["searchSources"]
+        if search_sources:
+            search_query = search_sources
+            included_sources = [s[0] for s in search_sources]
+            # Use a string-based format for search_criteria to allow it to be passed through to a subprocess CLI
+            search_criteria = [s + " SHAPE" for s in included_sources]
+            # We have to query the network to find the list of all edge and junction sources so we can explicitly set
+            # the search_criteria to NONE for any that weren't included in the searchSources list.  Otherwise, they will
+            # use their default location setting, which is not what the user intends.
+            desc = arcpy.Describe(network_dataset)
+            for source in [e.name for e in desc.edgeSources] + [j.name for j in desc.junctionSources]:
+                if source not in included_sources:
+                    search_criteria.append(source + " NONE")
+            search_criteria = ";".join(search_criteria)  # Ex: Streets SHAPE;Streets_ND_Junctions NONE
+    elif "searchQuery" in config_file_props:
+        # searchQuery is only used if searchSources is not present.
+        search_query = config_file_props["searchQuery"]
+        if not search_query:
+            # Reset to None in case it was an empty list
+            search_query = None
+    # Convert the search_query to string format to allow it to be passed through to a subprocess CLI
+    # Use a value table to ensure proper conversion of SQL expressions
+    if search_query:
+        value_table = arcpy.ValueTable(["GPString", "GPSQLExpression"])
+        for query in search_query:
+            value_table.addRow(query)
+        search_query = value_table.exportToString()
+    return search_tolerance, search_criteria, search_query
 
 
 def get_oid_ranges_for_input(input_fc, max_chunk_size):
@@ -536,8 +546,6 @@ class MakeNDSLayerMixin:  # pylint:disable = too-few-public-methods
 
     def _make_nds_layer(self):
         """Create a network dataset layer if one does not already exist."""
-        if self.is_service:
-            return
         nds_layer_name = os.path.basename(self.network_data_source)
         if arcpy.Exists(nds_layer_name):
             # The network dataset layer already exists in this process, so we can re-use it without having to spend

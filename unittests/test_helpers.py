@@ -183,30 +183,34 @@ class TestHelpers(unittest.TestCase):
                 helpers.validate_network_data_source(bad_network)
             self.assertEqual(str(ex.exception), f"Input network dataset {bad_network} does not exist.")
 
-    def test_precalculate_network_locations(self):
-        """Test the precalculate_network_locations function."""
-        loc_fields = {"SourceID", "SourceOID", "PosAlong", "SideOfEdge"}
-        inputs = os.path.join(self.sf_gdb, "Analysis", "CentralDepots")
+    def test_get_locate_settings_from_config_file(self):
+        """Test the get_locate_settings_from_config_file function."""
+        # Test searchTolerance and searchQuery without searchSources
+        config_props = {
+            "searchQuery": [["Streets", "ObjectID <> 1"], ["Streets_ND_Junctions", ""]],
+            "searchTolerance": 1000,
+            "searchToleranceUnits": arcpy.nax.DistanceUnits.Feet
+        }
+        search_tolerance, search_criteria, search_query = helpers.get_locate_settings_from_config_file(
+            config_props, self.local_nd)
+        self.assertEqual("1000 Feet", search_tolerance, "Incorrect search tolerance.")
+        self.assertIsNone(search_criteria, "Search criteria should be None when searchSources is not used.")
+        self.assertEqual("Streets 'ObjectID <> 1';Streets_ND_Junctions #", search_query, "Incorrect search query.")
 
-        def check_precalculated_locations(fc):
-            """Check precalculated locations."""
-            actual_fields = set([f.name for f in arcpy.ListFields(fc)])
-            self.assertTrue(loc_fields.issubset(actual_fields), "Network location fields not added")
-            for row in arcpy.da.SearchCursor(fc, list(loc_fields)):  # pylint: disable=no-member
-                for val in row:
-                    self.assertIsNotNone(val)
-
-        # Precalculate locations for OD
-        fc_to_precalculate = os.path.join(self.output_gdb, "Precalculated_OD")
-        arcpy.management.Copy(inputs, fc_to_precalculate)
-        helpers.precalculate_network_locations(fc_to_precalculate, self.local_nd, "Driving Time", OD_PROPS)
-        check_precalculated_locations(fc_to_precalculate)
-
-        # Precalculate locations for Route
-        fc_to_precalculate = os.path.join(self.output_gdb, "Precalculated_Route")
-        arcpy.management.Copy(inputs, fc_to_precalculate)
-        helpers.precalculate_network_locations(fc_to_precalculate, self.local_nd, "Driving Time", RT_PROPS)
-        check_precalculated_locations(fc_to_precalculate)
+        # Test searchSources
+        config_props = {
+            "searchSources": [["Streets", "ObjectID <> 1"]],
+            "searchTolerance": 1000,
+        }
+        search_tolerance, search_criteria, search_query = helpers.get_locate_settings_from_config_file(
+            config_props, self.local_nd)
+        self.assertIsNone(
+            search_tolerance,
+            "Search tolerance should be None when both searchTolerance and searchToleranceUnits are not set.")
+        self.assertEqual(
+            "Streets SHAPE;Streets_ND_Junctions NONE", search_criteria,
+            "Incorrect search criteria.")
+        self.assertEqual("Streets 'ObjectID <> 1'", search_query, "Incorrect search query.")
 
     def test_get_oid_ranges_for_input(self):
         """Test the get_oid_ranges_for_input function."""
