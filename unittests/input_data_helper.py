@@ -151,12 +151,14 @@ def get_od_pairs_fgdb_table(sf_gdb):
     input_data_folder = os.path.dirname(sf_gdb)
     od_pair_csv = get_od_pair_csv(input_data_folder)
     print(f"Creating {od_pair_table} for test input...")
-    arcpy.conversion.ExportTable(
-        od_pair_csv,
+    arcpy.management.CreateTable(sf_gdb, "ODPairs")
+    arcpy.management.AddFields(
         od_pair_table,
-        field_mapping=(
-            f'OriginID "OriginID" true true false 25 Text 0 0,First,#,{od_pair_csv},Field1,-1,-1;'
-            f'DestinationID "DestinationID" true true false 45 Text 0 0,First,#,{od_pair_csv},Field2,0,8000'
-        )
+        [["OriginID", "TEXT", "OriginID", 25], ["DestinationID", "TEXT", "DestinationID", 45]]
     )
+    with arcpy.da.InsertCursor(od_pair_table, ["OriginID", "DestinationID"]) as cur:  # pylint: disable=no-member
+        with open(od_pair_csv, "r", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                cur.insertRow(row)
+
     return od_pair_table
