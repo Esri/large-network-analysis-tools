@@ -34,7 +34,7 @@ class Toolbox(object):
         self.alias = "LargeNetworkAnalysisTools"
 
         # List of tool classes associated with this toolbox
-        self.tools = [SolveLargeODCostMatrix, SolveLargeAnalysisWithKnownPairs]
+        self.tools = [SolveLargeODCostMatrix, SolveLargeAnalysisWithKnownPairs, ParallelCalculateLocations]
 
 
 class SolveLargeODCostMatrix(object):
@@ -697,6 +697,171 @@ class SolveLargeAnalysisWithKnownPairs(object):
 
         # Solve the OD Cost Matrix analysis
         rt_solver.solve_large_route_pair_analysis()
+
+        return
+
+
+class ParallelCalculateLocations(object):
+    """Sample script tool to calculate locations for a large dataset in parallel."""
+
+    def __init__(self):
+        """Define the tool."""
+        self.label = "Parallel Calculate Locations"
+        self.description = "Calculate network locations for a large dataset by chunking it and solving in parallel."
+        self.canRunInBackground = True
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+
+        param_in_features = arcpy.Parameter(
+            displayName="Input Features",
+            name="Input_Features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_out_features = arcpy.Parameter(
+            displayName="Output Features",
+            name="Output_Features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_network = arcpy.Parameter(
+            displayName="Network Dataset",
+            name="Network_Dataset",
+            datatype="GPNetworkDatasetLayer",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_chunk_size = arcpy.Parameter(
+            displayName="Maximum Features per Chunk",
+            name="Max_Features_Per_Chunk",
+            datatype="GPLong",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_chunk_size.value = 1000
+
+        param_max_processes = arcpy.Parameter(
+            displayName="Maximum Number of Parallel Processes",
+            name="Max_Processes",
+            datatype="GPLong",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_max_processes.value = 4
+
+        param_travel_mode = arcpy.Parameter(
+            displayName="Travel Mode",
+            name="Travel_Mode",
+            datatype="NetworkTravelMode",
+            parameterType="Optional",
+            direction="Input"
+        )
+        param_travel_mode.parameterDependencies = [param_network.name]
+
+        param_search_tolerance = arcpy.Parameter(
+            displayName="Search Tolerance",
+            name="Search_Tolerance",
+            datatype="GPLinearUnit",
+            parameterType="Optional",
+            direction="Input"
+        )
+        param_search_tolerance.value = "5000 Meters"
+
+        param_search_criteria = arcpy.Parameter(
+            displayName="Search Criteria",
+            name="Search_Criteria",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+            multiValue=True
+        )
+        # Causes the parameter to be a list of checkboxes instead of a standard multivalue
+        param_search_criteria.controlCLSID = "{38C34610-C7F7-11D5-A693-0008C711C8C1}"
+
+        param_search_query = arcpy.Parameter(
+            displayName="Search Query",
+            name="Search_Query",
+            datatype="GPValueTable",
+            parameterType="Optional",
+            direction="Input",
+            multiValue=True
+        )
+        param_search_query.columns = [
+            ['GPString', 'Name'],
+            ['GPSQLExpression', 'Query']
+        ]
+        param_search_query.filters[0].type = 'ValueList'
+
+        params = [
+            param_in_features,  # 0
+            param_out_features,  # 1
+            param_network,  # 2
+            param_chunk_size,  # 3
+            param_max_processes,  # 4
+            param_travel_mode,  # 5
+            param_search_tolerance,  # 6
+            param_search_criteria,  # 7
+            param_search_query  # 8
+        ]
+
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        param_network = parameters[2]
+        param_search_criteria = parameters[7]
+        param_search_query = parameters[8]
+
+        # Populate available network sources in the search criteria and search query parameters
+        if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
+            try:
+                source_names = helpers.get_network_source_names(param_network.value)
+                ## TODO: Figure out how to set default source names
+                param_search_criteria.filter.list = source_names
+                param_search_query.filters[0].list = source_names
+            except Exception:  # pylint: disable=broad-except
+                # Something went wrong in checking the network's sources.  Don't modify any parameters.
+                pass
+
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        ## TODO: Validate no duplicate entries in search query
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        source_names = parameters[7].filter.list
+        sources_to_locate_on = parameters[7].values
+        search_criteria = helpers.construct_search_criteria_string(sources_to_locate_on, source_names)
+        arcpy.AddMessage(search_criteria)
+        # # TODO: Must copy to temporary output to deal with selection set
+        # cl_inputs = [
+        #     "--input-features", parameters[0].value,
+        #     "--output-features", parameters[1].valueAsText,
+        #     "--network-data-source", get_catalog_path(parameters[2]),
+        #     "--chunk-size", parameters[3].valueAsText,
+        #     "--max-processes", parameters[4].valueAsText,
+        #     "--travel-mode", parameters[5].value._JSON,
+        #     "--search-tolerance", parameters[6].valueAsText,
+        #     "--search-criteria", search_criteria,
+        #     "--search-query", search_query
+        # ]
+        # helpers.execute_subprocess("parallel_calculate_locations.py", cl_inputs)
 
         return
 
