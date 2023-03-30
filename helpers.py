@@ -552,6 +552,53 @@ def run_gp_tool(log_to_use, tool, tool_args=None, tool_kwargs=None):
     return result
 
 
+class PrecalculateLocationsMixin:  # pylint:disable = too-few-public-methods
+    """Used to precalculate network locations either directly or calling the parallelized version."""
+
+    def _precalculate_locations(self, fc_to_precalculate, config_props):
+        """Precalculate network locations for the designated feature class.
+
+        Args:
+            fc_to_precalculate (str): Catalog path to the feature class to calculate locations for.
+            config_props (dict): Dictionary of solver object properties that includes locate settings.  Must be OD_PROPS
+                from od_config.py or RT_PROPS from rt_config.py.
+
+        Returns:
+            str: Catalog path to the feature class with the network location fields
+        """
+        search_tolerance, search_criteria, search_query = get_locate_settings_from_config_file(
+            config_props, self.network_data_source)
+        num_features = int(arcpy.management.GetCount(fc_to_precalculate).getOutput(0))
+        if num_features <= self.chunk_size:
+            # Do not parallelize Calculate Locations since the number of features is less than the chunk size, and it's
+            # more efficient to run the tool directly.
+            arcpy.nax.CalculateLocations(
+                fc_to_precalculate,
+                self.network_data_source,
+                search_tolerance,
+                search_criteria,
+                search_query=search_query,
+                travel_mode=self.travel_mode
+            )
+        else:
+            # Run Calculate Locations in parallel.
+            precalculated_fc = fc_to_precalculate + "_Precalc"
+            cl_inputs = [
+                "--input-features", fc_to_precalculate,
+                "--output-features", precalculated_fc,
+                "--network-data-source", self.network_data_source,
+                "--chunk-size", str(self.chunk_size),
+                "--max-processes", str(self.max_processes),
+                "--travel-mode", self.travel_mode,
+                "--search-tolerance", search_tolerance,
+                "--search-criteria", search_criteria,
+                "--search-query", search_query
+            ]
+            execute_subprocess("parallel_calculate_locations.py", cl_inputs)
+            fc_to_precalculate = precalculated_fc
+        return fc_to_precalculate  # Updated feature class
+
+
 class JobFolderMixin:  # pylint:disable = too-few-public-methods
     """Used to define and create a job folder for a parallel process."""
 
