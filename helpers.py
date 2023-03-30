@@ -321,6 +321,36 @@ def validate_network_data_source(network_data_source):
     return network_data_source
 
 
+def get_network_source_names(network_dataset):
+    """Return a list of edge and junction source feature class names for a network.
+
+    Args:
+        network_dataset (str, layer): Network dataset catalog path or layer
+
+    Returns:
+        list: List of edge and junction source feature class names.  Does not include turn sources.
+    """
+    desc = arcpy.Describe(network_dataset)
+    return [e.name for e in desc.edgeSources] + [j.name for j in desc.junctionSources]
+
+
+def construct_search_criteria_string(sources_to_use, all_sources):
+    """Construct a search criteria string from a list of network sources to use.
+
+    We use the string-based format for search criteria to allow it to be passed through to a subprocess CLI.
+
+    Args:
+        sources_to_use (list): Names of network sources to use for locating
+        all_sources (list): List of all network sources
+
+    Returns:
+        str: String properly formatted for use in the Calculate Locations Search Criteria parameter
+    """
+    search_criteria = [s + " SHAPE" for s in sources_to_use] + \
+                      [s + " NONE" for s in all_sources if s not in sources_to_use]
+    return ";".join(search_criteria)  # Ex: Streets SHAPE;Streets_ND_Junctions NONE
+
+
 def get_locate_settings_from_config_file(config_file_props, network_dataset):
     """Get location settings from config file if present."""
     search_tolerance = ""
@@ -333,17 +363,10 @@ def get_locate_settings_from_config_file(config_file_props, network_dataset):
         search_sources = config_file_props["searchSources"]
         if search_sources:
             search_query = search_sources
-            included_sources = [s[0] for s in search_sources]
-            # Use a string-based format for search_criteria to allow it to be passed through to a subprocess CLI
-            search_criteria = [s + " SHAPE" for s in included_sources]
-            # We have to query the network to find the list of all edge and junction sources so we can explicitly set
-            # the search_criteria to NONE for any that weren't included in the searchSources list.  Otherwise, they will
-            # use their default location setting, which is not what the user intends.
-            desc = arcpy.Describe(network_dataset)
-            for source in [e.name for e in desc.edgeSources] + [j.name for j in desc.junctionSources]:
-                if source not in included_sources:
-                    search_criteria.append(source + " NONE")
-            search_criteria = ";".join(search_criteria)  # Ex: Streets SHAPE;Streets_ND_Junctions NONE
+            search_criteria = construct_search_criteria_string(
+                [s[0] for s in search_sources],
+                get_network_source_names(network_dataset)
+            )
     elif "searchQuery" in config_file_props:
         # searchQuery is only used if searchSources is not present.
         search_query = config_file_props["searchQuery"]
