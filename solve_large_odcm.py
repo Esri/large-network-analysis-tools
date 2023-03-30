@@ -35,7 +35,9 @@ from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL  # Import OD Cost Matrix se
 arcpy.env.overwriteOutput = True
 
 
-class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-few-public-methods
+class ODCostMatrixSolver(
+    helpers.PrecalculateLocationsMixin
+):  # pylint: disable=too-many-instance-attributes, too-few-public-methods
     """Compute OD Cost Matrices between Origins and Destinations in parallel and combine results.
 
     This class preprocesses and validates inputs and then spins up a subprocess to do the actual OD Cost Matrix
@@ -333,14 +335,13 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
-            helpers.precalculate_network_locations(
-                self.output_origins, self.network_data_source, self.travel_mode, OD_PROPS)
+            self.output_origins = self._precalculate_locations(self.output_origins, OD_PROPS)
             if not self.same_origins_destinations:
-                helpers.precalculate_network_locations(
-                    self.output_destinations, self.network_data_source, self.travel_mode, OD_PROPS)
+                self.output_destinations = self._precalculate_locations(self.output_destinations, OD_PROPS)
+            updated_barriers = []
             for barrier_fc in self.barriers:
-                helpers.precalculate_network_locations(
-                    barrier_fc, self.network_data_source, self.travel_mode, OD_PROPS)
+                updated_barriers.append(self._precalculate_locations(barrier_fc, OD_PROPS))
+            self.barriers = updated_barriers
 
         # If Origins and Destinations were the same, copy the output origins to the output destinations. This saves us
         # from having to spatially sort and precalculate network locations on the same feature class twice.
@@ -356,12 +357,7 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
 
     def _execute_solve(self):
         """Solve the OD Cost Matrix analysis."""
-        # Launch the parallel_odcm script as a subprocess so it can spawn parallel processes. We have to do this because
-        # a tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
-        cwd = os.path.dirname(os.path.abspath(__file__))
         odcm_inputs = [
-            os.path.join(sys.exec_prefix, "python.exe"),
-            os.path.join(cwd, "parallel_odcm.py"),
             "--origins", self.output_origins,
             "--destinations", self.output_destinations,
             "--network-data-source", self.network_data_source,
@@ -388,41 +384,9 @@ class ODCostMatrixSolver:  # pylint: disable=too-many-instance-attributes, too-f
             odcm_inputs += ["--num-destinations", str(self.num_destinations)]
         if self.time_of_day:
             odcm_inputs += ["--time-of-day", self.time_of_day]
-        # We do not want to show the console window when calling the command line tool from within our GP tool.
-        # This can be done by setting this hex code.
-        create_no_window = 0x08000000
-        with subprocess.Popen(
-            odcm_inputs,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=create_no_window
-        ) as process:
-            # The while loop reads the subprocess's stdout in real time and writes the stdout messages to the GP UI.
-            # This is the only way to write the subprocess's status messages in a way that a user running the tool from
-            # the ArcGIS Pro UI can actually see them.
-            # When process.poll() returns anything other than None, the process has completed, and we should stop
-            # checking and move on.
-            while process.poll() is None:
-                output = process.stdout.readline()
-                if output:
-                    msg_string = output.strip().decode()
-                    helpers.parse_std_and_write_to_gp_ui(msg_string)
-                time.sleep(.1)
 
-            # Once the process is finished, check if any additional errors were returned. Messages that came after the
-            # last process.poll() above will still be in the queue here. This is especially important for detecting
-            # messages from raised exceptions, especially those with tracebacks.
-            output, _ = process.communicate()
-            if output:
-                out_msgs = output.decode().splitlines()
-                for msg in out_msgs:
-                    helpers.parse_std_and_write_to_gp_ui(msg)
-
-            # In case something truly horrendous happened and none of the logging caught our errors, at least fail the
-            # tool when the subprocess returns an error code. That way the tool at least doesn't happily succeed but not
-            # actually do anything.
-            return_code = process.returncode
-            if return_code != 0:
-                arcpy.AddError("OD Cost Matrix script failed.")
+        # Run the subprocess
+        helpers.execute_subprocess("parallel_odcm.py", odcm_inputs)
 
     def solve_large_od_cost_matrix(self):
         """Solve the large OD Cost Matrix in parallel."""
