@@ -39,7 +39,9 @@ from rt_config import RT_PROPS, RT_PROPS_SET_BY_TOOL  # Import Route settings fr
 arcpy.env.overwriteOutput = True
 
 
-class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-public-methods
+class RoutePairSolver(
+    helpers.PrecalculateLocationsMixin
+):  # pylint: disable=too-many-instance-attributes, too-few-public-methods
     """Compute routes between preassigned origins and destinations pairs in parallel and combine results.
 
     This class preprocesses and validates inputs and then spins up a subprocess to do the actual Route
@@ -380,39 +382,6 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         arcpy.management.Sort(self.output_origins, sorted_origins, [[self.assigned_dest_field, "ASCENDING"]])
         self.output_origins = sorted_origins
 
-    def _precalculate_locations(self, fc_to_precalculate):
-        search_tolerance, search_criteria, search_query = helpers.get_locate_settings_from_config_file(
-            RT_PROPS, self.network_data_source)
-        num_features = int(arcpy.management.GetCount(fc_to_precalculate).getOutput(0))
-        if num_features <= self.chunk_size:
-            # Do not parallelize Calculate Locations since the number of features is less than the chunk size, and it's
-            # more efficient to run the tool directly.
-            arcpy.nax.CalculateLocations(
-                fc_to_precalculate,
-                self.network_data_source,
-                search_tolerance,
-                search_criteria,
-                search_query=search_query,
-                travel_mode=self.travel_mode
-            )
-        else:
-            # Run Calculate Locations in parallel.
-            precalculated_fc = fc_to_precalculate + "_Precalc"
-            cl_inputs = [
-                "--input-features", fc_to_precalculate,
-                "--output-features", precalculated_fc,
-                "--network-data-source", self.network_data_source,
-                "--chunk-size", str(self.chunk_size),
-                "--max-processes", str(self.max_processes),
-                "--travel-mode", self.travel_mode,
-                "--search-tolerance", search_tolerance,
-                "--search-criteria", search_criteria,
-                "--search-query", search_query
-            ]
-            helpers.execute_subprocess("parallel_calculate_locations.py", cl_inputs)
-            fc_to_precalculate = precalculated_fc
-        return fc_to_precalculate  # Updated feature class
-
     def _make_field_mappings(self, input_fc, oid_field_name):
         """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID.
 
@@ -602,12 +571,12 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
-            self.output_destinations = self._precalculate_locations(self.output_destinations)
+            self.output_destinations = self._precalculate_locations(self.output_destinations, RT_PROPS)
             if self.pair_type is helpers.PreassignedODPairType.many_to_many:
-                self.output_origins = self._precalculate_locations(self.output_origins)
+                self.output_origins = self._precalculate_locations(self.output_origins, RT_PROPS)
             updated_barriers = []
             for barrier_fc in self.barriers:
-                updated_barriers.append(self._precalculate_locations(barrier_fc))
+                updated_barriers.append(self._precalculate_locations(barrier_fc, RT_PROPS))
             self.barriers = updated_barriers
 
     def _execute_solve(self):
