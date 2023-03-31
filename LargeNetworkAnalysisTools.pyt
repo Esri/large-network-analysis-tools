@@ -18,6 +18,7 @@ Copyright 2023 Esri
 # pylint: disable=useless-return, unused-argument
 import os
 from os import cpu_count
+import uuid
 import arcpy
 
 import helpers
@@ -828,9 +829,11 @@ class ParallelCalculateLocations(object):
         # Populate available network sources in the search criteria and search query parameters
         if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
             try:
-                source_names = helpers.get_network_source_names(param_network.value)
-                ## TODO: Figure out how to set default source names
+                network = param_network.valueAsText
+                source_names = helpers.get_locatable_network_source_names(network)
+                default_source_names = helpers.get_default_locatable_network_source_names(network)
                 param_search_criteria.filter.list = source_names
+                param_search_criteria.value = default_source_names
                 param_search_query.filters[0].list = source_names
             except Exception:  # pylint: disable=broad-except
                 # Something went wrong in checking the network's sources.  Don't modify any parameters.
@@ -846,23 +849,51 @@ class ParallelCalculateLocations(object):
 
     def execute(self, parameters, messages):
         """The source code of the tool."""
+        # Construct the search criteria from the selected sources
         source_names = parameters[7].filter.list
         sources_to_locate_on = parameters[7].values
         search_criteria = helpers.construct_search_criteria_string(sources_to_locate_on, source_names)
-        arcpy.AddMessage(search_criteria)
-        # # TODO: Must copy to temporary output to deal with selection set
-        # cl_inputs = [
-        #     "--input-features", parameters[0].value,
-        #     "--output-features", parameters[1].valueAsText,
-        #     "--network-data-source", get_catalog_path(parameters[2]),
-        #     "--chunk-size", parameters[3].valueAsText,
-        #     "--max-processes", parameters[4].valueAsText,
-        #     "--travel-mode", parameters[5].value._JSON,
-        #     "--search-tolerance", parameters[6].valueAsText,
-        #     "--search-criteria", search_criteria,
-        #     "--search-query", search_query
-        # ]
-        # helpers.execute_subprocess("parallel_calculate_locations.py", cl_inputs)
+
+        # Make a temporary copy of the input features to take care of any selection sets and definition queries and to
+        # add a field preserving the ObjectID.
+        input_features = parameters[0].value
+        desc = arcpy.Describe(input_features)
+        # Create a unique output field name to preserve the original OID
+        in_fields = [f.name for f in desc.fields]
+        base_oid_field = "ORIG_OID"
+        out_oid_field = base_oid_field
+        if out_oid_field in in_fields:
+            i = 1
+            while out_oid_field in in_fields:
+                out_oid_field = base_oid_field + str(i)
+                i += 1
+        field_mappings = helpers.make_oid_preserving_field_mappings(
+            input_features, desc.oidFieldName, out_oid_field)
+        temp_inputs = arcpy.CreateUniqueName("TempCLInputs", arcpy.env.scratchGDB)  # pylint:disable = no-member
+        arcpy.conversion.FeatureClassToFeatureClass(
+            input_features,
+            arcpy.env.scratchGDB,  # pylint:disable = no-member
+            os.path.basename(temp_inputs),
+            field_mapping=field_mappings
+        )
+
+        try:
+            cl_inputs = [
+                "--input-features", temp_inputs,
+                "--output-features", parameters[1].valueAsText,
+                "--network-data-source", get_catalog_path(parameters[2]),
+                "--chunk-size", parameters[3].valueAsText,
+                "--max-processes", parameters[4].valueAsText,
+                "--travel-mode", parameters[5].value._JSON,  # pylint: disable=protected-access
+                "--search-tolerance", parameters[6].valueAsText,
+                "--search-criteria", search_criteria,
+                "--search-query", parameters[8].value.exportToString()
+            ]
+            helpers.execute_subprocess("parallel_calculate_locations.py", cl_inputs)
+
+        finally:
+            # Clean up. Delete temporary copy of inputs
+            arcpy.management.Delete([temp_inputs])
 
         return
 
