@@ -183,6 +183,20 @@ class TestHelpers(unittest.TestCase):
                 helpers.validate_network_data_source(bad_network)
             self.assertEqual(str(ex.exception), f"Input network dataset {bad_network} does not exist.")
 
+    def test_get_locatable_network_source_names(self):
+        """Test the get_locatable_network_source_names funtion."""
+        self.assertEqual(
+            ["Streets", "Streets_ND_Junctions"],
+            helpers.get_locatable_network_source_names(self.local_nd)
+        )
+
+    def test_get_default_locatable_network_source_names(self):
+        """Test the get_default_locatable_network_source_names funtion."""
+        self.assertEqual(
+            ["Streets"],
+            helpers.get_default_locatable_network_source_names(self.local_nd)
+        )
+
     def test_get_locate_settings_from_config_file(self):
         """Test the get_locate_settings_from_config_file function."""
         # Test searchTolerance and searchQuery without searchSources

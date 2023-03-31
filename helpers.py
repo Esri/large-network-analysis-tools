@@ -321,17 +321,54 @@ def validate_network_data_source(network_data_source):
     return network_data_source
 
 
-def get_network_source_names(network_dataset):
-    """Return a list of edge and junction source feature class names for a network.
+def get_locatable_network_source_names(network_dataset):
+    """Return a list of all locatable network dataset source feature class names.
+
+    Suitable for constructing a list of values for the Search Criteria parameter.
 
     Args:
         network_dataset (str, layer): Network dataset catalog path or layer
 
     Returns:
-        list: List of edge and junction source feature class names.  Does not include turn sources.
+        list: List of network source feature class names.  Does not include turn sources.
     """
-    desc = arcpy.Describe(network_dataset)
-    return [e.name for e in desc.edgeSources] + [j.name for j in desc.junctionSources]
+    # The most reliable way to get the locatable sources for a network dataset is to create a dummy arcpy.nax solver
+    # object and retrieve the source names from the searchQuery property.  That isn't the property's intended use, but
+    # as a hack, it works great!  Note that you could also retrieve this information using the network dataset Describe
+    # object and getting the list of edges and junction sources.  However, the sort order won't be the same as a user
+    # would typically see in the Pro UI in the Calculate Locations tool, for example.  Also, rarely (especially with)
+    # public transit network, some sources aren't considered locatable (LineVariantElements) and would not be filtered
+    # from this list.
+    rt = arcpy.nax.Route(network_dataset)
+    network_sources = [q[0] for q in rt.searchQuery]
+    del rt
+    return network_sources
+
+
+def get_default_locatable_network_source_names(network_dataset):
+    """Return a list network source feature class names that should be on by default in the Search Criteria parameter.
+
+    This returns only a subset of all locatable sources that should be checked on by default in the UI.  This should
+    match what the user sees in the Pro UI with the core Calculate Locations tool.
+
+    Note: The logic in this method only works in Pro 3.0 or higher and will return an empty string otherwise.
+
+    Args:
+        network_dataset (str, layer): Network dataset catalog path or layer
+
+    Returns:
+        list: List of source feature class names.  Does not include turn sources.
+    """
+    # The most reliable way to get the locatable sources for a network dataset is to create a dummy arcpy.nax solver
+    # object and retrieve the default locatable source names from the searchSources property.  That isn't the property's
+    # intended use, but as a hack, it works great!  However, the searchSources parameter was added in Pro 3.0.  For
+    # older software, return an empty list, and the user will have to figure it out for themselves.
+    if arcgis_version < "3.0":
+        return []
+    rt = arcpy.nax.Route(network_dataset)
+    network_sources = [q[0] for q in rt.searchSources]
+    del rt
+    return network_sources
 
 
 def construct_search_criteria_string(sources_to_use, all_sources):
@@ -365,7 +402,7 @@ def get_locate_settings_from_config_file(config_file_props, network_dataset):
             search_query = search_sources
             search_criteria = construct_search_criteria_string(
                 [s[0] for s in search_sources],
-                get_network_source_names(network_dataset)
+                get_locatable_network_source_names(network_dataset)
             )
     elif "searchQuery" in config_file_props:
         # searchQuery is only used if searchSources is not present.
