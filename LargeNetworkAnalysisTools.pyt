@@ -720,6 +720,7 @@ class ParallelCalculateLocations(object):
             parameterType="Required",
             direction="Input"
         )
+        param_in_features.filter.list = ["Point"]
 
         param_out_features = arcpy.Parameter(
             displayName="Output Features",
