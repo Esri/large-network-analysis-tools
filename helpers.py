@@ -421,6 +421,34 @@ def get_oid_ranges_for_input(input_fc, max_chunk_size):
     return ranges
 
 
+def make_oid_preserving_field_mappings(input_fc, oid_field_name, unique_id_field_name):
+    """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID.
+
+    Args:
+        input_fc (str, layer): Input feature class or layer
+        oid_field_name (str): ObjectID field name of the input_fc
+        unique_id_field_name (str): The name for the new field storing the original OIDs
+
+    Returns:
+        (arcpy.FieldMappings): Field mappings for use in FeatureClassToFeatureClass that maps the ObjectID
+            field to a unique new field name so its values will be preserved after copying the feature class.
+    """
+    field_mappings = arcpy.FieldMappings()
+    field_mappings.addTable(input_fc)
+    # Create a new output field with a unique name to store the original OID
+    new_field = arcpy.Field()
+    new_field.name = unique_id_field_name
+    new_field.aliasName = "Original OID"
+    new_field.type = "Integer"
+    # Create a new field map object and map the ObjectID to the new output field
+    new_fm = arcpy.FieldMap()
+    new_fm.addInputField(input_fc, oid_field_name)
+    new_fm.outputField = new_field
+    # Add the new field map
+    field_mappings.addFieldMap(new_fm)
+    return field_mappings
+
+
 def execute_subprocess(script_name, inputs):
     """Execute a subprocess with the designated inputs and write the returned messages to the GP UI.
 
