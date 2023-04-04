@@ -843,7 +843,22 @@ class ParallelCalculateLocations(object):
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
-        ## TODO: Validate no duplicate entries in search query
+        param_search_query = parameters[8]
+
+        # Validate no duplicate entries in search query
+        if not param_search_query.hasBeenValidated and param_search_query.altered and param_search_query.valueAsText:
+            search_query_sources = [s[0] for s in param_search_query.values]
+            if len(set(search_query_sources)) < len(search_query_sources):
+                seen = set()
+                duplicates = []
+                for source in search_query_sources:
+                    if source in seen:
+                        duplicates.append(source)
+                    else:
+                        seen.add(source)
+                # Error 030255: Duplicate source name: "MySourceName".
+                param_search_query.setIDMessage("Error", 30255, duplicates[0])
+
         return
 
     def execute(self, parameters, messages):
