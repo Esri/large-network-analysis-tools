@@ -118,6 +118,19 @@ class TestHelpers(unittest.TestCase):
             helpers.convert_output_format_str_to_enum(bad_format)
         self.assertEqual(f"Invalid output format: {bad_format}", str(ex.exception))
 
+    def test_convert_pair_type_str_to_enum(self):
+        """Test the convert_pair_type_str_to_enum function."""
+        # Test all valid pair types
+        valid_pair_types = helpers.PAIR_TYPES
+        for fm in valid_pair_types:
+            enum_format = helpers.convert_pair_type_str_to_enum(fm)
+            self.assertIsInstance(enum_format, helpers.PreassignedODPairType)
+        # Test for correct error with an invalid format type
+        bad_format = "BadFormat"
+        with self.assertRaises(ValueError) as ex:
+            helpers.convert_pair_type_str_to_enum(bad_format)
+        self.assertEqual(f"Invalid OD pair assignment type: {bad_format}", str(ex.exception))
+
     def test_validate_input_feature_class(self):
         """Test the validate_input_feature_class function."""
         # Test when the input feature class does note exist.
