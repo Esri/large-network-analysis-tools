@@ -3,16 +3,17 @@
 
 The tools and code samples here help you solve large network analysis problems in ArcGIS Pro.
 
-We have provided two python script tools designed to solve large network analysis problems by splitting the input data into chunks and solving the chunks in parallel. You can use these tools as is, you can modify the provided scripts to suit your needs, or you can use them as an example when writing your own code.
+We have provided some python script tools designed to solve large network analysis problems by splitting the input data into chunks and solving the chunks in parallel. You can use these tools as is, you can modify the provided scripts to suit your needs, or you can use them as an example when writing your own code.
 
 ## Features
-The LargeNetworkAnalysisTools.pyt toolbox has two geoprocessing tools:
+The LargeNetworkAnalysisTools.pyt toolbox has three geoprocessing tools:
 * *[Solve Large OD Cost Matrix](#Solve-Large-OD-Cost-Matrix-tool)* - solves a large origin destination cost matrix problem, and the results can be written to a feature class, a set of CSV files, or a set of Apache Arrow files
 * *[Solve Large Analysis With Known OD Pairs](#Solve-Large-Analysis-With-Known-OD-Pairs-tool)* - generates routes between origins and preassigned destinations
+* *[Parallel Calculate Locations](#Parallel-Calculate-Locations-tool)* - calculates network locations for a large dataset in parallel
 
 ## Requirements
 
-* ArcGIS Pro 2.5 or later (ArcGIS Pro 2.9 or later is recommended for improved performance and functionality)
+* ArcGIS Pro 2.5 or later (ArcGIS Pro 2.9 or later is recommended for improved performance and functionality, and older Pro versions have not been thoroughly tested)
 * One of the following three options:
   * A routable [network dataset](https://pro.arcgis.com/en/pro-app/help/analysis/networks/what-is-network-dataset-.htm) and the Network Analyst extension license
   * An ArcGIS Online account with routing privileges and sufficient [credits](https://pro.arcgis.com/en/pro-app/tool-reference/appendices/geoprocessing-tools-that-use-credits.htm#ESRI_SECTION1_3EF40A7C01C042D8A76DB9518B793E9E)
@@ -200,6 +201,78 @@ The tool consists of several scripts:
 Why do we have both solve_large_route_pair_analysis.py and parallel_route_pairs.py? Why do we call parallel_route_pairs.py as a subprocess? This is necessary to accommodate running this tool from the ArcGIS Pro UI. A script tool running in the ArcGIS Pro UI cannot directly call multiprocessing using concurrent.futures. We must instead spin up a subprocess, and the subprocess must spawn parallel processes for the calculations. Thus, solve_large_route_pair_analysis.py does all the pre-processing in the main python process, but it passes the inputs to parallel_route_pairs.py as a separate subprocess, and that subprocess can, in turn, spin up parallel processes for the Route calculations.
 
 Unit tests are available in the `unittests` folder and can help identify problems if you're editing the code.
+
+
+## Parallel Calculate Locations tool
+
+The *Parallel Calculate Locations* tool can be used to more efficient [precalculate network locations](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/precalculate-network-locations.htm) for a large dataset when the core Calculate Locations tool is too slow.  It chunks up the dataset and calculates the network locations in parallel.
+
+Note: This tool is provided in case the only thing you want to do is calculate network locations for a large dataset.  If you're going to run the *Solve Large OD Cost Matrix* or *Solve Large Analysis With Known OD Pairs* tools, those tools can automatically precalculate network locations when you run them, and they use the parallelized logic as the *Parallel Calculate Locations* tool.
+
+### Parallel Calculate Locations tool inputs
+
+The tool inputs are similar to those in the core Calculate Locations tool.  Please see that tool's [official documentation](https://pro.arcgis.com/en/pro-app/latest/tool-reference/network-analyst/calculate-locations.htm) for more details about some of the parameters.
+
+- **Input Features** (Python: *Input_Features*) - The point feature class or layer you want to calculate network locations for.
+- **Output Features** (Python: *Output_Features*) - The catalog path to the output feature class.  Unlike in the core Calculate Locations tool, this tool generates a new feature class instead of merely adding fields to the original. A new feature class must be generated during the parallel processing, and as a result, the ObjectIDs may change, so we ask the user to specify an output feature class path instead of overwriting the original.  We also do this to avoid accidentally deleting the user's original data if the tool errors.
+- **Network Dataset** (Python: *Network_Dataset*) - Network dataset or network dataset layer to use when calculating network locations.
+- **Maximum Features per Chunk** (Python: *Max_Features_Per_Chunk*) - Defines the number of features that will be in each chunk in the parallel processing.
+- **Maximum Number of Parallel Processes** (Python: *Max_Processes*) - Defines the maximum number of parallel processes to run at once. Do not exceed the number of logical processors of your machine.
+- **Travel Mode** (Python: *Travel_Mode*) - Network travel mode to use when calculating network locations.  This parameter is optional.
+- **Search Tolerance** (Python: *Search_Tolerance*) - The maximum search distance that will be used when locating the input features on the network. Features that are outside the search tolerance will be left unlocated. The default is 5000 meters.
+- **Search Criteria** (Python: *Search_Criteria*) - The network dataset source feature classes on which input features are allowed to locate.  The default locatable sources for the network will be used if you don't specify a value for this parameter.
+- **Search Query**  (Python: *Search_Query*) - An optional query for each network dataset source feature class filtering the source features that can be located on.  By default, no query is used for any source.
+
+### Running the tool from ArcGIS Pro
+
+You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You just need to connect to the provided Python toolbox from the Catalog Pane either in the Toolboxes section or the Folders section.
+
+![Screenshot of tool dialog](./images/ParallelCalculateLocations_Dialog.png)
+
+Note: Limitations of arcpy prevented me from using the standard SQL query builder control in the tool UI for the Search Query parameter, so you must specify the SQL query expression manually as a string.  The tool does some validation to ensure that the strings are usable, but it doesn't provide any help in constructing them.  The easiest way to get the queries right is to do as follows:
+1. Open the core Calculate Locations tool (the standard one in the Network Analyst Tools toolbox.
+2. Set the input features and the network dataset.
+3. Use the Search Query control in the Calculate Locations tool to construct the queries you want using the SQL expression builder.
+  ![Screenshot of Calculate Locations tool query builder](./images/CalculateLocations_SQL_1.png)
+4. Click the SQL button on the query builder to see the raw SQL syntax and copy it.
+  ![Screenshot of Calculate Locations tool query string](./images/CalculateLocations_SQL_2.png)
+5. Paste the SQL query string into the Parallel Calculate Locations tool dialog.
+  ![Screenshot of Parallel Calculate Locations tool search query parameter](./images/ParallelCalculateLocations_SQL.png)
+
+### Running the tool from standalone Python
+
+You can call the tool from your own standalone Python script.
+
+As with any custom script tool, you must first import the toolbox within your standalone script:
+`arcpy.ImportToolbox(<full path to LargeNetworkAnalysisTools.pyt>)`
+
+Then, you can call the tool in your script:
+`arcpy.LargeNetworkAnalysisTools.ParallelCalculateLocations(<tool parameters>)`
+
+Here is the full tool signature:
+```python
+arcpy.LargeNetworkAnalysisTools.ParallelCalculateLocations(
+    Input_Features, Output_Features, Network_Dataset,
+    Max_Features_Per_Chunk, Max_Processes,
+    Travel_Mode, Search_Tolerance, Search_Criteria, Search_Query
+)
+```
+
+### Tool output
+
+The output feature class will be a copy of the input feature class with the [network location fields](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/locating-analysis-inputs.htm#ESRI_SECTION1_9FF9489173C741DD95472F21B5AD8374) appended.  Because the original ObjectIDs may have shifted, the output feature class includes an ORIG_OID field with the values of the original ObjectID.  (If the feature class already had an ORIG_OID field, the new field may be called ORIG_OID1, ORIG_OID2, etc.)
+
+### Technical explanation of how this tool works
+
+The tool consists of two main scripts:
+- **LargeNetworkAnalysisTools.pyt**: This defines the python toolbox and the tool as you see it in the ArcGIS Pro UI. It does some minimal parameter validation, makes a backup copy of the input locations, and calls parallel_calculate_locations.py as a subprocess to do the parallel processes.
+- **parallel_calculate_locations.py**: This script chunks the inputs and calculates the locations in parallel.
+- **helpers.py**: Contains some helper methods and global variables.
+
+Calling parallel_calculate_locations.py as a subprocess is necessary to accommodate running this tool from the ArcGIS Pro UI. A script tool running in the ArcGIS Pro UI cannot directly call multiprocessing using concurrent.futures. We must instead spin up a subprocess, and the subprocess must spawn parallel processes for the calculations.
+
+Unit tests are available in the `unittests` folder and can help identify problems if you're editing the code.
+
 
 ## Resources
 
