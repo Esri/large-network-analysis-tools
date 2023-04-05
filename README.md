@@ -233,10 +233,15 @@ Note: Limitations of arcpy prevented me from using the standard SQL query builde
 1. Open the core Calculate Locations tool (the standard one in the Network Analyst Tools toolbox).
 2. Set the input features and the network dataset.
 3. Use the Search Query control in the Calculate Locations tool to construct the queries you want using the SQL expression builder.
+
     ![Screenshot of Calculate Locations tool query builder](./images/CalculateLocations_SQL_1.png)
+
 4. Click the SQL button on the query builder to see the raw SQL syntax and copy it.
+
     ![Screenshot of Calculate Locations tool query string](./images/CalculateLocations_SQL_2.png)
+
 5. Paste the SQL query string into the Parallel Calculate Locations tool dialog.
+
     ![Screenshot of Parallel Calculate Locations tool search query parameter](./images/ParallelCalculateLocations_SQL.png)
 
 ### Running the tool from standalone Python
