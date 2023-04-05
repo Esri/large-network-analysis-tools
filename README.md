@@ -205,15 +205,15 @@ Unit tests are available in the `unittests` folder and can help identify problem
 
 ## Parallel Calculate Locations tool
 
-The *Parallel Calculate Locations* tool can be used to more efficient [precalculate network locations](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/precalculate-network-locations.htm) for a large dataset when the core Calculate Locations tool is too slow.  It chunks up the dataset and calculates the network locations in parallel.
+The *Parallel Calculate Locations* tool can be used to efficiently [precalculate network locations](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/precalculate-network-locations.htm) for a large dataset by chunking up the input feature class and calculates the network locations in parallel.
 
-Note: This tool is provided in case the only thing you want to do is calculate network locations for a large dataset.  If you're going to run the *Solve Large OD Cost Matrix* or *Solve Large Analysis With Known OD Pairs* tools, those tools can automatically precalculate network locations when you run them, and they use the parallelized logic as the *Parallel Calculate Locations* tool.
+Note: This tool is provided in case the only thing you want to do is calculate network locations for a large dataset.  If you're going to run the *Solve Large OD Cost Matrix* or *Solve Large Analysis With Known OD Pairs* tools, those tools can automatically precalculate network locations when you run them, and they use the same parallelized logic as the *Parallel Calculate Locations* tool.
 
 ### Parallel Calculate Locations tool inputs
 
 The tool inputs are similar to those in the core Calculate Locations tool.  Please see that tool's [official documentation](https://pro.arcgis.com/en/pro-app/latest/tool-reference/network-analyst/calculate-locations.htm) for more details about some of the parameters.
 
-- **Input Features** (Python: *Input_Features*) - The point feature class or layer you want to calculate network locations for.
+- **Input Features** (Python: *Input_Features*) - The point feature class or layer whose network locations you want to calculate.
 - **Output Features** (Python: *Output_Features*) - The catalog path to the output feature class.  Unlike in the core Calculate Locations tool, this tool generates a new feature class instead of merely adding fields to the original. A new feature class must be generated during the parallel processing, and as a result, the ObjectIDs may change, so we ask the user to specify an output feature class path instead of overwriting the original.  We also do this to avoid accidentally deleting the user's original data if the tool errors.
 - **Network Dataset** (Python: *Network_Dataset*) - Network dataset or network dataset layer to use when calculating network locations.
 - **Maximum Features per Chunk** (Python: *Max_Features_Per_Chunk*) - Defines the number of features that will be in each chunk in the parallel processing.
@@ -230,14 +230,14 @@ You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You j
 ![Screenshot of tool dialog](./images/ParallelCalculateLocations_Dialog.png)
 
 Note: Limitations of arcpy prevented me from using the standard SQL query builder control in the tool UI for the Search Query parameter, so you must specify the SQL query expression manually as a string.  The tool does some validation to ensure that the strings are usable, but it doesn't provide any help in constructing them.  The easiest way to get the queries right is to do as follows:
-1. Open the core Calculate Locations tool (the standard one in the Network Analyst Tools toolbox.
+1. Open the core Calculate Locations tool (the standard one in the Network Analyst Tools toolbox).
 2. Set the input features and the network dataset.
 3. Use the Search Query control in the Calculate Locations tool to construct the queries you want using the SQL expression builder.
-  ![Screenshot of Calculate Locations tool query builder](./images/CalculateLocations_SQL_1.png)
+    ![Screenshot of Calculate Locations tool query builder](./images/CalculateLocations_SQL_1.png)
 4. Click the SQL button on the query builder to see the raw SQL syntax and copy it.
-  ![Screenshot of Calculate Locations tool query string](./images/CalculateLocations_SQL_2.png)
+    ![Screenshot of Calculate Locations tool query string](./images/CalculateLocations_SQL_2.png)
 5. Paste the SQL query string into the Parallel Calculate Locations tool dialog.
-  ![Screenshot of Parallel Calculate Locations tool search query parameter](./images/ParallelCalculateLocations_SQL.png)
+    ![Screenshot of Parallel Calculate Locations tool search query parameter](./images/ParallelCalculateLocations_SQL.png)
 
 ### Running the tool from standalone Python
 
@@ -265,7 +265,7 @@ The output feature class will be a copy of the input feature class with the [net
 ### Technical explanation of how this tool works
 
 The tool consists of two main scripts:
-- **LargeNetworkAnalysisTools.pyt**: This defines the python toolbox and the tool as you see it in the ArcGIS Pro UI. It does some minimal parameter validation, makes a backup copy of the input locations, and calls parallel_calculate_locations.py as a subprocess to do the parallel processes.
+- **LargeNetworkAnalysisTools.pyt**: This defines the python toolbox and the tool as you see it in the ArcGIS Pro UI. It does some minimal parameter validation, makes a backup copy of the input locations, and calls parallel_calculate_locations.py as a subprocess to do the parallel processing.
 - **parallel_calculate_locations.py**: This script chunks the inputs and calculates the locations in parallel.
 - **helpers.py**: Contains some helper methods and global variables.
 
