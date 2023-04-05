@@ -301,6 +301,17 @@ class TestSolveLargeRoutePairAnalysis(unittest.TestCase):
         rt_solver.solve_large_route_pair_analysis()
         self.assertTrue(arcpy.Exists(self.rt_args_many_to_many["output_routes"]))
 
+    def test_solve_large_route_pair_analysis_use_oids(self):
+        """Test the full solve route pair workflow for the one-to-one pair type using ObjectID fields as unique IDs."""
+        inputs = deepcopy(self.rt_args_one_to_one)
+        inputs["origin_id_field"] = arcpy.Describe(inputs["origins"]).oidFieldName
+        dest_oid = arcpy.Describe(inputs["destinations"]).oidFieldName
+        inputs["dest_id_field"] = dest_oid
+        inputs["assigned_dest_field"] = dest_oid
+        rt_solver = solve_large_route_pair_analysis.RoutePairSolver(**inputs)
+        rt_solver.solve_large_route_pair_analysis()
+        self.assertTrue(arcpy.Exists(inputs["output_routes"]))
+
     def test_cli_one_to_one(self):
         """Test the command line interface of solve_large_route_pair_analysis for the one-to-one pair type."""
         out_folder = os.path.join(self.scratch_folder, "CLI_CSV_Output_OneToOne")

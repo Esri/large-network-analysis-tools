@@ -34,7 +34,7 @@ class Toolbox(object):
         self.alias = "LargeNetworkAnalysisTools"
 
         # List of tool classes associated with this toolbox
-        self.tools = [SolveLargeODCostMatrix, SolveLargeAnalysisWithKnownPairs]
+        self.tools = [SolveLargeODCostMatrix, SolveLargeAnalysisWithKnownPairs, ParallelCalculateLocations]
 
 
 class SolveLargeODCostMatrix(object):
@@ -701,6 +701,227 @@ class SolveLargeAnalysisWithKnownPairs(object):
         return
 
 
+class ParallelCalculateLocations(object):
+    """Sample script tool to calculate locations for a large dataset in parallel."""
+
+    def __init__(self):
+        """Define the tool."""
+        self.label = "Parallel Calculate Locations"
+        self.description = "Calculate network locations for a large dataset by chunking it and solving in parallel."
+        self.canRunInBackground = True
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+
+        param_in_features = arcpy.Parameter(
+            displayName="Input Features",
+            name="Input_Features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_in_features.filter.list = ["Point"]
+
+        param_out_features = arcpy.Parameter(
+            displayName="Output Features",
+            name="Output_Features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Output"
+        )
+
+        param_network = arcpy.Parameter(
+            displayName="Network Dataset",
+            name="Network_Dataset",
+            datatype="GPNetworkDatasetLayer",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        param_chunk_size = arcpy.Parameter(
+            displayName="Maximum Features per Chunk",
+            name="Max_Features_Per_Chunk",
+            datatype="GPLong",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_chunk_size.value = 1000
+
+        param_max_processes = arcpy.Parameter(
+            displayName="Maximum Number of Parallel Processes",
+            name="Max_Processes",
+            datatype="GPLong",
+            parameterType="Required",
+            direction="Input"
+        )
+        param_max_processes.value = 4
+
+        param_travel_mode = arcpy.Parameter(
+            displayName="Travel Mode",
+            name="Travel_Mode",
+            datatype="NetworkTravelMode",
+            parameterType="Optional",
+            direction="Input"
+        )
+        param_travel_mode.parameterDependencies = [param_network.name]
+
+        param_search_tolerance = arcpy.Parameter(
+            displayName="Search Tolerance",
+            name="Search_Tolerance",
+            datatype="GPLinearUnit",
+            parameterType="Optional",
+            direction="Input"
+        )
+        param_search_tolerance.value = "5000 Meters"
+
+        param_search_criteria = arcpy.Parameter(
+            displayName="Search Criteria",
+            name="Search_Criteria",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+            multiValue=True
+        )
+        # Causes the parameter to be a list of checkboxes instead of a standard multivalue
+        param_search_criteria.controlCLSID = "{38C34610-C7F7-11D5-A693-0008C711C8C1}"
+
+        param_search_query = arcpy.Parameter(
+            displayName="Search Query",
+            name="Search_Query",
+            datatype="GPValueTable",
+            parameterType="Optional",
+            direction="Input",
+            multiValue=True
+        )
+        param_search_query.columns = [
+            ['GPString', 'Name'],
+            ['GPString', 'Query']
+        ]
+        param_search_query.filters[0].type = 'ValueList'
+
+        params = [
+            param_in_features,  # 0
+            param_out_features,  # 1
+            param_network,  # 2
+            param_chunk_size,  # 3
+            param_max_processes,  # 4
+            param_travel_mode,  # 5
+            param_search_tolerance,  # 6
+            param_search_criteria,  # 7
+            param_search_query  # 8
+        ]
+
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        param_network = parameters[2]
+        param_search_criteria = parameters[7]
+        param_search_query = parameters[8]
+
+        # Populate available network sources in the search criteria and search query parameters
+        if not param_network.hasBeenValidated and param_network.altered and param_network.valueAsText:
+            try:
+                network = param_network.valueAsText
+                source_names = helpers.get_locatable_network_source_names(network)
+                default_source_names = helpers.get_default_locatable_network_source_names(network)
+                param_search_criteria.filter.list = source_names
+                param_search_criteria.value = default_source_names
+                param_search_query.filters[0].list = source_names
+            except Exception:  # pylint: disable=broad-except
+                # Something went wrong in checking the network's sources.  Don't modify any parameters.
+                pass
+
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        param_network = parameters[2]
+        param_search_criteria = parameters[7]
+        param_search_query = parameters[8]
+
+        # Validate that at least one source is selected for search criteria
+        if not param_search_criteria.hasBeenValidated and param_network.valueAsText:
+            if not param_search_criteria.valueAsText:
+                param_search_criteria.setErrorMessage("At least one network source is required.")
+
+        # Validate no duplicate entries in search query
+        if not param_search_query.hasBeenValidated and param_search_query.altered and \
+                param_search_query.valueAsText and param_network.valueAsText:
+            validate_search_query_param(param_search_query, param_network)
+
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        # Construct string-based travel mode
+        travel_mode = parameters[5].value
+        if travel_mode:
+            travel_mode = travel_mode._JSON  # pylint: disable=protected-access
+        else:
+            travel_mode = ""
+
+        # Construct the search criteria from the selected sources
+        source_names = parameters[7].filter.list
+        sources_to_locate_on = parameters[7].values
+        search_criteria = helpers.construct_search_criteria_string(sources_to_locate_on, source_names)
+
+        # Construct string-based search query
+        search_query = parameters[8].valueAsText
+        if not search_query:
+            search_query = ""
+
+        # Make a temporary copy of the input features to take care of any selection sets and definition queries and to
+        # add a field preserving the ObjectID.
+        input_features = parameters[0].value
+        desc = arcpy.Describe(input_features)
+        # Create a unique output field name to preserve the original OID
+        in_fields = [f.name for f in desc.fields]
+        base_oid_field = "ORIG_OID"
+        out_oid_field = base_oid_field
+        if out_oid_field in in_fields:
+            i = 1
+            while out_oid_field in in_fields:
+                out_oid_field = base_oid_field + str(i)
+                i += 1
+        field_mappings = helpers.make_oid_preserving_field_mappings(
+            input_features, desc.oidFieldName, out_oid_field)
+        temp_inputs = arcpy.CreateUniqueName("TempCLInputs", arcpy.env.scratchGDB)  # pylint:disable = no-member
+        arcpy.conversion.FeatureClassToFeatureClass(
+            input_features,
+            arcpy.env.scratchGDB,  # pylint:disable = no-member
+            os.path.basename(temp_inputs),
+            field_mapping=field_mappings
+        )
+
+        try:
+            cl_inputs = [
+                "--input-features", temp_inputs,
+                "--output-features", parameters[1].valueAsText,
+                "--network-data-source", get_catalog_path(parameters[2]),
+                "--chunk-size", parameters[3].valueAsText,
+                "--max-processes", parameters[4].valueAsText,
+                "--travel-mode", travel_mode,
+                "--search-tolerance", parameters[6].valueAsText,
+                "--search-criteria", search_criteria,
+                "--search-query", search_query
+            ]
+            helpers.execute_subprocess("parallel_calculate_locations.py", cl_inputs)
+
+        finally:
+            # Clean up. Delete temporary copy of inputs
+            arcpy.management.Delete([temp_inputs])
+
+        return
+
+
 def get_catalog_path(param):
     """Get the catalog path for a single value parameter if possible.
 
@@ -818,3 +1039,53 @@ def cap_max_processes(param_network, param_max_processes):
                 "The maximum number of parallel processes is greater than the number of logical cores "
                 f"({cpu_count()}) in your machine."
             ))
+
+
+def validate_search_query_param(param_search_query, param_network):
+    """Validate the search query parameter for Parallel Calculate Locations."""
+    search_query = param_search_query.values
+    search_query_sources = [s[0] for s in search_query]
+
+    # Validate source names
+    valid_source_names = param_search_query.filters[0].list
+    for source in search_query_sources:
+        if source not in valid_source_names:
+            # Error 030254: Invalid source name: "BadSourceName".
+            param_search_query.setIDMessage("Error", 30254, source)
+            return
+
+    # Validate no duplicate source names
+    if len(set(search_query_sources)) < len(search_query_sources):
+        seen = set()
+        duplicates = []
+        for source in search_query_sources:
+            if source in seen:
+                duplicates.append(source)
+            else:
+                seen.add(source)
+        # Error 030255: Duplicate source name: "MySourceName".
+        param_search_query.setIDMessage("Error", 30255, duplicates[0])
+        return
+
+    # Validate SQL queries
+    # There's no straightforward way to validate SQL queries in Python, so let's be clever and tricky.  Spin up a dummy
+    # SearchCursor using the user's query for each network source as a where clause.  If that throws an exception,
+    # return the exception as a validation error.
+    # First check that there are any actual queries.  No need to validate if they're all empty.
+    populated_queries = [q[1] for q in search_query if q[1]]
+    if not populated_queries:
+        return
+    feature_dataset = os.path.dirname(get_catalog_path(param_network))
+    for query in search_query:
+        try:
+            with arcpy.da.SearchCursor(  # pylint: disable=no-member
+                os.path.join(feature_dataset, query[0]), ["OID@"], query[1]
+            ) as cur:
+                try:
+                    next(cur)
+                except StopIteration:
+                    # The cursor worked but no rows were returned.  This is not an error.
+                    pass
+        except Exception as ex:  # pylint: disable=broad-except
+            param_search_query.setErrorMessage(str(ex))
+            return

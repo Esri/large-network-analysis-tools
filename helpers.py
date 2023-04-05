@@ -13,8 +13,14 @@ Copyright 2023 Esri
    See the License for the specific language governing permissions and
    limitations under the License.
 """
+import os
+import sys
+import time
+import uuid
 import enum
 import traceback
+import logging
+import subprocess
 import arcpy
 
 arcgis_version = arcpy.GetInstallInfo()["Version"]
@@ -315,33 +321,103 @@ def validate_network_data_source(network_data_source):
     return network_data_source
 
 
-def precalculate_network_locations(input_features, network_data_source, travel_mode, config_file_props):
-    """Precalculate network location fields if possible for faster loading and solving later.
+def get_locatable_network_source_names(network_dataset):
+    """Return a list of all locatable network dataset source feature class names.
 
-    Cannot be used if the network data source is a service. Uses the searchTolerance, searchToleranceUnits, and
-    searchQuery properties set in the config file.
+    Suitable for constructing a list of values for the Search Criteria parameter.
 
     Args:
-        input_features (feature class catalog path): Feature class to calculate network locations for
-        network_data_source (network dataset catalog path): Network dataset to use to calculate locations
-        travel_mode (travel mode): Travel mode name, object, or json representation to use when calculating locations.
-        config_file_props (dict): Dictionary of solver object properties from config file.
-    """
-    arcpy.AddMessage(f"Precalculating network location fields for {input_features}...")
+        network_dataset (str, layer): Network dataset catalog path or layer
 
-    # Get location settings from config file if present
-    search_tolerance = None
+    Returns:
+        list: List of network source feature class names.  Does not include turn sources.
+    """
+    # The most reliable way to get the locatable sources for a network dataset is to create a dummy arcpy.nax solver
+    # object and retrieve the source names from the searchQuery property.  That isn't the property's intended use, but
+    # as a hack, it works great!  Note that you could also retrieve this information using the network dataset Describe
+    # object and getting the list of edges and junction sources.  However, the sort order won't be the same as a user
+    # would typically see in the Pro UI in the Calculate Locations tool, for example.  Also, rarely (especially with)
+    # public transit network, some sources aren't considered locatable (LineVariantElements) and would not be filtered
+    # from this list.
+    rt = arcpy.nax.Route(network_dataset)
+    network_sources = [q[0] for q in rt.searchQuery]
+    del rt
+    return network_sources
+
+
+def get_default_locatable_network_source_names(network_dataset):
+    """Return a list network source feature class names that should be on by default in the Search Criteria parameter.
+
+    This returns only a subset of all locatable sources that should be checked on by default in the UI.  This should
+    match what the user sees in the Pro UI with the core Calculate Locations tool.
+
+    Note: The logic in this method only works in Pro 3.0 or higher and will return an empty string otherwise.
+
+    Args:
+        network_dataset (str, layer): Network dataset catalog path or layer
+
+    Returns:
+        list: List of source feature class names.  Does not include turn sources.
+    """
+    # The most reliable way to get the locatable sources for a network dataset is to create a dummy arcpy.nax solver
+    # object and retrieve the default locatable source names from the searchSources property.  That isn't the property's
+    # intended use, but as a hack, it works great!  However, the searchSources parameter was added in Pro 3.0.  For
+    # older software, return an empty list, and the user will have to figure it out for themselves.
+    if arcgis_version < "3.0":
+        return []
+    rt = arcpy.nax.Route(network_dataset)
+    network_sources = [q[0] for q in rt.searchSources]
+    del rt
+    return network_sources
+
+
+def construct_search_criteria_string(sources_to_use, all_sources):
+    """Construct a search criteria string from a list of network sources to use.
+
+    We use the string-based format for search criteria to allow it to be passed through to a subprocess CLI.
+
+    Args:
+        sources_to_use (list): Names of network sources to use for locating
+        all_sources (list): List of all network sources
+
+    Returns:
+        str: String properly formatted for use in the Calculate Locations Search Criteria parameter
+    """
+    search_criteria = [s + " SHAPE" for s in sources_to_use] + \
+                      [s + " NONE" for s in all_sources if s not in sources_to_use]
+    return ";".join(search_criteria)  # Ex: Streets SHAPE;Streets_ND_Junctions NONE
+
+
+def get_locate_settings_from_config_file(config_file_props, network_dataset):
+    """Get location settings from config file if present."""
+    search_tolerance = ""
+    search_criteria = ""
+    search_query = ""
     if "searchTolerance" in config_file_props and "searchToleranceUnits" in config_file_props:
         search_tolerance = f"{config_file_props['searchTolerance']} {config_file_props['searchToleranceUnits'].name}"
-    search_query = config_file_props.get("search_query", None)
-
-    # Calculate network location fields if network data source is local
-    arcpy.na.CalculateLocations(
-        input_features, network_data_source,
-        search_tolerance=search_tolerance,
-        search_query=search_query,
-        travel_mode=travel_mode
-    )
+    if "searchSources" in config_file_props:
+        # searchSources covers both search_criteria and search_tolerance.
+        search_sources = config_file_props["searchSources"]
+        if search_sources:
+            search_query = search_sources
+            search_criteria = construct_search_criteria_string(
+                [s[0] for s in search_sources],
+                get_locatable_network_source_names(network_dataset)
+            )
+    elif "searchQuery" in config_file_props:
+        # searchQuery is only used if searchSources is not present.
+        search_query = config_file_props["searchQuery"]
+        if not search_query:
+            # Reset to empty string in case it was an empty list
+            search_query = ""
+    # Convert the search_query to string format to allow it to be passed through to a subprocess CLI
+    # Use a value table to ensure proper conversion of SQL expressions
+    if search_query:
+        value_table = arcpy.ValueTable(["GPString", "GPSQLExpression"])
+        for query in search_query:
+            value_table.addRow(query)
+        search_query = value_table.exportToString()
+    return search_tolerance, search_criteria, search_query
 
 
 def get_oid_ranges_for_input(input_fc, max_chunk_size):
@@ -380,6 +456,95 @@ def get_oid_ranges_for_input(input_fc, max_chunk_size):
         ranges.append(current_range)
 
     return ranges
+
+
+def make_oid_preserving_field_mappings(input_fc, oid_field_name, unique_id_field_name):
+    """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID.
+
+    Args:
+        input_fc (str, layer): Input feature class or layer
+        oid_field_name (str): ObjectID field name of the input_fc
+        unique_id_field_name (str): The name for the new field storing the original OIDs
+
+    Returns:
+        (arcpy.FieldMappings): Field mappings for use in FeatureClassToFeatureClass that maps the ObjectID
+            field to a unique new field name so its values will be preserved after copying the feature class.
+    """
+    field_mappings = arcpy.FieldMappings()
+    field_mappings.addTable(input_fc)
+    # Create a new output field with a unique name to store the original OID
+    new_field = arcpy.Field()
+    new_field.name = unique_id_field_name
+    new_field.aliasName = "Original OID"
+    new_field.type = "Integer"
+    # Create a new field map object and map the ObjectID to the new output field
+    new_fm = arcpy.FieldMap()
+    new_fm.addInputField(input_fc, oid_field_name)
+    new_fm.outputField = new_field
+    # Add the new field map
+    field_mappings.addFieldMap(new_fm)
+    return field_mappings
+
+
+def execute_subprocess(script_name, inputs):
+    """Execute a subprocess with the designated inputs and write the returned messages to the GP UI.
+
+    This is used by the tools in this toolset to launch the scripts that parallelize processes using concurrent.futures.
+    It is necessary to launch these parallelization scripts as subprocess so they can spawn parallel processes because a
+    tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
+
+    Args:
+        script_name (str): The name of the Python file to run as a subprocess, like parallel_route_pairs.py.
+        inputs (list): A list that includes each command line argument flag followed by its value appropriate for
+            calling a subprocess.  Do not include the Python executable path or the script path in this list because
+            the function will automatically add them. Ex: ["--my-param1", "my_value_1", "--my-param2", "my_value_2]
+    """
+    # Set up inputs to run the designated module with the designated inputs
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    inputs = [
+        os.path.join(sys.exec_prefix, "python.exe"),
+        os.path.join(cwd, script_name)
+    ] + inputs
+
+    # We do not want to show the console window when calling the command line tool from within our GP tool.
+    # This can be done by setting this hex code.
+    create_no_window = 0x08000000
+
+    # Launch the subprocess and periodically check results
+    with subprocess.Popen(
+        inputs,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        creationflags=create_no_window
+    ) as process:
+        # The while loop reads the subprocess's stdout in real time and writes the stdout messages to the GP UI.
+        # This is the only way to write the subprocess's status messages in a way that a user running the tool from
+        # the ArcGIS Pro UI can actually see them.
+        # When process.poll() returns anything other than None, the process has completed, and we should stop
+        # checking and move on.
+        while process.poll() is None:
+            output = process.stdout.readline()
+            if output:
+                msg_string = output.strip().decode()
+                parse_std_and_write_to_gp_ui(msg_string)
+            time.sleep(.1)
+
+        # Once the process is finished, check if any additional errors were returned. Messages that came after the
+        # last process.poll() above will still be in the queue here. This is especially important for detecting
+        # messages from raised exceptions, especially those with tracebacks.
+        output, _ = process.communicate()
+        if output:
+            out_msgs = output.decode().splitlines()
+            for msg in out_msgs:
+                parse_std_and_write_to_gp_ui(msg)
+
+        # In case something truly horrendous happened and none of the logging caught our errors, at least fail the
+        # tool when the subprocess returns an error code. That way the tool at least doesn't happily succeed but not
+        # actually do anything.
+        return_code = process.returncode
+        if return_code != 0:
+            err = f"Parallelization using {script_name} failed."
+            arcpy.AddError(err)
+            raise RuntimeError(err)
 
 
 def parse_std_and_write_to_gp_ui(msg_string):
@@ -473,3 +638,124 @@ def run_gp_tool(log_to_use, tool, tool_args=None, tool_kwargs=None):
 
     log_to_use.debug(f"Finished running geoprocessing tool {tool_name}.")
     return result
+
+
+class PrecalculateLocationsMixin:  # pylint:disable = too-few-public-methods
+    """Used to precalculate network locations either directly or calling the parallelized version."""
+
+    def _precalculate_locations(self, fc_to_precalculate, config_props):
+        """Precalculate network locations for the designated feature class.
+
+        Args:
+            fc_to_precalculate (str): Catalog path to the feature class to calculate locations for.
+            config_props (dict): Dictionary of solver object properties that includes locate settings.  Must be OD_PROPS
+                from od_config.py or RT_PROPS from rt_config.py.
+
+        Returns:
+            str: Catalog path to the feature class with the network location fields
+        """
+        search_tolerance, search_criteria, search_query = get_locate_settings_from_config_file(
+            config_props, self.network_data_source)
+        num_features = int(arcpy.management.GetCount(fc_to_precalculate).getOutput(0))
+        if num_features <= self.chunk_size:
+            # Do not parallelize Calculate Locations since the number of features is less than the chunk size, and it's
+            # more efficient to run the tool directly.
+            arcpy.nax.CalculateLocations(
+                fc_to_precalculate,
+                self.network_data_source,
+                search_tolerance,
+                search_criteria,
+                search_query=search_query,
+                travel_mode=self.travel_mode
+            )
+        else:
+            # Run Calculate Locations in parallel.
+            precalculated_fc = fc_to_precalculate + "_Precalc"
+            cl_inputs = [
+                "--input-features", fc_to_precalculate,
+                "--output-features", precalculated_fc,
+                "--network-data-source", self.network_data_source,
+                "--chunk-size", str(self.chunk_size),
+                "--max-processes", str(self.max_processes),
+                "--travel-mode", self.travel_mode,
+                "--search-tolerance", search_tolerance,
+                "--search-criteria", search_criteria,
+                "--search-query", search_query
+            ]
+            execute_subprocess("parallel_calculate_locations.py", cl_inputs)
+            fc_to_precalculate = precalculated_fc
+        return fc_to_precalculate  # Updated feature class
+
+
+class JobFolderMixin:  # pylint:disable = too-few-public-methods
+    """Used to define and create a job folder for a parallel process."""
+
+    def _create_job_folder(self):
+        """Create a job ID and a folder and scratch gdb for this job."""
+        self.job_id = uuid.uuid4().hex
+        self.job_folder = os.path.join(self.scratch_folder, self.job_id)
+        os.mkdir(self.job_folder)
+
+    def _create_output_gdb(self):
+        """Create a scratch geodatabase in the job folder.
+
+        Returns:
+            str: Catalog path to output geodatabase
+        """
+        self.logger.debug("Creating output geodatabase...")
+        out_gdb = os.path.join(self.job_folder, "scratch.gdb")
+        run_gp_tool(
+            self.logger,
+            arcpy.management.CreateFileGDB,
+            [os.path.dirname(out_gdb), os.path.basename(out_gdb)],
+        )
+        return out_gdb
+
+
+class LoggingMixin:
+    """Used to set up and tear down logging for a parallel process."""
+
+    def setup_logger(self, name_prefix):
+        """Set up the logger used for logging messages for this process. Logs are written to a text file.
+
+        Args:
+            logger_obj: The logger instance.
+        """
+        self.log_file = os.path.join(self.job_folder, name_prefix + ".log")
+        self.logger = logging.getLogger(f"{name_prefix}_{self.job_id}")
+
+        self.logger.setLevel(logging.DEBUG)
+        if len(self.logger.handlers) <= 1:
+            file_handler = logging.FileHandler(self.log_file)
+            file_handler.setLevel(logging.DEBUG)
+            self.logger.addHandler(file_handler)
+            formatter = logging.Formatter("%(process)d | %(message)s")
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+
+    def teardown_logger(self):
+        """Clean up and close the logger."""
+        for handler in self.logger.handlers:
+            handler.close()
+            self.logger.removeHandler(handler)
+
+
+class MakeNDSLayerMixin:  # pylint:disable = too-few-public-methods
+    """Used to make a network dataset layer for a parallel process."""
+
+    def _make_nds_layer(self):
+        """Create a network dataset layer if one does not already exist."""
+        nds_layer_name = os.path.basename(self.network_data_source)
+        if arcpy.Exists(nds_layer_name):
+            # The network dataset layer already exists in this process, so we can re-use it without having to spend
+            # time re-opening the network dataset and making a fresh layer.
+            self.logger.debug(f"Using existing network dataset layer: {nds_layer_name}")
+        else:
+            # The network dataset layer does not exist in this process, so create the layer.
+            self.logger.debug("Creating network dataset layer...")
+            run_gp_tool(
+                self.logger,
+                arcpy.na.MakeNetworkDatasetLayer,
+                [self.network_data_source, nds_layer_name],
+            )
+        self.network_data_source = nds_layer_name

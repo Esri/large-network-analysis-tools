@@ -23,13 +23,10 @@ Copyright 2023 Esri
    limitations under the License.
 """
 import os
-import sys
-import time
 import datetime
 import uuid
 import traceback
 import argparse
-import subprocess
 from math import floor
 from distutils.util import strtobool
 import pandas as pd
@@ -37,12 +34,14 @@ import pandas as pd
 import arcpy
 
 import helpers
-from rt_config import RT_PROPS  # Import Route settings from config file
+from rt_config import RT_PROPS, RT_PROPS_SET_BY_TOOL  # Import Route settings from config file
 
 arcpy.env.overwriteOutput = True
 
 
-class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-public-methods
+class RoutePairSolver(
+    helpers.PrecalculateLocationsMixin
+):  # pylint: disable=too-many-instance-attributes, too-few-public-methods
     """Compute routes between preassigned origins and destinations pairs in parallel and combine results.
 
     This class preprocesses and validates inputs and then spins up a subprocess to do the actual Route
@@ -195,7 +194,7 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
                 self.reverse_direction = False
             if self.should_sort_origins:
                 arcpy.AddWarning((
-                    "When using a preassigned origin-destination pair table, the Sort Origins by Assigned Destination s"
+                    "When using a preassigned origin-destination pair table, the Sort Origins by Assigned Destination "
                     "option cannot be used."))
                 self.should_sort_origins = False
         else:
@@ -345,6 +344,20 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
             for err in errs:
                 arcpy.AddError(err)
             raise
+        # Set properties from config file
+        for prop, value in RT_PROPS.items():
+            if prop not in RT_PROPS_SET_BY_TOOL:
+                try:
+                    setattr(rt, prop, value)
+                except Exception:  # pylint: disable=broad-except
+                    # Suppress errors for older services (pre 11.0) that don't support locate settings and services
+                    # that don't support accumulating attributes because we don't want the tool to always fail.
+                    if not (self.is_service and prop in [
+                        "searchTolerance", "searchToleranceUnits", "accumulateAttributeNames"
+                    ]):
+                        err = f"Failed to set property {prop} from OD config file."
+                        arcpy.AddError(err)
+                        raise
 
         # Return a JSON string representation of the travel mode to pass to the subprocess
         return rt.travelMode._JSON  # pylint: disable=protected-access
@@ -368,34 +381,6 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         sorted_origins = self.output_origins + "_Sorted"
         arcpy.management.Sort(self.output_origins, sorted_origins, [[self.assigned_dest_field, "ASCENDING"]])
         self.output_origins = sorted_origins
-
-    def _make_field_mappings(self, input_fc, oid_field_name):
-        """Make field mappings for use in FeatureClassToFeatureClass to transfer original ObjectID.
-
-        Args:
-            input_fc (str, layer): Input feature class or layer
-            oid_field_name (str): ObjectID field name of the input_fc
-
-        Returns:
-            (arcpy.FieldMappings, str): Field mappings for use in FeatureClassToFeatureClass that maps the ObjectID
-                field to a unique new field name so its values will be preserved after copying the feature class. The
-                new unique field name.
-        """
-        field_mappings = arcpy.FieldMappings()
-        field_mappings.addTable(input_fc)
-        # Create a new output field with a unique name to store the original OID
-        new_field = arcpy.Field()
-        new_field_name = f"OID_{self.unique_id}"
-        new_field.name = new_field_name
-        new_field.aliasName = "Original Unique ID"
-        new_field.type = "Integer"
-        # Create a new field map object and map the ObjectID to the new output field
-        new_fm = arcpy.FieldMap()
-        new_fm.addInputField(input_fc, oid_field_name)
-        new_fm.outputField = new_field
-        # Add the new field map
-        field_mappings.addFieldMap(new_fm)
-        return field_mappings, new_field_name
 
     def _preprocess_od_pairs(self):  # pylint: disable=too-many-locals, too-many-statements, too-many-branches
         """Preprocess the OD pairs table and eliminate irrelevant data."""
@@ -528,7 +513,9 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         origins_oid_field = arcpy.Describe(self.origins).oidFieldName
         field_mappings = None
         if self.origin_id_field == origins_oid_field:
-            field_mappings, self.origin_id_field = self._make_field_mappings(self.origins, origins_oid_field)
+            self.origin_id_field = f"OID_{self.unique_id}"
+            field_mappings = helpers.make_oid_preserving_field_mappings(
+                self.origins, origins_oid_field, self.origin_id_field)
         arcpy.conversion.FeatureClassToFeatureClass(
             self.origins,
             os.path.dirname(self.output_origins),
@@ -540,7 +527,9 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         dest_oid_field = arcpy.Describe(self.destinations).oidFieldName
         field_mappings = None
         if self.dest_id_field == dest_oid_field:
-            field_mappings, self.dest_id_field = self._make_field_mappings(self.destinations, dest_oid_field)
+            self.dest_id_field = f"OID_{self.unique_id}"
+            field_mappings = helpers.make_oid_preserving_field_mappings(
+                self.destinations, dest_oid_field, self.dest_id_field)
         arcpy.conversion.FeatureClassToFeatureClass(
             self.destinations,
             os.path.dirname(self.output_destinations),
@@ -550,7 +539,13 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         # Sort origins by assigned destination if relevant
         if self.pair_type is helpers.PreassignedODPairType.one_to_one and self.should_sort_origins:
-            self._sort_origins_by_assigned_destination()
+            if self.assigned_dest_field == dest_oid_field:
+                arcpy.AddWarning((
+                    "When using the ObjectID field in Origins as the assigned destination field, the origins table "
+                    "cannot and does not need to be sorted."))
+                self.should_sort_origins = False
+            else:
+                self._sort_origins_by_assigned_destination()
 
         # Special processing for the many-to-many case
         if self.pair_type is helpers.PreassignedODPairType.many_to_many:
@@ -558,23 +553,17 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
-            helpers.precalculate_network_locations(
-                self.output_destinations, self.network_data_source, self.travel_mode, RT_PROPS)
+            self.output_destinations = self._precalculate_locations(self.output_destinations, RT_PROPS)
             if self.pair_type is helpers.PreassignedODPairType.many_to_many:
-                helpers.precalculate_network_locations(
-                    self.output_origins, self.network_data_source, self.travel_mode, RT_PROPS)
+                self.output_origins = self._precalculate_locations(self.output_origins, RT_PROPS)
+            updated_barriers = []
             for barrier_fc in self.barriers:
-                helpers.precalculate_network_locations(
-                    barrier_fc, self.network_data_source, self.travel_mode, RT_PROPS)
+                updated_barriers.append(self._precalculate_locations(barrier_fc, RT_PROPS))
+            self.barriers = updated_barriers
 
     def _execute_solve(self):
         """Execute the solve in a subprocess."""
-        # Launch the parallel_route_pairs script as a subprocess so it can spawn parallel processes. We have to do this
-        # because a tool running in the Pro UI cannot call concurrent.futures without opening multiple instances of Pro.
-        cwd = os.path.dirname(os.path.abspath(__file__))
         rt_inputs = [
-            os.path.join(sys.exec_prefix, "python.exe"),
-            os.path.join(cwd, "parallel_route_pairs.py"),
             "--pair-type", self.pair_type.name,
             "--origins", self.output_origins,
             "--origins-id-field", self.origin_id_field,
@@ -602,41 +591,8 @@ class RoutePairSolver:  # pylint: disable=too-many-instance-attributes, too-few-
         if self.time_of_day:
             rt_inputs += ["--time-of-day", self.time_of_day]
 
-        # We do not want to show the console window when calling the command line tool from within our GP tool.
-        # This can be done by setting this hex code.
-        create_no_window = 0x08000000
-        with subprocess.Popen(
-            rt_inputs,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=create_no_window
-        ) as process:
-            # The while loop reads the subprocess's stdout in real time and writes the stdout messages to the GP UI.
-            # This is the only way to write the subprocess's status messages in a way that a user running the tool from
-            # the ArcGIS Pro UI can actually see them.
-            # When process.poll() returns anything other than None, the process has completed, and we should stop
-            # checking and move on.
-            while process.poll() is None:
-                output = process.stdout.readline()
-                if output:
-                    msg_string = output.strip().decode()
-                    helpers.parse_std_and_write_to_gp_ui(msg_string)
-                time.sleep(.1)
-
-            # Once the process is finished, check if any additional errors were returned. Messages that came after the
-            # last process.poll() above will still be in the queue here. This is especially important for detecting
-            # messages from raised exceptions, especially those with tracebacks.
-            output, _ = process.communicate()
-            if output:
-                out_msgs = output.decode().splitlines()
-                for msg in out_msgs:
-                    helpers.parse_std_and_write_to_gp_ui(msg)
-
-            # In case something truly horrendous happened and none of the logging caught our errors, at least fail the
-            # tool when the subprocess returns an error code. That way the tool at least doesn't happily succeed but not
-            # actually do anything.
-            return_code = process.returncode
-            if return_code != 0:
-                arcpy.AddError("Route script failed.")
+        # Run the subprocess
+        helpers.execute_subprocess("parallel_route_pairs.py", rt_inputs)
 
     def solve_large_route_pair_analysis(self):
         """Solve the large multi-route with known OD pairs in parallel."""

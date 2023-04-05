@@ -30,7 +30,6 @@ Copyright 2023 Esri
 from concurrent import futures
 import os
 import sys
-import uuid
 import logging
 import shutil
 import time
@@ -65,7 +64,9 @@ LOGGER.addHandler(console_handler)
 DELETE_INTERMEDIATE_OUTPUTS = True  # Set to False for debugging purposes
 
 
-class Route:  # pylint:disable = too-many-instance-attributes
+class Route(
+    helpers.JobFolderMixin, helpers.LoggingMixin, helpers.MakeNDSLayerMixin
+):  # pylint:disable = too-many-instance-attributes
     """Used for solving a Route problem in parallel for a designated chunk of the input datasets."""
 
     def __init__(self, **kwargs):
@@ -110,17 +111,12 @@ class Route:  # pylint:disable = too-many-instance-attributes
         if "barriers" in kwargs:
             self.barriers = kwargs["barriers"]
 
-        # Create a job ID and a folder and scratch gdb for this job
-        self.job_id = uuid.uuid4().hex
-        self.job_folder = os.path.join(self.scratch_folder, self.job_id)
-        os.mkdir(self.job_folder)
+        # Create a job ID and a folder for this job
+        self._create_job_folder()
 
         # Setup the class logger. Logs for each parallel process are not written to the console but instead to a
         # process-specific log file.
-        self.log_file = os.path.join(self.job_folder, 'RoutePairs.log')
-        cls_logger = logging.getLogger("RoutePairs_" + self.job_id)
-        self.setup_logger(cls_logger)
-        self.logger = cls_logger
+        self.setup_logger("RoutePairs")
 
         # Get field objects for the origin and destination ID fields since we need this in multiple places
         self.origin_id_field_obj = arcpy.ListFields(self.origins, wild_card=self.origin_id_field)[0]
@@ -152,25 +148,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
             "logFile": self.log_file
         }
 
-    def _make_nds_layer(self):
-        """Create a network dataset layer if one does not already exist."""
-        if self.is_service:
-            return
-        nds_layer_name = os.path.basename(self.network_data_source)
-        if arcpy.Exists(nds_layer_name):
-            # The network dataset layer already exists in this process, so we can re-use it without having to spend
-            # time re-opening the network dataset and making a fresh layer.
-            self.logger.debug(f"Using existing network dataset layer: {nds_layer_name}")
-        else:
-            # The network dataset layer does not exist in this process, so create the layer.
-            self.logger.debug("Creating network dataset layer...")
-            helpers.run_gp_tool(
-                self.logger,
-                arcpy.na.MakeNetworkDatasetLayer,
-                [self.network_data_source, nds_layer_name],
-            )
-        self.network_data_source = nds_layer_name
-
     def initialize_rt_solver(self):
         """Initialize a Route solver object and set properties."""
         # For a local network dataset, we need to checkout the Network Analyst extension license.
@@ -186,8 +163,8 @@ class Route:  # pylint:disable = too-many-instance-attributes
         # Route properties documentation: https://pro.arcgis.com/en/pro-app/latest/arcpy/network-analyst/route.htm
         # The properties have been extracted to the config file to make them easier to find and set so users don't have
         # to dig through the code to change them.
-        self.logger.debug("Setting Route analysis properties from OD config file...")
-        for prop in RT_PROPS:
+        self.logger.debug("Setting Route analysis properties from RT config file...")
+        for prop, value in RT_PROPS.items():
             if prop in RT_PROPS_SET_BY_TOOL:
                 self.logger.warning((
                     f"Route config file property {prop} is handled explicitly by the tool parameters and will be "
@@ -195,11 +172,11 @@ class Route:  # pylint:disable = too-many-instance-attributes
                 ))
                 continue
             try:
-                setattr(self.rt_solver, prop, RT_PROPS[prop])
-                if hasattr(RT_PROPS[prop], "name"):
-                    self.logger.debug(f"{prop}: {RT_PROPS[prop].name}")
+                setattr(self.rt_solver, prop, value)
+                if hasattr(value, "name"):
+                    self.logger.debug(f"{prop}: {value.name}")
                 else:
-                    self.logger.debug(f"{prop}: {RT_PROPS[prop]}")
+                    self.logger.debug(f"{prop}: {value}")
             except Exception as ex:  # pylint: disable=broad-except
                 # Suppress warnings for older services (pre 11.0) that don't support locate settings and services
                 # that don't support accumulating attributes because we don't want the tool to always throw a warning.
@@ -207,7 +184,7 @@ class Route:  # pylint:disable = too-many-instance-attributes
                     "searchTolerance", "searchToleranceUnits", "accumulateAttributeNames"
                 ]):
                     self.logger.warning(
-                        f"Failed to set property {prop} from OD config file. Default will be used instead.")
+                        f"Failed to set property {prop} from RT config file. Default will be used instead.")
                     self.logger.warning(str(ex))
         # Set properties explicitly specified in the tool UI as arguments
         self.logger.debug("Setting Route analysis properties specified tool inputs...")
@@ -511,21 +488,15 @@ class Route:  # pylint:disable = too-many-instance-attributes
     def _export_to_feature_class(self, chunk_definition):
         """Export the Route result to a feature class."""
         # Make output gdb
-        self.logger.debug("Creating output geodatabase for Route results...")
-        od_workspace = os.path.join(self.job_folder, "scratch.gdb")
-        helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.CreateFileGDB,
-            [os.path.dirname(od_workspace), os.path.basename(od_workspace)],
-        )
+        rt_workspace = self._create_output_gdb()
 
         # Export routes
-        output_routes = os.path.join(od_workspace, f"Routes_{chunk_definition[0]}_{chunk_definition[1]}")
+        output_routes = os.path.join(rt_workspace, f"Routes_{chunk_definition[0]}_{chunk_definition[1]}")
         self.logger.debug(f"Exporting Route Routes output to {output_routes}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Routes, output_routes)
 
         # Export stops
-        output_stops = os.path.join(od_workspace, f"Stops_{chunk_definition[0]}_{chunk_definition[1]}")
+        output_stops = os.path.join(rt_workspace, f"Stops_{chunk_definition[0]}_{chunk_definition[1]}")
         self.logger.debug(f"Exporting Route Stops output to {output_stops}...")
         self.solve_result.export(arcpy.nax.RouteOutputDataType.Stops, output_stops)
 
@@ -556,27 +527,6 @@ class Route:  # pylint:disable = too-many-instance-attributes
         )
 
         self.job_result["outputRoutes"] = output_routes
-
-    def setup_logger(self, logger_obj):
-        """Set up the logger used for logging messages for this process. Logs are written to a text file.
-
-        Args:
-            logger_obj: The logger instance.
-        """
-        logger_obj.setLevel(logging.DEBUG)
-        if len(logger_obj.handlers) <= 1:
-            file_handler = logging.FileHandler(self.log_file)
-            file_handler.setLevel(logging.DEBUG)
-            logger_obj.addHandler(file_handler)
-            formatter = logging.Formatter("%(process)d | %(message)s")
-            file_handler.setFormatter(formatter)
-            logger_obj.addHandler(file_handler)
-
-    def teardown_logger(self):
-        """Clean up and close the logger."""
-        for handler in self.logger.handlers:
-            handler.close()
-            self.logger.removeHandler(handler)
 
 
 def solve_route(inputs, chunk):
