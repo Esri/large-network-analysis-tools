@@ -795,7 +795,7 @@ class ParallelCalculateLocations(object):
         )
         param_search_query.columns = [
             ['GPString', 'Name'],
-            ['GPSQLExpression', 'Query']
+            ['GPString', 'Query']
         ]
         param_search_query.filters[0].type = 'ValueList'
 
@@ -843,21 +843,13 @@ class ParallelCalculateLocations(object):
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
+        param_network = parameters[2]
         param_search_query = parameters[8]
 
         # Validate no duplicate entries in search query
-        if not param_search_query.hasBeenValidated and param_search_query.altered and param_search_query.valueAsText:
-            search_query_sources = [s[0] for s in param_search_query.values]
-            if len(set(search_query_sources)) < len(search_query_sources):
-                seen = set()
-                duplicates = []
-                for source in search_query_sources:
-                    if source in seen:
-                        duplicates.append(source)
-                    else:
-                        seen.add(source)
-                # Error 030255: Duplicate source name: "MySourceName".
-                param_search_query.setIDMessage("Error", 30255, duplicates[0])
+        if not param_search_query.hasBeenValidated and param_search_query.altered and \
+                param_search_query.valueAsText and param_network.valueAsText:
+            validate_search_query_param(param_search_query, param_network)
 
         return
 
@@ -867,6 +859,11 @@ class ParallelCalculateLocations(object):
         source_names = parameters[7].filter.list
         sources_to_locate_on = parameters[7].values
         search_criteria = helpers.construct_search_criteria_string(sources_to_locate_on, source_names)
+
+        # Construct string-based search query
+        search_query = parameters[8].valueAsText
+        if not search_query:
+            search_query = ""
 
         # Make a temporary copy of the input features to take care of any selection sets and definition queries and to
         # add a field preserving the ObjectID.
@@ -901,7 +898,7 @@ class ParallelCalculateLocations(object):
                 "--travel-mode", parameters[5].value._JSON,  # pylint: disable=protected-access
                 "--search-tolerance", parameters[6].valueAsText,
                 "--search-criteria", search_criteria,
-                "--search-query", parameters[8].value.exportToString()
+                "--search-query", search_query
             ]
             helpers.execute_subprocess("parallel_calculate_locations.py", cl_inputs)
 
@@ -1029,3 +1026,51 @@ def cap_max_processes(param_network, param_max_processes):
                 "The maximum number of parallel processes is greater than the number of logical cores "
                 f"({cpu_count()}) in your machine."
             ))
+
+
+def validate_search_query_param(param_search_query, param_network):
+    """Validate the search query parameter for Parallel Calculate Locations."""
+    search_query = param_search_query.values
+    search_query_sources = [s[0] for s in search_query]
+
+    # Validate source names
+    valid_source_names = param_search_query.filters[0].list
+    for source in search_query_sources:
+        if source not in valid_source_names:
+            # Error 030254: Invalid source name: "BadSourceName".
+            param_search_query.setIDMessage("Error", 30254, source)
+            return
+
+    # Validate no duplicate source names
+    if len(set(search_query_sources)) < len(search_query_sources):
+        seen = set()
+        duplicates = []
+        for source in search_query_sources:
+            if source in seen:
+                duplicates.append(source)
+            else:
+                seen.add(source)
+        # Error 030255: Duplicate source name: "MySourceName".
+        param_search_query.setIDMessage("Error", 30255, duplicates[0])
+        return
+
+    # Validate SQL queries
+    # There's no straightforward way to validate SQL queries in Python, so let's be clever and tricky.  Spin up a dummy
+    # SearchCursor using the user's query for each network source as a where clause.  If that throws an exception,
+    # return the exception as a validation error.
+    # First check that there are any actual queries.  No need to validate if they're all empty.
+    populated_queries = [q[1] for q in search_query if q[1]]
+    if not populated_queries:
+        return
+    feature_dataset = os.path.dirname(get_catalog_path(param_network))
+    for query in search_query:
+        try:
+            with arcpy.da.SearchCursor(os.path.join(feature_dataset, query[0]), ["OID@"], query[1]) as cur:
+                try:
+                    next(cur)
+                except StopIteration:
+                    # The cursor worked but no rows were returned.  This is not an error.
+                    pass
+        except Exception as ex:
+            param_search_query.setErrorMessage(str(ex))
+            return
