@@ -844,7 +844,13 @@ class ParallelCalculateLocations(object):
         """Modify the messages created by internal validation for each tool
         parameter.  This method is called after internal validation."""
         param_network = parameters[2]
+        param_search_criteria = parameters[7]
         param_search_query = parameters[8]
+
+        # Validate that at least one source is selected for search criteria
+        if not param_search_criteria.hasBeenValidated and param_network.valueAsText:
+            if not param_search_criteria.valueAsText:
+                param_search_criteria.setErrorMessage("At least one network source is required.")
 
         # Validate no duplicate entries in search query
         if not param_search_query.hasBeenValidated and param_search_query.altered and \
@@ -855,6 +861,13 @@ class ParallelCalculateLocations(object):
 
     def execute(self, parameters, messages):
         """The source code of the tool."""
+        # Construct string-based travel mode
+        travel_mode = parameters[5].value
+        if travel_mode:
+            travel_mode = travel_mode._JSON  # pylint: disable=protected-access
+        else:
+            travel_mode = ""
+
         # Construct the search criteria from the selected sources
         source_names = parameters[7].filter.list
         sources_to_locate_on = parameters[7].values
@@ -895,7 +908,7 @@ class ParallelCalculateLocations(object):
                 "--network-data-source", get_catalog_path(parameters[2]),
                 "--chunk-size", parameters[3].valueAsText,
                 "--max-processes", parameters[4].valueAsText,
-                "--travel-mode", parameters[5].value._JSON,  # pylint: disable=protected-access
+                "--travel-mode", travel_mode,
                 "--search-tolerance", parameters[6].valueAsText,
                 "--search-criteria", search_criteria,
                 "--search-query", search_query
@@ -1065,12 +1078,14 @@ def validate_search_query_param(param_search_query, param_network):
     feature_dataset = os.path.dirname(get_catalog_path(param_network))
     for query in search_query:
         try:
-            with arcpy.da.SearchCursor(os.path.join(feature_dataset, query[0]), ["OID@"], query[1]) as cur:
+            with arcpy.da.SearchCursor(  # pylint: disable=no-member
+                os.path.join(feature_dataset, query[0]), ["OID@"], query[1]
+            ) as cur:
                 try:
                     next(cur)
                 except StopIteration:
                     # The cursor worked but no rows were returned.  This is not an error.
                     pass
-        except Exception as ex:
+        except Exception as ex:  # pylint: disable=broad-except
             param_search_query.setErrorMessage(str(ex))
             return
