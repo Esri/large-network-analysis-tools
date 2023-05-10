@@ -1024,15 +1024,36 @@ def cap_max_processes(param_network, param_max_processes):
             param_network.valueAsText and
             not helpers.is_nds_service(param_network.valueAsText)
         ):
-            network_path = get_catalog_path(param_network)
-            desc = arcpy.Describe(os.path.dirname(os.path.dirname(network_path)))
-            if desc.workspaceFactoryProgID.startswith("esriDataSourcesGDB.SqliteWorkspaceFactory"):
-                param_max_processes.setWarningMessage((
-                    "The maximum number of parallel processes is greater than the maximum recommended number "
-                    f"({helpers.MAX_RECOMMENDED_MGDB_PROCESSES}) to use with a network dataset in a "
-                    "mobile geodatabase."
-                ))
-                return
+            try:
+                network_obj = param_network.value
+                is_mgdb = False
+                if hasattr(network_obj, "connectionProperties"):
+                    # A network dataset layer in a map typically has this connectionProperties property. For a mobile
+                    # geodatabase network, it will be something like this:
+                    # {'dataset': 'main.Streets_ND', 'workspace_factory': 'SQLite', 'connection_info':
+                    # {'authentication_mode': 'OSA', 'database': 'main', 'db_connection_properties':
+                    # 'C:\\Data\\Packages\\MyPackage\\p14\\sanfrancisco.geodatabase', 'instance':
+                    # 'sde:sqlite:C:\\Data\\Packages\\MyPackage\\p14\\sanfrancisco.geodatabase',
+                    # 'is_geodatabase': 'true', 'server': 'e:'}}
+                    # The 'workspace_factory' property is the relevant one.  For a file geodatabase network, it reads
+                    # "File Geodatabase" instead.
+                    connection_props = network_obj.connectionProperties
+                    is_mgdb = connection_props.get("workspace_factory", None) == "SQLite"
+                else:
+                    # It's probably a network dataset catalog path
+                    network_path = param_network.valueAsText
+                    desc = arcpy.Describe(os.path.dirname(os.path.dirname(network_path)))
+                    is_mgdb = desc.workspaceFactoryProgID.startswith("esriDataSourcesGDB.SqliteWorkspaceFactory")
+                if is_mgdb:
+                    param_max_processes.setWarningMessage((
+                        "The maximum number of parallel processes is greater than the maximum recommended number "
+                        f"({helpers.MAX_RECOMMENDED_MGDB_PROCESSES}) to use with a network dataset in a "
+                        "mobile geodatabase."
+                    ))
+                    return
+            except Exception:  # pylint: disable=broad-except
+                # If determining the network dataset type fails for some reason, just skip this check
+                pass
         # Set a warning if the user has put more processes than the number of logical cores on their machine
         if max_processes > cpu_count():
             param_max_processes.setWarningMessage((
