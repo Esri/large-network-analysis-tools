@@ -51,7 +51,7 @@ class ODCostMatrixSolver(
         self, origins, destinations, network_data_source, travel_mode, output_origins,
         output_destinations, chunk_size, max_processes, time_units, distance_units, output_format,
         output_od_lines=None, output_data_folder=None, cutoff=None, num_destinations=None, time_of_day=None,
-        precalculate_network_locations=True, barriers=None
+        precalculate_network_locations=True, sort_inputs=True, barriers=None
     ):
         """Initialize the ODCostMatrixSolver class.
 
@@ -80,6 +80,7 @@ class ODCostMatrixSolver(
             time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
                 inputs. Defaults to True. Should be false if the network_data_source is a service.
+            sort_inputs (bool, optional): Whether to spatially sort origins and destinations. Defaults to True.
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                  to use. Defaults to None.
         """
@@ -96,6 +97,7 @@ class ODCostMatrixSolver(
         self.time_of_day = time_of_day
         self.time_of_day_dt = None  # Set during validation
         self.should_precalc_network_locations = precalculate_network_locations
+        self.sort_inputs = sort_inputs
         self.barriers = barriers if barriers else []
 
         self.output_origins = output_origins
@@ -513,6 +515,12 @@ def _run_from_command_line():
     parser.add_argument(
         "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
+
+    # --sort-inputs parameter
+    help_string = "Whether or not to spatially sort origins and destinations."
+    parser.add_argument(
+        "-si", "--sort-inputs", action="store", type=lambda x: bool(strtobool(x)),
+        dest="sort_inputs", help=help_string, required=True)
 
     # --barriers parameter
     help_string = "A list of catalog paths to the feature classes containing barriers to use in the OD Cost Matrix."
