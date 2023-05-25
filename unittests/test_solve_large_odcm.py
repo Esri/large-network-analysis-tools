@@ -80,6 +80,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "num_destinations": 1,
             "time_of_day": None,
             "precalculate_network_locations": True,
+            "sort_inputs": True,
             "barriers": [self.barriers]
         }
 
@@ -198,14 +199,22 @@ class TestSolveLargeODCM(unittest.TestCase):
         self.assertEqual(max_origins, od_solver.max_origins)
         self.assertEqual(max_destinations, od_solver.max_destinations)
 
+    def test_add_tracked_oid_field(self):
+        """Test the _add_tracked_oid_field method."""
+        od_solver = solve_large_odcm.ODCostMatrixSolver(**self.od_args)
+        fc_to_modify = os.path.join(self.output_gdb, "TrackedID")
+        arcpy.management.Copy(self.destinations, fc_to_modify)
+        od_solver._add_tracked_oid_field(fc_to_modify, "DestinationOID")
+        self.assertTrue(arcpy.Exists(fc_to_modify))
+        self.assertIn("DestinationOID", [f.name for f in arcpy.ListFields(fc_to_modify)])
+
     def test_spatially_sort_input(self):
-        """Test the spatially_sort_input function."""
+        """Test the _spatially_sort_input method."""
         od_solver = solve_large_odcm.ODCostMatrixSolver(**self.od_args)
         fc_to_sort = os.path.join(self.output_gdb, "Sorted")
         arcpy.management.Copy(self.destinations, fc_to_sort)
-        od_solver._spatially_sort_input(fc_to_sort, "DestinationOID")
+        od_solver._spatially_sort_input(fc_to_sort)
         self.assertTrue(arcpy.Exists(fc_to_sort))
-        self.assertIn("DestinationOID", [f.name for f in arcpy.ListFields(fc_to_sort)])
 
     def test_solve_large_od_cost_matrix_featureclass(self):
         """Test the full solve OD Cost Matrix workflow with feature class output."""
@@ -237,6 +246,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "num_destinations": 2,
             "time_of_day": self.time_of_day_str,
             "precalculate_network_locations": True,
+            "sort_inputs": True,
             "barriers": ""
         }
         od_solver = solve_large_odcm.ODCostMatrixSolver(**od_args)
@@ -251,7 +261,7 @@ class TestSolveLargeODCM(unittest.TestCase):
         out_folder = os.path.join(self.scratch_folder, "FullWorkflow_Arrow")
         os.mkdir(out_folder)
         od_args = {
-            "origins": self.destinations,
+            "origins": self.origins,
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
             "travel_mode": self.local_tm_dist,
@@ -268,6 +278,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "num_destinations": 2,
             "time_of_day": None,
             "precalculate_network_locations": True,
+            "sort_inputs": True,
             "barriers": ""
         }
         od_solver = solve_large_odcm.ODCostMatrixSolver(**od_args)
@@ -276,6 +287,38 @@ class TestSolveLargeODCM(unittest.TestCase):
         self.assertTrue(arcpy.Exists(od_args["output_destinations"]))
         arrow_files = glob(os.path.join(out_folder, "*.arrow"))
         self.assertGreater(len(arrow_files), 0)
+
+    def test_solve_large_od_cost_matrix_no_sorting(self):
+        """Test the full solve OD Cost Matrix workflow without spatially sorting inputs. Use CSV outputs."""
+        out_folder = os.path.join(self.scratch_folder, "FullWorkflow_CSV_NoSort")
+        os.mkdir(out_folder)
+        od_args = {
+            "origins": self.origins,
+            "destinations": self.destinations,
+            "network_data_source": self.local_nd,
+            "travel_mode": self.local_tm_dist,
+            "output_origins": os.path.join(self.output_gdb, "OutUnsortedOrigins"),
+            "output_destinations": os.path.join(self.output_gdb, "OutUnsortedDestinations"),
+            "chunk_size": 50,
+            "max_processes": 4,
+            "time_units": "Minutes",
+            "distance_units": "Miles",
+            "output_format": "CSV files",
+            "output_od_lines": None,
+            "output_data_folder": out_folder,
+            "cutoff": 2,
+            "num_destinations": 2,
+            "time_of_day": self.time_of_day_str,
+            "precalculate_network_locations": True,
+            "sort_inputs": False,
+            "barriers": ""
+        }
+        od_solver = solve_large_odcm.ODCostMatrixSolver(**od_args)
+        od_solver.solve_large_od_cost_matrix()
+        self.assertTrue(arcpy.Exists(od_args["output_origins"]))
+        self.assertTrue(arcpy.Exists(od_args["output_destinations"]))
+        csv_files = glob(os.path.join(out_folder, "*.csv"))
+        self.assertGreater(len(csv_files), 0)
 
     def test_cli(self):
         """Test the command line interface of solve_large_odcm."""
@@ -300,6 +343,7 @@ class TestSolveLargeODCM(unittest.TestCase):
             "--num-destinations", "1",
             "--time-of-day", self.time_of_day_str,
             "--precalculate-network-locations", "true",
+            "--sort-inputs", "true",
             "--barriers", self.barriers
         ]
         result = subprocess.run(odcm_inputs)

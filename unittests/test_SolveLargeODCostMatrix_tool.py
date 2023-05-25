@@ -87,7 +87,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             1,  # number of destinations
             datetime.datetime(2022, 3, 29, 16, 45, 0),  # time of day
             None,  # barriers
-            True  # precalculate network locations
+            True,  # precalculate network locations
+            True  # Spatially sort inputs
         )
         # Check results
         self.assertTrue(arcpy.Exists(out_od_lines))
@@ -118,7 +119,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             2,  # number of destinations
             None,  # time of day
             self.barriers,  # barriers
-            True  # precalculate network locations
+            True,  # precalculate network locations
+            True  # Spatially sort inputs
         )
         # Check results
         self.assertTrue(arcpy.Exists(out_origins))
@@ -152,7 +154,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             2,  # number of destinations
             None,  # time of day
             None,  # barriers
-            True  # precalculate network locations
+            True,  # precalculate network locations
+            True  # Spatially sort inputs
         )
         # Check results
         self.assertTrue(arcpy.Exists(out_origins))
@@ -183,7 +186,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             1,  # number of destinations
             None,  # time of day
             None,  # barriers
-            True  # precalculate network locations
+            False,  # precalculate network locations
+            True  # Spatially sort inputs
         )
         # Check results
         self.assertTrue(arcpy.Exists(out_od_lines))
@@ -214,7 +218,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 1,  # number of destinations
                 None,  # time of day
                 None,  # barriers
-                True  # precalculate network locations
+                True,  # precalculate network locations
+                True  # Spatially sort inputs
             )
         expected_messages = [
             "Failed to execute. Parameters are not valid.",
@@ -248,7 +253,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 1,  # number of destinations
                 None,  # time of day
                 None,  # barriers
-                True  # precalculate network locations
+                True,  # precalculate network locations
+                True  # Spatially sort inputs
             )
         expected_messages = [
             "Failed to execute. Parameters are not valid.",
@@ -285,7 +291,8 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
                 1,  # number of destinations
                 None,  # time of day
                 None,  # barriers
-                True  # precalculate network locations
+                True,  # precalculate network locations
+                True  # Spatially sort inputs
             )
         expected_messages = [
             "Failed to execute. Parameters are not valid.",
