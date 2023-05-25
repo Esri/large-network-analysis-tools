@@ -208,6 +208,16 @@ class SolveLargeODCostMatrix(object):
         )
         param_precalculate_network_locations.value = True
 
+        param_sort_inputs = arcpy.Parameter(
+            displayName="Spatially Sort Inputs",
+            name="Sort_Inputs",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input",
+            category="Advanced"
+        )
+        param_sort_inputs.value = True
+
         params = [
             param_origins,  # 0
             param_destinations,  # 1
@@ -226,7 +236,8 @@ class SolveLargeODCostMatrix(object):
             param_num_dests,  # 14
             param_time_of_day,  # 15
             param_barriers,  # 16
-            param_precalculate_network_locations  # 17
+            param_precalculate_network_locations,  # 17
+            param_sort_inputs  # 18
         ]
 
         return params
@@ -244,6 +255,7 @@ class SolveLargeODCostMatrix(object):
         param_out_od_lines = parameters[11]
         param_out_folder = parameters[12]
         param_precalculate = parameters[17]
+        param_sort = parameters[18]
 
         # Make appropriate OD Cost Matrix output parameter visible based on chosen output format
         if not param_output_format.hasBeenValidated and param_output_format.altered and param_output_format.valueAsText:
@@ -261,6 +273,11 @@ class SolveLargeODCostMatrix(object):
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         update_precalculate_parameter(param_network, param_precalculate)
+
+        # Turn off and hide the Sort Inputs parameter if the Advanced license is not available.
+        if helpers.arc_license != "ArcInfo":
+            param_sort.value = False
+            param_sort.enabled = False
 
         return
 
@@ -333,6 +350,7 @@ class SolveLargeODCostMatrix(object):
             parameters[14].value,  # number of destinations to find
             time_of_day,  # time of day
             parameters[17].value,  # Should precalculate network locations
+            parameters[18].value,  # Should spatially sort inputs
             get_catalog_path_multivalue(parameters[16])  # barriers
         )
 

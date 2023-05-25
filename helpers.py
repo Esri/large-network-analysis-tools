@@ -23,6 +23,7 @@ import logging
 import subprocess
 import arcpy
 
+arc_license = arcpy.ProductInfo()
 arcgis_version = arcpy.GetInstallInfo()["Version"]
 
 # Set some shared global variables that can be referenced from the other scripts

@@ -51,7 +51,7 @@ class ODCostMatrixSolver(
         self, origins, destinations, network_data_source, travel_mode, output_origins,
         output_destinations, chunk_size, max_processes, time_units, distance_units, output_format,
         output_od_lines=None, output_data_folder=None, cutoff=None, num_destinations=None, time_of_day=None,
-        precalculate_network_locations=True, barriers=None
+        precalculate_network_locations=True, sort_inputs=True, barriers=None
     ):
         """Initialize the ODCostMatrixSolver class.
 
@@ -80,6 +80,7 @@ class ODCostMatrixSolver(
             time_of_day (str): String representation of the start time for the analysis ("%Y%m%d %H:%M" format)
             precalculate_network_locations (bool, optional): Whether to precalculate network location fields for all
                 inputs. Defaults to True. Should be false if the network_data_source is a service.
+            sort_inputs (bool, optional): Whether to spatially sort origins and destinations. Defaults to True.
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                  to use. Defaults to None.
         """
@@ -96,6 +97,7 @@ class ODCostMatrixSolver(
         self.time_of_day = time_of_day
         self.time_of_day_dt = None  # Set during validation
         self.should_precalc_network_locations = precalculate_network_locations
+        self.sort_inputs = sort_inputs
         self.barriers = barriers if barriers else []
 
         self.output_origins = output_origins
@@ -200,6 +202,12 @@ class ODCostMatrixSolver(
                     "Cannot precalculate network location fields when the network data source is a service.")
                 self.should_precalc_network_locations = False
 
+        # Check licensing constraints
+        if helpers.arc_license != "ArcInfo":
+            if self.sort_inputs:
+                arcpy.AddWarning("Cannot spatially sort inputs without the Advanced license.")
+                self.sort_inputs = False
+
     def _validate_od_settings(self):
         """Validate OD cost matrix settings by spinning up a dummy OD Cost Matrix object.
 
@@ -266,7 +274,28 @@ class ODCostMatrixSolver(
                 ))
 
     @staticmethod
-    def _spatially_sort_input(input_features, tracked_oid_name):
+    def _add_tracked_oid_field(input_features, tracked_oid_name):
+        """Add a new field in the data and calculate it to equal the ObjectID.
+
+        This is primarily used when sorting data so we don't lose the original ObjectID of the input. It is also useful
+        in relating the output OD Cost Matrix results to the inputs since the relationship is more obvious when the
+        fields are called OriginOID and DestinationOID.
+
+        Note: In ArcGIS Pro 2.9, the Sort tool was enhanced to include an ORIG_FID field in the output tracking the
+        original ObjectID. However, since we want this code sample to be compatible with older versions of ArcGIS Pro,
+        this more complicated implementation of ObjectID field tracking has been maintained.
+        Note that if the original input was a shapefile, these IDs will likely be wrong because copying the original
+        input to the output geodatabase will have altered the original ObjectIDs.
+        Consequently, don't use shapefiles as inputs.
+        """
+        desc = arcpy.Describe(input_features)
+        if tracked_oid_name in [f.name for f in desc.fields]:
+            arcpy.management.DeleteField(input_features, tracked_oid_name)
+        arcpy.management.AddField(input_features, tracked_oid_name, "LONG")
+        arcpy.management.CalculateField(input_features, tracked_oid_name, f"!{desc.oidFieldName}!")
+
+    @staticmethod
+    def _spatially_sort_input(input_features):
         """Spatially sort the input feature class.
 
         Also adds a field to the input feature class to preserve the original OID values. This field is called
@@ -278,20 +307,6 @@ class ODCostMatrixSolver(
         """
         arcpy.AddMessage(f"Spatially sorting input dataset {input_features}...")
 
-        # Add a unique ID field so we don't lose OID info when we sort and can use these later in joins.
-        # Note: This can be implemented in a simpler way in ArcGIS Pro 2.9 and later because the Sort tool was
-        # enhanced to include an ORIG_FID field in the output tracking the original ObjectID. However, since we want
-        # this code sample to be compatible with older versions of ArcGIS Pro, this more complicated implementation of
-        # ObjectID field tracking has been maintained.
-        # Note that if the original input was a shapefile, these IDs will likely be wrong because copying the original
-        # input to the output geodatabase will have altered the original ObjectIDs.
-        # Consequently, don't use shapefiles as inputs.
-        desc = arcpy.Describe(input_features)
-        if tracked_oid_name in [f.name for f in desc.fields]:
-            arcpy.management.DeleteField(input_features, tracked_oid_name)
-        arcpy.management.AddField(input_features, tracked_oid_name, "LONG")
-        arcpy.management.CalculateField(input_features, tracked_oid_name, f"!{desc.oidFieldName}!")
-
         # Make a temporary copy of the inputs so the Sort tool can write its output to the input_features path, which is
         # the ultimate desired location
         temp_inputs = arcpy.CreateUniqueName("TempODInputs", arcpy.env.scratchGDB)  # pylint:disable = no-member
@@ -299,7 +314,8 @@ class ODCostMatrixSolver(
 
         # Spatially sort input features
         try:
-            arcpy.management.Sort(temp_inputs, input_features, [[desc.shapeFieldName, "ASCENDING"]], "PEANO")
+            arcpy.management.Sort(
+                temp_inputs, input_features, [[arcpy.Describe(input_features).shapeFieldName, "ASCENDING"]], "PEANO")
         except arcpy.ExecuteError:  # pylint:disable = no-member
             msgs = arcpy.GetMessages(2)
             if "000824" in msgs:  # ERROR 000824: The tool is not licensed.
@@ -326,12 +342,18 @@ class ODCostMatrixSolver(
                 os.path.basename(self.output_destinations)
             )
 
-        # Spatially sort inputs
+        # Preserve original OIDs
         tracked_origin_oid = "OriginOID"
         tracked_destination_oid = "DestinationOID"
-        self._spatially_sort_input(self.output_origins, tracked_origin_oid)
+        self._add_tracked_oid_field(self.output_origins, tracked_origin_oid)
         if not self.same_origins_destinations:
-            self._spatially_sort_input(self.output_destinations, tracked_destination_oid)
+            self._add_tracked_oid_field(self.output_destinations, tracked_destination_oid)
+
+        # Spatially sort inputs
+        if self.sort_inputs:
+            self._spatially_sort_input(self.output_origins)
+            if not self.same_origins_destinations:
+                self._spatially_sort_input(self.output_destinations)
 
         # Precalculate network location fields for inputs
         if not self.is_service and self.should_precalc_network_locations:
@@ -513,6 +535,12 @@ def _run_from_command_line():
     parser.add_argument(
         "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
+
+    # --sort-inputs parameter
+    help_string = "Whether or not to spatially sort origins and destinations."
+    parser.add_argument(
+        "-si", "--sort-inputs", action="store", type=lambda x: bool(strtobool(x)),
+        dest="sort_inputs", help=help_string, required=True)
 
     # --barriers parameter
     help_string = "A list of catalog paths to the feature classes containing barriers to use in the OD Cost Matrix."
