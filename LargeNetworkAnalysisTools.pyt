@@ -255,6 +255,7 @@ class SolveLargeODCostMatrix(object):
         param_out_od_lines = parameters[11]
         param_out_folder = parameters[12]
         param_precalculate = parameters[17]
+        param_sort = parameters[18]
 
         # Make appropriate OD Cost Matrix output parameter visible based on chosen output format
         if not param_output_format.hasBeenValidated and param_output_format.altered and param_output_format.valueAsText:
@@ -272,6 +273,11 @@ class SolveLargeODCostMatrix(object):
 
         # Turn off and hide Precalculate Network Locations parameter if the network data source is a service
         update_precalculate_parameter(param_network, param_precalculate)
+
+        # Turn off and hide the Sort Inputs parameter if the Advanced license is not available.
+        if helpers.arc_license != "ArcInfo":
+            param_sort.value = False
+            param_sort.enabled = False
 
         return
 
