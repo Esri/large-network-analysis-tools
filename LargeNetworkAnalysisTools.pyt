@@ -324,6 +324,14 @@ class SolveLargeODCostMatrix(object):
             else:
                 param.clearMessage()
 
+        # Do not allow the user to overwrite an existing output folder. This prevents them from destroying their project
+        # folder or C: drive, etc.
+        if param_out_folder.enabled:
+            out_folder = param_out_folder.valueAsText
+            if out_folder and os.path.exists(out_folder):
+                # <out_folder> already exists
+                param_out_folder.setIDMessage("Error", 12, out_folder)
+
         return
 
     def execute(self, parameters, messages):
