@@ -265,7 +265,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         self.assertEqual(expected_messages, actual_messages)
 
     def test_error_output_folder_exists(self):
-        """Test for correct error when output format is Feature class and output OD Lines not specified."""
+        """Test for correct error when output folder already exists."""
         out_folder = os.path.join(self.scratch_folder, "ExistingOutFolder")
         os.makedirs(out_folder)
         with self.assertRaises(arcpy.ExecuteError) as ex:
