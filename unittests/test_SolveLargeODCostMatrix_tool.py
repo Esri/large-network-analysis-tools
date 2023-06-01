@@ -230,7 +230,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         self.assertEqual(expected_messages, actual_messages)
 
     def test_error_required_output_folder(self):
-        """Test for correct error when output format is Feature class and output OD Lines not specified."""
+        """Test for correct error when output format is CSV files and output folder not specified."""
         with self.assertRaises(arcpy.ExecuteError) as ex:
             # Run tool
             out_origins = os.path.join(self.output_gdb, "Err_Origins")
@@ -259,6 +259,43 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         expected_messages = [
             "Failed to execute. Parameters are not valid.",
             "ERROR 000735: Output Folder: Value is required",
+            "Failed to execute (SolveLargeODCostMatrix)."
+        ]
+        actual_messages = str(ex.exception).strip().split("\n")
+        self.assertEqual(expected_messages, actual_messages)
+
+    def test_error_output_folder_exists(self):
+        """Test for correct error when output folder already exists."""
+        out_folder = os.path.join(self.scratch_folder, "ExistingOutFolder")
+        os.makedirs(out_folder)
+        with self.assertRaises(arcpy.ExecuteError) as ex:
+            # Run tool
+            out_origins = os.path.join(self.output_gdb, "Err_Origins")
+            out_destinations = os.path.join(self.output_gdb, "Err_Destinations")
+            arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(  # pylint: disable=no-member
+                self.origins,
+                self.destinations,
+                self.local_nd,
+                self.local_tm_time,
+                "Minutes",
+                "Miles",
+                50,  # chunk size
+                4,  # max processes
+                out_origins,
+                out_destinations,
+                "CSV files",
+                "Junk",
+                out_folder,
+                15,  # cutoff
+                1,  # number of destinations
+                None,  # time of day
+                None,  # barriers
+                True,  # precalculate network locations
+                True  # Spatially sort inputs
+            )
+        expected_messages = [
+            "Failed to execute. Parameters are not valid.",
+            f"ERROR 000012: {out_folder} already exists",
             "Failed to execute (SolveLargeODCostMatrix)."
         ]
         actual_messages = str(ex.exception).strip().split("\n")
