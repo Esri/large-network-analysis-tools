@@ -503,16 +503,17 @@ class Route(
         else:
             first_stop_field = self.origin_unique_id_field_name
             second_stop_field = self.dest_unique_id_field_name
-        helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.JoinField,
-            [output_routes, f"FirstStop{id_field_prefix}", output_stops, "ObjectID", [first_stop_field]]
-        )
-        helpers.run_gp_tool(
-            self.logger,
-            arcpy.management.JoinField,
-            [output_routes, f"LastStop{id_field_prefix}", output_stops, "ObjectID", [second_stop_field]]
-        )
+        with arcpy.EnvManager(overwriteOutput=True):
+            helpers.run_gp_tool(
+                self.logger,
+                arcpy.management.JoinField,
+                [output_routes, f"FirstStop{id_field_prefix}", output_stops, "ObjectID", [first_stop_field]]
+            )
+            helpers.run_gp_tool(
+                self.logger,
+                arcpy.management.JoinField,
+                [output_routes, f"LastStop{id_field_prefix}", output_stops, "ObjectID", [second_stop_field]]
+            )
 
         self.job_result["outputRoutes"] = output_routes
 
