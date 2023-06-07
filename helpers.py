@@ -525,7 +525,7 @@ def execute_subprocess(script_name, inputs):
         while process.poll() is None:
             output = process.stdout.readline()
             if output:
-                msg_string = output.strip().decode()
+                msg_string = output.strip().decode(encoding="utf-8")
                 parse_std_and_write_to_gp_ui(msg_string)
             time.sleep(.1)
 
@@ -534,7 +534,7 @@ def execute_subprocess(script_name, inputs):
         # messages from raised exceptions, especially those with tracebacks.
         output, _ = process.communicate()
         if output:
-            out_msgs = output.decode().splitlines()
+            out_msgs = output.decode(encoding="utf-8").splitlines()
             for msg in out_msgs:
                 parse_std_and_write_to_gp_ui(msg)
 
@@ -546,6 +546,26 @@ def execute_subprocess(script_name, inputs):
             err = f"Parallelization using {script_name} failed."
             arcpy.AddError(err)
             raise RuntimeError(err)
+
+
+def configure_global_logger(log_level):
+    """Configure a global logger for the main process.
+
+    The logger logs everything from the main process to stdout using a specific format that the tools in this
+    toolbox can parse and write to the geoprocessing message feed.
+
+    Args:
+        log_level: logging module message level, such as logging.INFO or logging.DEBUG.
+    """
+    logger = logging.getLogger(__name__)  # pylint:disable=invalid-name
+    logger.setLevel(log_level)
+    sys.stdout.reconfigure(encoding="utf-8")
+    console_handler = logging.StreamHandler(stream=sys.stdout)
+    console_handler.setLevel(log_level)
+    # Used by script tool to split message text from message level to add correct message type to GP window
+    console_handler.setFormatter(logging.Formatter("%(levelname)s" + MSG_STR_SPLITTER + "%(message)s"))
+    logger.addHandler(console_handler)
+    return logger
 
 
 def parse_std_and_write_to_gp_ui(msg_string):
@@ -727,7 +747,7 @@ class LoggingMixin:
 
         self.logger.setLevel(logging.DEBUG)
         if len(self.logger.handlers) <= 1:
-            file_handler = logging.FileHandler(self.log_file)
+            file_handler = logging.FileHandler(self.log_file, encoding="utf-8")
             file_handler.setLevel(logging.DEBUG)
             self.logger.addHandler(file_handler)
             formatter = logging.Formatter("%(process)d | %(message)s")
