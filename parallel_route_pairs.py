@@ -29,7 +29,6 @@ Copyright 2023 Esri
 # pylint: disable=logging-fstring-interpolation
 from concurrent import futures
 import os
-import sys
 import logging
 import shutil
 import time
@@ -47,21 +46,10 @@ from rt_config import RT_PROPS, RT_PROPS_SET_BY_TOOL
 
 import helpers
 
-arcpy.env.overwriteOutput = True
-
-# Set logging for the main process.
-# LOGGER logs everything from the main process to stdout using a specific format that the SolveLargeRoute tool
-# can parse and write to the geoprocessing message feed.
-LOG_LEVEL = logging.INFO  # Set to logging.DEBUG to see verbose debug messages
-LOGGER = logging.getLogger(__name__)  # pylint:disable=invalid-name
-LOGGER.setLevel(LOG_LEVEL)
-console_handler = logging.StreamHandler(stream=sys.stdout)
-console_handler.setLevel(LOG_LEVEL)
-# Used by script tool to split message text from message level to add correct message type to GP window
-console_handler.setFormatter(logging.Formatter("%(levelname)s" + helpers.MSG_STR_SPLITTER + "%(message)s"))
-LOGGER.addHandler(console_handler)
-
 DELETE_INTERMEDIATE_OUTPUTS = True  # Set to False for debugging purposes
+
+# Change logging.INFO to logging.DEBUG to see verbose debug messages
+LOGGER = helpers.configure_global_logger(logging.INFO)
 
 
 class Route(
@@ -976,4 +964,5 @@ def launch_parallel_rt_pairs():
 
 if __name__ == "__main__":
     # This script should always be launched via subprocess as if it were being called from the command line.
-    launch_parallel_rt_pairs()
+    with arcpy.EnvManager(overwriteOutput=True):
+        launch_parallel_rt_pairs()
