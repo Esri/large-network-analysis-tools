@@ -59,6 +59,8 @@ The *Solve Large OD Cost Matrix* tool can be used to solve a large [origin-desti
   - You have already pre-calculated the network location fields using the network dataset and travel mode you are using for this analysis. In this case, you can save time by not precalculating them again.
 - **Spatially Sort Inputs** (Python: *Sort_Inputs*) - A Boolean indicating whether to spatially sort origins and destinations prior to commencing the parallel solve.  Using sorted data will improve the efficiency of the chunking behavior significantly, and it may reduce the number of credits consumed if you're using a service that charges credits.  If your input data is already sorted, then sorting is not useful, and you should set this parameter to false.  Otherwise, you should set his parameter to true.  Note, however, that spatial sorting is only available if you have the Advanced license.  Spatial sorting will be skipped automatically if you don't have the necessary license, and the parameter will be hidden in the tool dialog.
 
+*Note:* This tool does not utilize the geoprocessing environments for parallel processing or processor type.  The settings for parallel processing are controlled using the tool parameters.
+
 ### Running the tool from ArcGIS Pro
 
 You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You just need to connect to the provided Python toolbox from the Catalog Pane either in the Toolboxes section or the Folders section.
@@ -157,6 +159,8 @@ Multiple types of origin-destination pairs are supported:
 - **Sort Origins by Assigned Destination** (Python: *Sort_Origins*) - A Boolean indicating whether to sort origins by their assigned destination prior to commencing the parallel solve.  Using sorted data will improve the efficiency of the solve slightly.  If your input data is already sorted, or if no origins are assigned to the same destinations, then sorting is not useful, and you should set this parameter to false.  This parameter is only applicable for the one-to-one Origin-Destination Assignment Type.
 - **Reverse Direction of Travel** (Python: *Reverse_Direction*) - A Boolean indicating whether to reverse the direction of travel and calculate the route from the destination to the origin. The default is false.  This parameter is only applicable for the one-to-one Origin-Destination Assignment Type.
 
+*Note:* This tool does not utilize the geoprocessing environments for parallel processing or processor type.  The settings for parallel processing are controlled using the tool parameters.
+
 ### Running the tool from ArcGIS Pro
 
 You can run the tool in ArcGIS Pro just like any other geoprocessing tool. You just need to connect to the provided Python toolbox from the Catalog Pane either in the Toolboxes section or the Folders section.
@@ -223,6 +227,8 @@ The tool inputs are similar to those in the core Calculate Locations tool.  Plea
 - **Search Tolerance** (Python: *Search_Tolerance*) - The maximum search distance that will be used when locating the input features on the network. Features that are outside the search tolerance will be left unlocated. The default is 5000 meters.
 - **Search Criteria** (Python: *Search_Criteria*) - The network dataset source feature classes on which input features are allowed to locate.  The default locatable sources for the network will be used if you don't specify a value for this parameter.
 - **Search Query**  (Python: *Search_Query*) - An optional query for each network dataset source feature class filtering the source features that can be located on.  By default, no query is used for any source.
+
+*Note:* This tool does not utilize the geoprocessing environments for parallel processing or processor type.  The settings for parallel processing are controlled using the tool parameters.
 
 ### Running the tool from ArcGIS Pro
 
