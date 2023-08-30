@@ -27,7 +27,6 @@ Copyright 2023 Esri
    limitations under the License.
 """
 # pylint: disable=logging-fstring-interpolation
-from concurrent import futures
 import os
 import logging
 import shutil
@@ -518,13 +517,13 @@ class Route(
         self.job_result["outputRoutes"] = output_routes
 
 
-def solve_route(inputs, chunk):
+def solve_route(chunk, inputs):
     """Solve a Route analysis for the given inputs for the given chunk of preassigned OD pairs.
 
     Args:
-        inputs (dict): Dictionary of keyword inputs suitable for initializing the Route class
         chunk (list): For one-to-one, the ObjectID range to select from the input origins. For many-to-many, a list of
             [chunk starting row number, chunk size].
+        inputs (dict): Dictionary of keyword inputs suitable for initializing the Route class
 
     Returns:
         dict: Dictionary of results from the Route class
@@ -724,73 +723,25 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         # Check if the input origins and destinations have any fields we should use in the route analysis
         self._populate_input_data_transfer_fields()
 
-        # Compute Route in parallel
-        LOGGER.info(f"Beginning parallelized Route solves ({self.total_jobs} chunks)")
-        completed_jobs = 0  # Track the number of jobs completed so far to use in logging
-        # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the routes
-        with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
-            # Each parallel process calls the solve_route() function with the rt_inputs dictionary for the
-            # given origin ranges and their assigned destinations.
-            jobs = {executor.submit(solve_route, self.rt_inputs, range): range for range in self.chunks}
-            # As each job is completed, add some logging information and store the results to post-process later
-            for future in futures.as_completed(jobs):
-                try:
-                    # The Route job returns a results dictionary. Retrieve it.
-                    result = future.result()
-                except Exception:  # pylint: disable=broad-except
-                    # If we couldn't retrieve the result, some terrible error happened and the job errored.
-                    # Note: This does not mean solve failed. It means some unexpected error was thrown. The most likely
-                    # causes are:
-                    # a) If you're calling a service, the service was temporarily down.
-                    # b) You had a temporary file read/write or resource issue on your machine.
-                    # c) If you're actively updating the code, you introduced an error.
-                    # To make the tool more robust against temporary glitches, retry submitting the job up to the number
-                    # of times designated in helpers.MAX_RETRIES.  If the job is still erroring after that many retries,
-                    # fail the entire tool run.
-                    errs = traceback.format_exc().splitlines()
-                    failed_range = jobs[future]
-                    LOGGER.debug((
-                        f"Failed to get results for Route chunk {failed_range} from the parallel process. Will retry "
-                        f"up to {helpers.MAX_RETRIES} times. Errors: {errs}"
-                    ))
-                    job_failed = True
-                    num_retries = 0
-                    while job_failed and num_retries < helpers.MAX_RETRIES:
-                        num_retries += 1
-                        try:
-                            future = executor.submit(solve_route, self.rt_inputs, failed_range)
-                            result = future.result()
-                            job_failed = False
-                            LOGGER.debug(f"Route chunk {failed_range} succeeded after {num_retries} retries.")
-                        except Exception:  # pylint: disable=broad-except
-                            # Update exception info to the latest error
-                            errs = traceback.format_exc().splitlines()
-                    if job_failed:
-                        # The job errored and did not succeed after retries.  Fail the tool run because something
-                        # terrible is happening.
-                        LOGGER.debug(f"Route chunk {failed_range} continued to error after {num_retries} retries.")
-                        LOGGER.error("Failed to get Route result from parallel processing.")
-                        errs = traceback.format_exc().splitlines()
-                        for err in errs:
-                            LOGGER.error(err)
-                        raise
+        # Compute Routes in parallel
+        job_results = helpers.run_parallel_processes(
+            LOGGER, solve_route, [self.rt_inputs], self.chunks,
+            self.total_jobs, self.max_processes,
+            "Solving Routes", "Route"
+        )
 
-                # If we got this far, the job completed successfully and we retrieved results.
-                completed_jobs += 1
-                LOGGER.info(
-                    f"Finished Route calculation {completed_jobs} of {self.total_jobs}.")
-
-                # Parse the results dictionary and store components for post-processing.
-                if result["solveSucceeded"]:
-                    self.route_fcs.append(result["outputRoutes"])
-                else:
-                    # Typically, a solve fails because no destinations were found for any of the origins in the chunk,
-                    # and this is a perfectly legitimate failure. It is not an error. However, they may be other, less
-                    # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
-                    # mode only in case the user is having problems. The user can also check the individual OD log
-                    # files.
-                    LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
-                    LOGGER.debug(result["solveMessages"])
+        # Parse the results and store components for post-processing.
+        for result in job_results:
+            if result["solveSucceeded"]:
+                self.route_fcs.append(result["outputRoutes"])
+            else:
+                # Typically, a solve fails because no destinations were found for any of the origins in the chunk,
+                # and this is a perfectly legitimate failure. It is not an error. However, they may be other, less
+                # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
+                # mode only in case the user is having problems. The user can also check the individual OD log
+                # files.
+                LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
+                LOGGER.debug(result["solveMessages"])
 
         # Post-process outputs
         if self.route_fcs:
