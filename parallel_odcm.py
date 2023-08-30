@@ -24,7 +24,6 @@ Copyright 2023 Esri
    limitations under the License.
 """
 # pylint: disable=logging-fstring-interpolation
-from concurrent import futures
 import os
 import uuid
 import logging
@@ -623,14 +622,14 @@ class ODCostMatrix(
             self.optimized_field_name = "Total_Distance"
 
 
-def solve_od_cost_matrix(inputs, chunk):
+def solve_od_cost_matrix(chunk, inputs):
     """Solve an OD Cost Matrix analysis for the given inputs for the given chunk of ObjectIDs.
 
     Args:
-        inputs (dict): Dictionary of keyword inputs suitable for initializing the ODCostMatrix class
         chunk (list): Represents the ObjectID ranges to select from the origins and destinations when solving the OD
             Cost Matrix. For example, [[1, 1000], [4001, 5000]] means use origin OIDs 1-1000 and destination OIDs
             4001-5000.
+        inputs (dict): Dictionary of keyword inputs suitable for initializing the ODCostMatrix class
 
     Returns:
         dict: Dictionary of results from the ODCostMatrix class
@@ -786,72 +785,24 @@ class ParallelODCalculator:
         self.optimized_cost_field = self._validate_od_settings()
 
         # Compute OD cost matrix in parallel
-        LOGGER.info(f"Beginning parallelized OD Cost Matrix solves ({self.total_jobs} chunks)")
-        completed_jobs = 0  # Track the number of jobs completed so far to use in logging
-        # Use the concurrent.futures ProcessPoolExecutor to spin up parallel processes that solve the OD cost matrices
-        with futures.ProcessPoolExecutor(max_workers=self.max_processes) as executor:
-            # Each parallel process calls the solve_od_cost_matrix() function with the od_inputs dictionary for the
-            # given origin and destination OID ranges.
-            jobs = {executor.submit(solve_od_cost_matrix, self.od_inputs, range): range for range in self.ranges}
-            # As each job is completed, add some logging information and store the results to post-process later
-            for future in futures.as_completed(jobs):
-                try:
-                    # The OD cost matrix job returns a results dictionary. Retrieve it.
-                    result = future.result()
-                except Exception:  # pylint: disable=broad-except
-                    # If we couldn't retrieve the result, some terrible error happened and the job errored.
-                    # Note: This does not mean solve failed. It means some unexpected error was thrown. The most likely
-                    # causes are:
-                    # a) If you're calling a service, the service was temporarily down.
-                    # b) You had a temporary file read/write or resource issue on your machine.
-                    # c) If you're actively updating the code, you introduced an error.
-                    # To make the tool more robust against temporary glitches, retry submitting the job up to the number
-                    # of times designated in helpers.MAX_RETRIES.  If the job is still erroring after that many retries,
-                    # fail the entire tool run.
-                    errs = traceback.format_exc().splitlines()
-                    failed_range = jobs[future]
-                    LOGGER.debug((
-                        f"Failed to get results for OD chunk {failed_range} from the parallel process. Will retry up "
-                        f"to {helpers.MAX_RETRIES} times. Errors: {errs}"
-                    ))
-                    job_failed = True
-                    num_retries = 0
-                    while job_failed and num_retries < helpers.MAX_RETRIES:
-                        num_retries += 1
-                        try:
-                            future = executor.submit(solve_od_cost_matrix, self.od_inputs, failed_range)
-                            result = future.result()
-                            job_failed = False
-                            LOGGER.debug(f"OD chunk {failed_range} succeeded after {num_retries} retries.")
-                        except Exception:  # pylint: disable=broad-except
-                            # Update exception info to the latest error
-                            errs = traceback.format_exc().splitlines()
-                    if job_failed:
-                        # The job errored and did not succeed after retries.  Fail the tool run because something
-                        # terrible is happening.
-                        LOGGER.debug(f"OD chunk {failed_range} continued to error after {num_retries} retries.")
-                        LOGGER.error("Failed to get OD Cost Matrix result from parallel processing.")
-                        errs = traceback.format_exc().splitlines()
-                        for err in errs:
-                            LOGGER.error(err)
-                        raise
+        job_results = helpers.run_parallel_processes(
+            LOGGER, solve_od_cost_matrix, [self.od_inputs], self.ranges,
+            self.total_jobs, self.max_processes,
+            "Solving OD Cost Matrix", "OD Cost Matrix"
+        )
 
-                # If we got this far, the job completed successfully and we retrieved results.
-                completed_jobs += 1
-                LOGGER.info(
-                    f"Finished OD Cost Matrix calculation {completed_jobs} of {self.total_jobs}.")
-
-                # Parse the results dictionary and store components for post-processing.
-                if result["solveSucceeded"]:
-                    self.od_line_files.append(result["outputLines"])
-                else:
-                    # Typically, a solve fails because no destinations were found for any of the origins in the chunk,
-                    # and this is a perfectly legitimate failure. It is not an error. However, they may be other, less
-                    # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
-                    # mode only in case the user is having problems. The user can also check the individual OD log
-                    # files.
-                    LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
-                    LOGGER.debug(result["solveMessages"])
+        # Parse the results and store components for post-processing.
+        for result in job_results:
+            if result["solveSucceeded"]:
+                self.od_line_files.append(result["outputLines"])
+            else:
+                # Typically, a solve fails because no destinations were found for any of the origins in the chunk,
+                # and this is a perfectly legitimate failure. It is not an error. However, they may be other, less
+                # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
+                # mode only in case the user is having problems. The user can also check the individual OD log
+                # files.
+                LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
+                LOGGER.debug(result["solveMessages"])
 
         # Post-process outputs
         if self.od_line_files:

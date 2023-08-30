@@ -1,6 +1,6 @@
 """Unit tests for the parallel_.py module.
 
-Copyright 2022 Esri
+Copyright 2023 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -293,7 +293,7 @@ class TestParallelODCM(unittest.TestCase):
 
     def test_solve_od_cost_matrix(self):
         """Test the solve_od_cost_matrix function."""
-        result = parallel_odcm.solve_od_cost_matrix(self.od_args, [[1, 2], [8, 12]])
+        result = parallel_odcm.solve_od_cost_matrix([[1, 2], [8, 12]], self.od_args)
         # Check results
         self.assertIsInstance(result, dict)
         self.assertTrue(os.path.exists(result["logFile"]), "Log file does not exist.")
