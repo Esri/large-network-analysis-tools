@@ -590,6 +590,13 @@ def parse_std_and_write_to_gp_ui(msg_string):
         arcpy.AddMessage(msg_string)
 
 
+def teardown_logger(logger):
+    """Clean up and close the logger."""
+    for handler in logger.handlers:
+        handler.close()
+        logger.removeHandler(handler)
+
+
 def run_gp_tool(log_to_use, tool, tool_args=None, tool_kwargs=None):
     """Run a geoprocessing tool with nice logging.
 
@@ -839,9 +846,7 @@ class LoggingMixin:
 
     def teardown_logger(self):
         """Clean up and close the logger."""
-        for handler in self.logger.handlers:
-            handler.close()
-            self.logger.removeHandler(handler)
+        teardown_logger(self.logger)
 
 
 class MakeNDSLayerMixin:  # pylint:disable = too-few-public-methods
