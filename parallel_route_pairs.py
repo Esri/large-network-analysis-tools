@@ -48,7 +48,7 @@ import helpers
 DELETE_INTERMEDIATE_OUTPUTS = True  # Set to False for debugging purposes
 
 # Change logging.INFO to logging.DEBUG to see verbose debug messages
-LOGGER = helpers.configure_global_logger(logging.INFO)
+LOG_LEVEL = logging.INFO
 
 
 class Route(
@@ -542,7 +542,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
     """Solves a large Route by chunking the problem, solving in parallel, and combining results."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, pair_type_str, origins, origin_id_field, destinations, dest_id_field,
+        self, logger, pair_type_str, origins, origin_id_field, destinations, dest_id_field,
         network_data_source, travel_mode, time_units, distance_units,
         max_routes, max_processes, out_routes, scratch_folder, reverse_direction=False,
         assigned_dest_field=None, od_pair_table=None, time_of_day=None, barriers=None
@@ -553,6 +553,8 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         This class assumes that the inputs have already been pre-processed and validated.
 
         Args:
+            logger (logging.logger): Logger class to use for messages that get written to the GP window. Set up using
+                helpers.configure_global_logger().
             pair_type_str (str): String representation of the preassigned origin-destination pair type. Must match one
                 of the enum names in helpers.PreassignedODPairType.
             origins (str, layer): Catalog path or layer for the input origins
@@ -578,6 +580,9 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
             barriers (list(str, layer), optional): List of catalog paths or layers for point, line, and polygon barriers
                 to use. Defaults to None.
         """
+        # Set up logger that will write to the GP window
+        self.logger = logger
+
         pair_type = helpers.PreassignedODPairType[pair_type_str]
         self.origins = origins
         self.destinations = destinations
@@ -643,21 +648,21 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         """
         # Create a dummy Route object and set properties. This allows us to
         # detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
-        LOGGER.debug("Validating Route settings...")
+        self.logger.debug("Validating Route settings...")
         rt = None
         try:
             rt = Route(**self.rt_inputs)
             rt.initialize_rt_solver()
-            LOGGER.debug("Route settings successfully validated.")
+            self.logger.debug("Route settings successfully validated.")
         except Exception:
-            LOGGER.error("Error initializing Route analysis.")
+            self.logger.error("Error initializing Route analysis.")
             errs = traceback.format_exc().splitlines()
             for err in errs:
-                LOGGER.error(err)
+                self.logger.error(err)
             raise
         finally:
             if rt:
-                LOGGER.debug("Deleting temporary test Route job folder...")
+                self.logger.debug("Deleting temporary test Route job folder...")
                 # Close logging
                 rt.teardown_logger()
                 # Delete output folder
@@ -699,7 +704,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
             f.type in rt_stops_input_fields[f.name]]
         self.rt_inputs["origin_transfer_fields"] = origin_transfer_fields
         if origin_transfer_fields:
-            LOGGER.info((
+            self.logger.info((
                 "Supported fields in the input Origins table that will be used in the analysis: "
                 f"{origin_transfer_fields}"
             ))
@@ -708,7 +713,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
             f.type in rt_stops_input_fields[f.name]]
         self.rt_inputs["destination_transfer_fields"] = destination_transfer_fields
         if destination_transfer_fields:
-            LOGGER.info((
+            self.logger.info((
                 "Supported fields in the input Destinations table that will be used in the analysis: "
                 f"{destination_transfer_fields}"
             ))
@@ -725,7 +730,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
 
         # Compute Routes in parallel
         job_results = helpers.run_parallel_processes(
-            LOGGER, solve_route, [self.rt_inputs], self.chunks,
+            self.logger, solve_route, [self.rt_inputs], self.chunks,
             self.total_jobs, self.max_processes,
             "Solving Routes", "Route"
         )
@@ -740,28 +745,28 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
                 # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
                 # mode only in case the user is having problems. The user can also check the individual OD log
                 # files.
-                LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
-                LOGGER.debug(result["solveMessages"])
+                self.logger.debug(f"Solve failed for job id {result['jobId']}.")
+                self.logger.debug(result["solveMessages"])
 
         # Post-process outputs
         if self.route_fcs:
-            LOGGER.info("Post-processing Route results...")
+            self.logger.info("Post-processing Route results...")
             self.route_fcs = sorted(self.route_fcs)
             self._post_process_route_fcs()
         else:
-            LOGGER.warning("All Route solves failed, so no output was produced.")
+            self.logger.warning("All Route solves failed, so no output was produced.")
 
         # Clean up
         # Delete the job folders if the job succeeded
         if DELETE_INTERMEDIATE_OUTPUTS:
-            LOGGER.info("Deleting intermediate outputs...")
+            self.logger.info("Deleting intermediate outputs...")
             try:
                 shutil.rmtree(self.scratch_folder, ignore_errors=True)
             except Exception:  # pylint: disable=broad-except
                 # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
-                LOGGER.warning(f"Unable to delete intermediate Route output folder {self.scratch_folder}.")
+                self.logger.warning(f"Unable to delete intermediate Route output folder {self.scratch_folder}.")
 
-        LOGGER.info("Finished calculating Routes.")
+        self.logger.info("Finished calculating Routes.")
 
     def _post_process_route_fcs(self):
         """Merge the routes calculated in each separate process into a single feature class.
@@ -772,7 +777,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         # Create the final output feature class
         desc = arcpy.Describe(self.route_fcs[0])
         helpers.run_gp_tool(
-            LOGGER,
+            self.logger,
             arcpy.management.CreateFeatureclass, [
                 os.path.dirname(self.out_routes),
                 os.path.basename(self.out_routes),
@@ -896,22 +901,28 @@ def launch_parallel_rt_pairs():
         "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
 
     try:
+        logger = helpers.configure_global_logger(LOG_LEVEL)
+
         # Get arguments as dictionary.
         args = vars(parser.parse_args())
+        args["logger"] = logger
 
         # Initialize a parallel Route calculator class
         rt_calculator = ParallelRoutePairCalculator(**args)
         # Solve the Route in parallel chunks
         start_time = time.time()
         rt_calculator.solve_route_in_parallel()
-        LOGGER.info(f"Parallel Route calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
+        logger.info(f"Parallel Route calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
 
     except Exception:  # pylint: disable=broad-except
-        LOGGER.error("Error in parallelization subprocess.")
+        logger.error("Error in parallelization subprocess.")
         errs = traceback.format_exc().splitlines()
         for err in errs:
-            LOGGER.error(err)
+            logger.error(err)
         raise
+
+    finally:
+        helpers.teardown_logger(logger)
 
 
 if __name__ == "__main__":
