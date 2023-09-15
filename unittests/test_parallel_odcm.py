@@ -136,21 +136,22 @@ class TestParallelODCM(unittest.TestCase):
         od = parallel_odcm.ODCostMatrix(**self.od_args)
         origin_criteria = [1, 2]  # Encompasses 2 rows in the southwest corner
 
-        # Test when a subset of destinations meets the cutoff criteria
-        dest_criteria = [8, 12]  # Encompasses 5 rows. Two are close to the origins.
-        od._select_inputs(origin_criteria, dest_criteria)
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
-        # Only two destinations fall within the distance threshold
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_destinations_layer_obj).getOutput(0)))
+        with arcpy.EnvManager(overwriteOutput=True):
+            # Test when a subset of destinations meets the cutoff criteria
+            dest_criteria = [8, 12]  # Encompasses 5 rows. Two are close to the origins.
+            od._select_inputs(origin_criteria, dest_criteria)
+            self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
+            # Only two destinations fall within the distance threshold
+            self.assertEqual(2, int(arcpy.management.GetCount(od.input_destinations_layer_obj).getOutput(0)))
 
-        # Test when none of the destinations are within the threshold
-        dest_criteria = [14, 17]  # Encompasses 4 locations in the far northeast corner
-        od._select_inputs(origin_criteria, dest_criteria)
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
-        self.assertIsNone(
-            od.input_destinations_layer_obj,
-            "Destinations layer should be None since no destinations fall within the straight-line cutoff of origins."
-        )
+            # Test when none of the destinations are within the threshold
+            dest_criteria = [14, 17]  # Encompasses 4 locations in the far northeast corner
+            od._select_inputs(origin_criteria, dest_criteria)
+            self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
+            self.assertIsNone(
+                od.input_destinations_layer_obj,
+                "Destinations layer should be None since no destinations fall within the straight-line cutoff of origins."
+            )
 
     def test_ODCostMatrix_solve_featureclass(self):
         """Test the solve method of the ODCostMatrix class with feature class output."""
