@@ -80,7 +80,10 @@ class TestParallelODCM(unittest.TestCase):
             "barriers": []
         }
 
+        self.logger = helpers.configure_global_logger(parallel_odcm.LOG_LEVEL)
+
         self.parallel_od_class_args = {
+            "logger": self.logger,
             "origins": self.origins,
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
@@ -97,6 +100,11 @@ class TestParallelODCM(unittest.TestCase):
             "time_of_day": "20220329 16:45",
             "barriers": []
         }
+
+    @classmethod
+    def tearDownClass(self):
+        """Deconstruct the logger when tests are finished."""
+        helpers.teardown_logger(self.logger)
 
     def test_ODCostMatrix_hour_to_time_units(self):
         """Test the _hour_to_time_units method of the ODCostMatrix class."""
@@ -128,21 +136,22 @@ class TestParallelODCM(unittest.TestCase):
         od = parallel_odcm.ODCostMatrix(**self.od_args)
         origin_criteria = [1, 2]  # Encompasses 2 rows in the southwest corner
 
-        # Test when a subset of destinations meets the cutoff criteria
-        dest_criteria = [8, 12]  # Encompasses 5 rows. Two are close to the origins.
-        od._select_inputs(origin_criteria, dest_criteria)
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
-        # Only two destinations fall within the distance threshold
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_destinations_layer_obj).getOutput(0)))
+        with arcpy.EnvManager(overwriteOutput=True):
+            # Test when a subset of destinations meets the cutoff criteria
+            dest_criteria = [8, 12]  # Encompasses 5 rows. Two are close to the origins.
+            od._select_inputs(origin_criteria, dest_criteria)
+            self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
+            # Only two destinations fall within the distance threshold
+            self.assertEqual(2, int(arcpy.management.GetCount(od.input_destinations_layer_obj).getOutput(0)))
 
-        # Test when none of the destinations are within the threshold
-        dest_criteria = [14, 17]  # Encompasses 4 locations in the far northeast corner
-        od._select_inputs(origin_criteria, dest_criteria)
-        self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
-        self.assertIsNone(
-            od.input_destinations_layer_obj,
-            "Destinations layer should be None since no destinations fall within the straight-line cutoff of origins."
-        )
+            # Test when none of the destinations are within the threshold
+            dest_criteria = [14, 17]  # Encompasses 4 locations in the far northeast corner
+            od._select_inputs(origin_criteria, dest_criteria)
+            self.assertEqual(2, int(arcpy.management.GetCount(od.input_origins_layer_obj).getOutput(0)))
+            self.assertIsNone(
+                od.input_destinations_layer_obj,
+                "Destinations layer should be None since no destinations fall within the straight-line cutoff of origins."
+            )
 
     def test_ODCostMatrix_solve_featureclass(self):
         """Test the solve method of the ODCostMatrix class with feature class output."""
@@ -319,6 +328,7 @@ class TestParallelODCM(unittest.TestCase):
         """Test the solve_od_in_parallel function. Output to feature class."""
         out_od_lines = os.path.join(self.output_gdb, "Out_OD_Lines")
         inputs = {
+            "logger": self.logger,
             "origins": self.origins,
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
@@ -353,6 +363,7 @@ class TestParallelODCM(unittest.TestCase):
         """
         out_od_lines = os.path.join(self.output_gdb, "Out_OD_Lines_NoLimit")
         inputs = {
+            "logger": self.logger,
             "origins": self.origins,
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
@@ -383,6 +394,7 @@ class TestParallelODCM(unittest.TestCase):
         out_folder = os.path.join(self.scratch_folder, "ParallelODCalculator_CSV")
         os.mkdir(out_folder)
         inputs = {
+            "logger": self.logger,
             "origins": self.origins,
             "destinations": self.destinations,
             "network_data_source": self.local_nd,
@@ -418,6 +430,7 @@ class TestParallelODCM(unittest.TestCase):
         out_folder = os.path.join(self.scratch_folder, "ParallelODCalculator_Arrow")
         os.mkdir(out_folder)
         inputs = {
+            "logger": self.logger,
             "origins": self.origins,
             "destinations": self.destinations,
             "network_data_source": self.local_nd,

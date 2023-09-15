@@ -27,7 +27,7 @@ import input_data_helper
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
 import parallel_route_pairs  # noqa: E402, pylint: disable=wrong-import-position
-from helpers import arcgis_version, PreassignedODPairType  # noqa: E402, pylint: disable=wrong-import-position
+from helpers import arcgis_version, PreassignedODPairType, configure_global_logger, teardown_logger
 
 
 class TestParallelRoutePairs(unittest.TestCase):
@@ -57,6 +57,7 @@ class TestParallelRoutePairs(unittest.TestCase):
         os.makedirs(self.output_folder)
         self.output_gdb = os.path.join(self.output_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
+        self.logger = configure_global_logger(parallel_route_pairs.LOG_LEVEL)
 
         self.route_args_one_to_one = {
             "pair_type": PreassignedODPairType.one_to_one,
@@ -97,6 +98,7 @@ class TestParallelRoutePairs(unittest.TestCase):
             "barriers": []
         }
         self.parallel_rt_class_args_one_to_one = {
+            "logger": self.logger,
             "pair_type_str": "one_to_one",
             "origins": self.origins,
             "origin_id_field": "ID",
@@ -117,6 +119,7 @@ class TestParallelRoutePairs(unittest.TestCase):
             "barriers": ""
         }
         self.parallel_rt_class_args_many_to_many = {
+            "logger": self.logger,
             "pair_type_str": "many_to_many",
             "origins": self.origins,
             "origin_id_field": "ID",
@@ -136,6 +139,11 @@ class TestParallelRoutePairs(unittest.TestCase):
             "time_of_day": "20220329 16:45",
             "barriers": ""
         }
+
+    @classmethod
+    def tearDownClass(self):
+        """Deconstruct the logger when tests are finished."""
+        teardown_logger(self.logger)
 
     def test_Route_get_od_pairs_for_chunk(self):
         """Test the _get_od_pairs_for_chunk method of the Route class."""

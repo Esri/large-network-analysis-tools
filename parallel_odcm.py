@@ -53,7 +53,7 @@ if helpers.arcgis_version >= "2.9":
 DELETE_INTERMEDIATE_OD_OUTPUTS = True  # Set to False for debugging purposes
 
 # Change logging.INFO to logging.DEBUG to see verbose debug messages
-LOGGER = helpers.configure_global_logger(logging.INFO)
+LOG_LEVEL = logging.INFO
 
 
 class ODCostMatrix(
@@ -648,7 +648,7 @@ class ParallelODCalculator:
     """Solves a large OD Cost Matrix by chunking the problem, solving in parallel, and combining results."""
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments
-        self, origins, destinations, network_data_source, travel_mode, output_format, output_od_location,
+        self, logger, origins, destinations, network_data_source, travel_mode, output_format, output_od_location,
         max_origins, max_destinations, max_processes, time_units, distance_units,
         cutoff=None, num_destinations=None, time_of_day=None, barriers=None
     ):
@@ -658,6 +658,8 @@ class ParallelODCalculator:
         This class assumes that the inputs have already been pre-processed and validated.
 
         Args:
+            logger (logging.logger): Logger class to use for messages that get written to the GP window. Set up using
+                helpers.configure_global_logger().
             origins (str): Catalog path to origins
             destinations (str): Catalog path to destinations
             network_data_source (str): Network data source catalog path or URL
@@ -680,6 +682,9 @@ class ParallelODCalculator:
             barriers (list(str), optional): List of catalog paths to point, line, and polygon barriers to use.
                 Defaults to None.
         """
+        # Set up logger that will write to the GP window
+        self.logger = logger
+
         time_units = helpers.convert_time_units_str_to_enum(time_units)
         distance_units = helpers.convert_distance_units_str_to_enum(distance_units)
         self.output_format = helpers.convert_output_format_str_to_enum(output_format)
@@ -700,7 +705,7 @@ class ParallelODCalculator:
         # Scratch folder to store intermediate outputs from the OD Cost Matrix processes
         unique_id = uuid.uuid4().hex
         self.scratch_folder = os.path.join(arcpy.env.scratchFolder, "ODCM_" + unique_id)  # pylint: disable=no-member
-        LOGGER.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
+        self.logger.info(f"Intermediate outputs will be written to {self.scratch_folder}.")
         os.mkdir(self.scratch_folder)
 
         # Output folder to store CSV or Arrow outputs
@@ -750,7 +755,7 @@ class ParallelODCalculator:
         """
         # Create a dummy ODCostMatrix object and set properties. This allows us to
         # detect any errors prior to spinning up a bunch of parallel processes and having them all fail.
-        LOGGER.debug("Validating OD Cost Matrix settings...")
+        self.logger.debug("Validating OD Cost Matrix settings...")
         optimized_cost_field = None
         odcm = None
         try:
@@ -758,16 +763,16 @@ class ParallelODCalculator:
             odcm.initialize_od_solver()
             # Check which field name in the output OD Lines will store the optimized cost values
             optimized_cost_field = odcm.optimized_field_name
-            LOGGER.debug("OD Cost Matrix settings successfully validated.")
+            self.logger.debug("OD Cost Matrix settings successfully validated.")
         except Exception:
-            LOGGER.error("Error initializing OD Cost Matrix analysis.")
+            self.logger.error("Error initializing OD Cost Matrix analysis.")
             errs = traceback.format_exc().splitlines()
             for err in errs:
-                LOGGER.error(err)
+                self.logger.error(err)
             raise
         finally:
             if odcm:
-                LOGGER.debug("Deleting temporary test OD Cost Matrix job folder...")
+                self.logger.debug("Deleting temporary test OD Cost Matrix job folder...")
                 # Close logging
                 odcm.teardown_logger()
                 # Delete output folder
@@ -786,7 +791,7 @@ class ParallelODCalculator:
 
         # Compute OD cost matrix in parallel
         job_results = helpers.run_parallel_processes(
-            LOGGER, solve_od_cost_matrix, [self.od_inputs], self.ranges,
+            self.logger, solve_od_cost_matrix, [self.od_inputs], self.ranges,
             self.total_jobs, self.max_processes,
             "Solving OD Cost Matrix", "OD Cost Matrix"
         )
@@ -801,12 +806,12 @@ class ParallelODCalculator:
                 # likely, reasons for solve failure. Write solve messages to the main GP message thread in debug
                 # mode only in case the user is having problems. The user can also check the individual OD log
                 # files.
-                LOGGER.debug(f"Solve failed for job id {result['jobId']}.")
-                LOGGER.debug(result["solveMessages"])
+                self.logger.debug(f"Solve failed for job id {result['jobId']}.")
+                self.logger.debug(result["solveMessages"])
 
         # Post-process outputs
         if self.od_line_files:
-            LOGGER.info("Post-processing OD Cost Matrix results...")
+            self.logger.info("Post-processing OD Cost Matrix results...")
             self.od_line_files = sorted(self.od_line_files)
             if self.output_format is helpers.OutputFormat.featureclass:
                 self._post_process_od_line_fcs()
@@ -815,19 +820,19 @@ class ParallelODCalculator:
             elif self.output_format is helpers.OutputFormat.arrow:
                 self._post_process_od_line_arrow_files()
         else:
-            LOGGER.warning("All OD Cost Matrix solves failed, so no output was produced.")
+            self.logger.warning("All OD Cost Matrix solves failed, so no output was produced.")
 
         # Clean up
         # Delete the job folders if the job succeeded
         if DELETE_INTERMEDIATE_OD_OUTPUTS:
-            LOGGER.info("Deleting intermediate outputs...")
+            self.logger.info("Deleting intermediate outputs...")
             try:
                 shutil.rmtree(self.scratch_folder, ignore_errors=True)
             except Exception:  # pylint: disable=broad-except
                 # If deletion doesn't work, just throw a warning and move on. This does not need to kill the tool.
-                LOGGER.warning(f"Unable to delete intermediate OD Cost Matrix output folder {self.scratch_folder}.")
+                self.logger.warning(f"Unable to delete intermediate OD Cost Matrix output folder {self.scratch_folder}.")
 
-        LOGGER.info("Finished calculating OD Cost Matrices.")
+        self.logger.info("Finished calculating OD Cost Matrices.")
 
     def _post_process_od_line_fcs(self):
         """Merge and post-process the OD Lines calculated in each separate process.
@@ -847,7 +852,7 @@ class ParallelODCalculator:
         # Create the final output feature class
         desc = arcpy.Describe(self.od_line_files[0])
         helpers.run_gp_tool(
-            LOGGER,
+            self.logger,
             arcpy.management.CreateFeatureclass, [
                 os.path.dirname(self.output_od_location),
                 os.path.basename(self.output_od_location),
@@ -894,8 +899,8 @@ class ParallelODCalculator:
                 for row in df.itertuples(index=False, name=None):
                     cur.insertRow(row)
 
-        LOGGER.info("Post-processing complete.")
-        LOGGER.info(f"Results written to {self.output_od_location}.")
+        self.logger.info("Post-processing complete.")
+        self.logger.info(f"Results written to {self.output_od_location}.")
 
     def _post_process_od_line_csvs(self):
         """Post-process CSV file outputs."""
@@ -1090,23 +1095,29 @@ def launch_parallel_od():
         "-b", "--barriers", action="store", dest="barriers", help=help_string, nargs='*', required=False)
 
     try:
+        logger = helpers.configure_global_logger(LOG_LEVEL)
+
         # Get arguments as dictionary.
         args = vars(parser.parse_args())
+        args["logger"] = logger
 
         # Initialize a parallel OD Cost Matrix calculator class
         od_calculator = ParallelODCalculator(**args)
         # Solve the OD Cost Matrix in parallel chunks
         start_time = time.time()
         od_calculator.solve_od_in_parallel()
-        LOGGER.info(
+        logger.info(
             f"Parallel OD Cost Matrix calculation completed in {round((time.time() - start_time) / 60, 2)} minutes")
 
     except Exception:  # pylint: disable=broad-except
-        LOGGER.error("Error in parallelization subprocess.")
+        logger.error("Error in parallelization subprocess.")
         errs = traceback.format_exc().splitlines()
         for err in errs:
-            LOGGER.error(err)
+            logger.error(err)
         raise
+
+    finally:
+        helpers.teardown_logger(logger)
 
 
 if __name__ == "__main__":
