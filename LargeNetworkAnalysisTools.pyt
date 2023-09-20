@@ -962,7 +962,11 @@ def get_catalog_path(param):
         return ""
     # If the value is a layer object, get its data source (catalog path)
     if hasattr(param_value, "dataSource"):
-        return param_value.dataSource
+        catalog_path = param_value.dataSource
+        if "DB_CONNECTION_PROPERTIES" in catalog_path:
+            # Handle weird SDE or MMPK layers where the .dataSource property returns extra garbage
+            catalog_path = arcpy.Describe(param_value).catalogPath
+        return catalog_path
     # Otherwise, it's probably already a string catalog path. Just return its text value.
     return param.valueAsText
 
@@ -986,7 +990,11 @@ def get_catalog_path_multivalue(param):
     for idx, val in enumerate(values):
         # If the value is a layer object, get its data source (catalog path)
         if hasattr(val, "dataSource"):
-            catalog_paths.append(val.dataSource)
+            catalog_path = val.dataSource
+            if "DB_CONNECTION_PROPERTIES" in catalog_path:
+                # Handle weird SDE or MMPK layers where the .dataSource property returns extra garbage
+                catalog_path = arcpy.Describe(val).catalogPath
+            catalog_paths.append(catalog_path)
         # Otherwise, it's probably already a string catalog path. The only way to get it is to retrieve it from the
         # valueAsText string that we split up above.
         else:
