@@ -208,6 +208,31 @@ class ODCostMatrixSolver(
                 arcpy.AddWarning("Cannot spatially sort inputs without the Advanced license.")
                 self.sort_inputs = False
 
+        # Check that max possible output OD rows doesn't exceed limits
+        if self.output_format is helpers.OutputFormat.featureclass and helpers.arcgis_version < "3.2":
+            max_possible_pairs = helpers.get_max_possible_od_pair_count(
+                self.origins, self.destinations, self.num_destinations)
+            if max_possible_pairs > helpers.MAX_ALLOWED_FC_ROWS_32BIT:
+                if not self.cutoff:
+                    err = (
+                        "The number of output origin-destination pairs likely to be generated exceeds the number of "
+                        "rows allowed in a feature class with a 32-bit ObjectID field. Options: Choose a different "
+                        "output type, use an impedance cutoff, limit the number of destinations to find, or update "
+                        "ArcGIS Pro to at least 3.2 to use an output feature class with 64-bit ObjectIDs."
+                    )
+                    arcpy.AddError(err)
+                    raise ValueError(err)
+                else:
+                    msg = (
+                        "The number of possible output origin-destination pairs exceeds the number of rows allowed in "
+                        "a feature class with a 32-bit ObjectID field.  Because of the impedance cutoff, the actual "
+                        "number of output origin-destination pairs may be considerably smaller, so there may be no "
+                        "problem.  If you encounter an error, here are your options: Choose a different output type, "
+                        "limit the number of destinations to find, or update ArcGIS Pro to at least 3.2 to use "
+                        "an output feature class with 64bit ObjectIDs."
+                    )
+                    arcpy.AddWarning(msg)
+
     def _validate_od_settings(self):
         """Validate OD cost matrix settings by spinning up a dummy OD Cost Matrix object.
 
