@@ -36,6 +36,7 @@ import traceback
 import argparse
 from math import ceil
 from distutils.util import strtobool
+from numpy import int64
 import pandas as pd
 
 import arcpy
@@ -253,7 +254,7 @@ class Route(
         # Select the origins present in this chunk of predefined OD pairs
         self.logger.debug("Selecting origins for this chunk...")
         origins_in_chunk = set([pair[0] for pair in self.od_pairs])
-        if isinstance(self.od_pairs[0][0], (int, float,)):
+        if isinstance(self.od_pairs[0][0], (int, float, int64,)):
             origin_string = ", ".join([str(o_id) for o_id in origins_in_chunk])
         else:
             origin_string = "'" + "', '".join([str(o_id) for o_id in origins_in_chunk]) + "'"
@@ -269,7 +270,7 @@ class Route(
         # Select the destinations present in this chunk of predefined OD pairs
         self.logger.debug("Selecting destinations for this chunk...")
         dests_in_chunk = set([pair[1] for pair in self.od_pairs])
-        if isinstance(self.od_pairs[0][1], (int, float,)):
+        if isinstance(self.od_pairs[0][1], (int, float, int64,)):
             dest_string = ", ".join([str(d_id) for d_id in dests_in_chunk])
         else:
             dest_string = "'" + "', '".join([str(d_id) for d_id in dests_in_chunk]) + "'"

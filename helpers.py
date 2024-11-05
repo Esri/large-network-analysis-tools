@@ -21,6 +21,7 @@ import enum
 import traceback
 import logging
 import subprocess
+from numpy import int64
 from concurrent import futures
 import arcpy
 
@@ -29,6 +30,8 @@ arcgis_version = arcpy.GetInstallInfo()["Version"]
 
 # Set some shared global variables that can be referenced from the other scripts
 ID_FIELD_TYPES = ["Short", "Long", "Double", "Single", "Text", "OID"]
+if arcgis_version >= "3.2":
+    ID_FIELD_TYPES.append("BigInteger")
 MSG_STR_SPLITTER = " | "
 DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
 TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
@@ -49,7 +52,9 @@ DATETIME_FORMAT = "%Y%m%d %H:%M"  # Used for converting between datetime and str
 MAX_ALLOWED_FC_ROWS_32BIT = 2000000000  # Use a 64bit OID feature class if the row count is bigger than this
 
 # Conversion between ArcGIS field types and python types for use when creating dataframes
-PD_FIELD_TYPES = {"String": str, "Single": float, "Double": float, "SmallInteger": int, "Integer": int, "OID": int}
+PD_FIELD_TYPES = {
+    "String": str, "Single": float, "Double": float, "SmallInteger": int, "Integer": int, "OID": int,
+    "BigInteger": int64}
 
 
 def is_nds_service(network_data_source):
