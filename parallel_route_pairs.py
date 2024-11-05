@@ -187,7 +187,7 @@ class Route(
     def _add_unique_id_fields(self):
         """Add fields to input Stops with the origin and destination's original unique IDs."""
         field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
-                       "Integer": "LONG", "OID": "LONG"}
+                       "Integer": "LONG", "OID": "LONG", "BigInteger": "BIGINTEGER"}
         origin_field_def = [self.origin_unique_id_field_name, field_types[self.origin_id_field_obj.type]]
         if self.origin_id_field_obj.type == "String":
             origin_field_def += [self.origin_unique_id_field_name, self.origin_id_field_obj.length]
