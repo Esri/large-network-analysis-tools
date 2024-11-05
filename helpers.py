@@ -479,7 +479,10 @@ def make_oid_preserving_field_mappings(input_fc, oid_field_name, unique_id_field
     new_field = arcpy.Field()
     new_field.name = unique_id_field_name
     new_field.aliasName = "Original OID"
-    new_field.type = "Integer"
+    if arcgis_version >= "3.2" and arcpy.Describe(input_fc).hasOID64:
+        new_field.type = "BigInteger"
+    else:
+        new_field.type = "Integer"
     # Create a new field map object and map the ObjectID to the new output field
     new_fm = arcpy.FieldMap()
     new_fm.addInputField(input_fc, oid_field_name)
