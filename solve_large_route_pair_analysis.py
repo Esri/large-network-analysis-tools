@@ -516,6 +516,9 @@ class RoutePairSolver(
             self.origin_id_field = f"OID_{self.unique_id}"
             field_mappings = helpers.make_oid_preserving_field_mappings(
                 self.origins, origins_oid_field, self.origin_id_field)
+            # If the assigned destination ID field is ObjectID, remap to the preserved OID field name instead
+            if self.assigned_dest_field == origins_oid_field:
+                self.assigned_dest_field = self.origin_id_field
         arcpy.conversion.FeatureClassToFeatureClass(
             self.origins,
             os.path.dirname(self.output_origins),
@@ -539,7 +542,7 @@ class RoutePairSolver(
 
         # Sort origins by assigned destination if relevant
         if self.pair_type is helpers.PreassignedODPairType.one_to_one and self.should_sort_origins:
-            if self.assigned_dest_field == dest_oid_field:
+            if self.assigned_dest_field == origins_oid_field:
                 arcpy.AddWarning((
                     "When using the ObjectID field in Origins as the assigned destination field, the origins table "
                     "cannot and does not need to be sorted."))

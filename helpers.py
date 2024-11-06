@@ -21,6 +21,7 @@ import enum
 import traceback
 import logging
 import subprocess
+from numpy import int64
 from concurrent import futures
 import arcpy
 
@@ -29,6 +30,8 @@ arcgis_version = arcpy.GetInstallInfo()["Version"]
 
 # Set some shared global variables that can be referenced from the other scripts
 ID_FIELD_TYPES = ["Short", "Long", "Double", "Single", "Text", "OID"]
+if arcgis_version >= "3.2":
+    ID_FIELD_TYPES.append("BigInteger")
 MSG_STR_SPLITTER = " | "
 DISTANCE_UNITS = ["Kilometers", "Meters", "Miles", "Yards", "Feet", "NauticalMiles"]
 TIME_UNITS = ["Days", "Hours", "Minutes", "Seconds"]
@@ -46,9 +49,12 @@ MAX_RECOMMENDED_MGDB_PROCESSES = 4  # Max recommended concurrent processes with 
 MAX_ALLOWED_MAX_PROCESSES = 61  # Windows limitation for concurrent.futures ProcessPoolExecutor
 MAX_RETRIES = 3  # Max allowed retries if a parallel process errors (eg, temporary service glitch or read/write error)
 DATETIME_FORMAT = "%Y%m%d %H:%M"  # Used for converting between datetime and string
+MAX_ALLOWED_FC_ROWS_32BIT = 2000000000  # Use a 64bit OID feature class if the row count is bigger than this
 
 # Conversion between ArcGIS field types and python types for use when creating dataframes
-PD_FIELD_TYPES = {"String": str, "Single": float, "Double": float, "SmallInteger": int, "Integer": int, "OID": int}
+PD_FIELD_TYPES = {
+    "String": str, "Single": float, "Double": float, "SmallInteger": int, "Integer": int, "OID": int,
+    "BigInteger": int64}
 
 
 def is_nds_service(network_data_source):
@@ -478,7 +484,10 @@ def make_oid_preserving_field_mappings(input_fc, oid_field_name, unique_id_field
     new_field = arcpy.Field()
     new_field.name = unique_id_field_name
     new_field.aliasName = "Original OID"
-    new_field.type = "Integer"
+    if arcgis_version >= "3.2" and arcpy.Describe(input_fc).hasOID64:
+        new_field.type = "BigInteger"
+    else:
+        new_field.type = "Integer"
     # Create a new field map object and map the ObjectID to the new output field
     new_fm = arcpy.FieldMap()
     new_fm.addInputField(input_fc, oid_field_name)
@@ -486,6 +495,19 @@ def make_oid_preserving_field_mappings(input_fc, oid_field_name, unique_id_field
     # Add the new field map
     field_mappings.addFieldMap(new_fm)
     return field_mappings
+
+
+def get_max_possible_od_pair_count(origins_fc, destinations_fc, num_dests_to_find):
+    """Return the maximum number of OD pairs the results may include.
+
+    Used by the OD Cost Matrix solver only.
+    """
+    origin_count = int(arcpy.management.GetCount(origins_fc).getOutput(0))
+    if num_dests_to_find:
+        dest_count = num_dests_to_find
+    else:
+        dest_count = int(arcpy.management.GetCount(destinations_fc).getOutput(0))
+    return origin_count * dest_count
 
 
 def execute_subprocess(script_name, inputs):

@@ -685,6 +685,8 @@ class ParallelODCalculator:
         # Set up logger that will write to the GP window
         self.logger = logger
 
+        self.origins = origins
+        self.destinations = destinations
         time_units = helpers.convert_time_units_str_to_enum(time_units)
         distance_units = helpers.convert_distance_units_str_to_enum(distance_units)
         self.output_format = helpers.convert_output_format_str_to_enum(output_format)
@@ -715,8 +717,8 @@ class ParallelODCalculator:
 
         # Initialize the dictionary of inputs to send to each OD solve
         self.od_inputs = {
-            "origins": origins,
-            "destinations": destinations,
+            "origins": self.origins,
+            "destinations": self.destinations,
             "output_format": self.output_format,
             "output_od_location": self.output_od_location,
             "network_data_source": network_data_source,
@@ -734,8 +736,8 @@ class ParallelODCalculator:
         self.od_line_files = []
 
         # Construct OID ranges for chunks of origins and destinations
-        self.origin_ranges = helpers.get_oid_ranges_for_input(origins, max_origins)
-        destination_ranges = helpers.get_oid_ranges_for_input(destinations, max_destinations)
+        self.origin_ranges = helpers.get_oid_ranges_for_input(self.origins, max_origins)
+        destination_ranges = helpers.get_oid_ranges_for_input(self.destinations, max_destinations)
 
         # Construct pairs of chunks to ensure that each chunk of origins is matched with each chunk of destinations
         self.ranges = itertools.product(self.origin_ranges, destination_ranges)
@@ -849,6 +851,23 @@ class ParallelODCalculator:
         the entire analysis. DestinationRank refers to the rank within the chunk, not the overall rank. We need to
         recalculate DestinationRank considering the entire dataset.
         """
+        # Handle ridiculously huge outputs that may exceed the number of rows allowed in a 32-bit OID feature class
+        kwargs = {}
+        if helpers.arcgis_version >= "3.2":  # 64-bit OIDs were introduced in ArcGIS Pro 3.2.
+            # First do a quick check to determine if the maximum possible OD pairs exceeds the 32-bit limit
+            max_possible_pairs = helpers.get_max_possible_od_pair_count(
+                self.origins, self.destinations, self.num_destinations
+            )
+            if max_possible_pairs > helpers.MAX_ALLOWED_FC_ROWS_32BIT:
+                # Do a slower check to determine if the actual number of actual output OD pairs exceeds the
+                # 32-bit limit
+                num_pairs = 0
+                for out_fc in self.od_line_files:
+                    num_pairs += int(arcpy.management.GetCount(out_fc).getOutput(0))
+                if num_pairs > helpers.MAX_ALLOWED_FC_ROWS_32BIT:
+                    # Use a 64bit OID field in the output feature class
+                    kwargs = {"oid_type": "64_BIT"}
+
         # Create the final output feature class
         desc = arcpy.Describe(self.od_line_files[0])
         helpers.run_gp_tool(
@@ -861,7 +880,8 @@ class ParallelODCalculator:
                 "SAME_AS_TEMPLATE",
                 "SAME_AS_TEMPLATE",
                 desc.spatialReference
-            ]
+            ],
+            kwargs
         )
 
         # Insert the rows from all the individual output feature classes into the final output

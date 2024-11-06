@@ -36,6 +36,7 @@ import traceback
 import argparse
 from math import ceil
 from distutils.util import strtobool
+from numpy import int64
 import pandas as pd
 
 import arcpy
@@ -187,7 +188,7 @@ class Route(
     def _add_unique_id_fields(self):
         """Add fields to input Stops with the origin and destination's original unique IDs."""
         field_types = {"String": "TEXT", "Single": "FLOAT", "Double": "DOUBLE", "SmallInteger": "SHORT",
-                       "Integer": "LONG", "OID": "LONG"}
+                       "Integer": "LONG", "OID": "LONG", "BigInteger": "BIGINTEGER"}
         origin_field_def = [self.origin_unique_id_field_name, field_types[self.origin_id_field_obj.type]]
         if self.origin_id_field_obj.type == "String":
             origin_field_def += [self.origin_unique_id_field_name, self.origin_id_field_obj.length]
@@ -253,7 +254,7 @@ class Route(
         # Select the origins present in this chunk of predefined OD pairs
         self.logger.debug("Selecting origins for this chunk...")
         origins_in_chunk = set([pair[0] for pair in self.od_pairs])
-        if isinstance(self.od_pairs[0][0], (int, float,)):
+        if isinstance(self.od_pairs[0][0], (int, float, int64,)):
             origin_string = ", ".join([str(o_id) for o_id in origins_in_chunk])
         else:
             origin_string = "'" + "', '".join([str(o_id) for o_id in origins_in_chunk]) + "'"
@@ -269,7 +270,7 @@ class Route(
         # Select the destinations present in this chunk of predefined OD pairs
         self.logger.debug("Selecting destinations for this chunk...")
         dests_in_chunk = set([pair[1] for pair in self.od_pairs])
-        if isinstance(self.od_pairs[0][1], (int, float,)):
+        if isinstance(self.od_pairs[0][1], (int, float, int64,)):
             dest_string = ", ".join([str(d_id) for d_id in dests_in_chunk])
         else:
             dest_string = "'" + "', '".join([str(d_id) for d_id in dests_in_chunk]) + "'"
@@ -583,9 +584,10 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         # Set up logger that will write to the GP window
         self.logger = logger
 
-        pair_type = helpers.PreassignedODPairType[pair_type_str]
+        self.pair_type = helpers.PreassignedODPairType[pair_type_str]
         self.origins = origins
         self.destinations = destinations
+        self.od_pair_table = od_pair_table
         self.out_routes = out_routes
         self.scratch_folder = scratch_folder
         time_units = helpers.convert_time_units_str_to_enum(time_units)
@@ -600,7 +602,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
 
         # Initialize the dictionary of inputs to send to each OD solve
         self.rt_inputs = {
-            "pair_type": pair_type,
+            "pair_type": self.pair_type,
             "origins": self.origins,
             "origin_id_field": origin_id_field,
             "destinations": self.destinations,
@@ -613,7 +615,7 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
             "reverse_direction": reverse_direction,
             "scratch_folder": self.scratch_folder,
             "assigned_dest_field": assigned_dest_field,
-            "od_pair_table": od_pair_table,
+            "od_pair_table": self.od_pair_table,
             "barriers": barriers,
             "origin_transfer_fields": [],  # Populate later
             "destination_transfer_fields": []  # Populate later
@@ -623,13 +625,13 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         self.route_fcs = []
 
         # Construct OID ranges for chunks of origins and destinations
-        if pair_type is helpers.PreassignedODPairType.one_to_one:
+        if self.pair_type is helpers.PreassignedODPairType.one_to_one:
             # Chunks are of the format [first origin ID, second origin ID]
-            self.chunks = helpers.get_oid_ranges_for_input(origins, max_routes)
-        elif pair_type is helpers.PreassignedODPairType.many_to_many:
+            self.chunks = helpers.get_oid_ranges_for_input(self.origins, max_routes)
+        elif self.pair_type is helpers.PreassignedODPairType.many_to_many:
             # Chunks are of the format [chunk_num, chunk_size]
             num_od_pairs = 0
-            with open(od_pair_table, "r", encoding="utf-8") as f:
+            with open(self.od_pair_table, "r", encoding="utf-8") as f:
                 for _ in f:
                     num_od_pairs += 1
             num_chunks = ceil(num_od_pairs / max_routes)
@@ -774,6 +776,17 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
         Create an empty final output feature class and populate it using InsertCursor, as this tends to be faster than
         using the Merge geoprocessing tool.
         """
+        # Handle ridiculously huge outputs that may exceed the number of rows allowed in a 32-bit OID feature class
+        kwargs = {}
+        if helpers.arcgis_version >= "3.2":  # 64-bit OIDs were introduced in ArcGIS Pro 3.2.
+            if self.pair_type is helpers.PreassignedODPairType.one_to_one:
+                max_possible_pairs = int(arcpy.management.GetCount(self.origins).getOutput(0))
+            else:  # Many-to-many
+                max_possible_pairs = int(arcpy.management.GetCount(self.od_pair_table).getOutput(0))
+            if max_possible_pairs > helpers.MAX_ALLOWED_FC_ROWS_32BIT:
+                # Use a 64bit OID field in the output feature class
+                kwargs = {"oid_type": "64_BIT"}
+
         # Create the final output feature class
         desc = arcpy.Describe(self.route_fcs[0])
         helpers.run_gp_tool(
@@ -786,7 +799,8 @@ class ParallelRoutePairCalculator:  # pylint:disable = too-many-instance-attribu
                 "SAME_AS_TEMPLATE",
                 "SAME_AS_TEMPLATE",
                 desc.spatialReference
-            ]
+            ],
+            kwargs
         )
 
         # Insert the rows from all the individual output feature classes into the final output
