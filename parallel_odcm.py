@@ -50,10 +50,10 @@ if helpers.arcgis_version >= "2.9":
     import pyarrow as pa
     from pyarrow import fs
 
-DELETE_INTERMEDIATE_OD_OUTPUTS = True  # Set to False for debugging purposes
+DELETE_INTERMEDIATE_OD_OUTPUTS = False  # Set to False for debugging purposes
 
 # Change logging.INFO to logging.DEBUG to see verbose debug messages
-LOG_LEVEL = logging.INFO
+LOG_LEVEL = logging.DEBUG
 
 
 class ODCostMatrix(
@@ -185,9 +185,9 @@ class ODCostMatrix(
         self.od_solver.travelMode = self.travel_mode
         self.logger.debug(f"travelMode: {self.travel_mode}")
         self.od_solver.timeUnits = self.time_units
-        self.logger.debug(f"timeUnits: {self.time_units}")
+        self.logger.debug(f"timeUnits: {self.time_units.name}")
         self.od_solver.distanceUnits = self.distance_units
-        self.logger.debug(f"distanceUnits: {self.distance_units}")
+        self.logger.debug(f"distanceUnits: {self.distance_units.name}")
         self.od_solver.defaultDestinationCount = self.num_destinations
         self.logger.debug(f"defaultDestinationCount: {self.num_destinations}")
         self.od_solver.defaultImpedanceCutoff = self.cutoff
@@ -205,15 +205,15 @@ class ODCostMatrix(
             origins_criteria (list): Origin ObjectID range to select from the input dataset
             destinations_criteria ([type]): Destination ObjectID range to select from the input dataset
         """
+        # Initialize the OD solver object
+        self.initialize_od_solver()
+
         # Select the origins and destinations to process
         self._select_inputs(origins_criteria, destinations_criteria)
         if not self.input_destinations_layer_obj:
             # No destinations met the criteria for this set of origins
             self.logger.debug("No destinations met the criteria for this set of origins. Skipping OD calculation.")
             return
-
-        # Initialize the OD solver object
-        self.initialize_od_solver()
 
         # Load the origins
         self.logger.debug("Loading origins...")
