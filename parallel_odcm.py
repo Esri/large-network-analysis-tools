@@ -50,10 +50,10 @@ if helpers.arcgis_version >= "2.9":
     import pyarrow as pa
     from pyarrow import fs
 
-DELETE_INTERMEDIATE_OD_OUTPUTS = False  # Set to False for debugging purposes
+DELETE_INTERMEDIATE_OD_OUTPUTS = True  # Set to False for debugging purposes
 
 # Change logging.INFO to logging.DEBUG to see verbose debug messages
-LOG_LEVEL = logging.DEBUG
+LOG_LEVEL = logging.INFO
 
 
 class ODCostMatrix(
@@ -787,7 +787,7 @@ class ParallelODCalculator:
         """Solve the OD Cost Matrix in chunks and post-process the results."""
         # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
-        # that are guaranteed to all fail. While we're doing this, check and store the field name that  will represent
+        # that are guaranteed to all fail. While we're doing this, check and store the field name that will represent
         # costs in the output OD Lines table. We'll use this in post processing.
         self.optimized_cost_field = self._validate_od_settings()
 
