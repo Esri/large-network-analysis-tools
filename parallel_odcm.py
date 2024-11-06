@@ -12,7 +12,7 @@ within ArcGIS Pro, cannot launch parallel subprocesses on its own.
 
 This script should not be called directly from the command line.
 
-Copyright 2023 Esri
+Copyright 2024 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -185,9 +185,9 @@ class ODCostMatrix(
         self.od_solver.travelMode = self.travel_mode
         self.logger.debug(f"travelMode: {self.travel_mode}")
         self.od_solver.timeUnits = self.time_units
-        self.logger.debug(f"timeUnits: {self.time_units}")
+        self.logger.debug(f"timeUnits: {self.time_units.name}")
         self.od_solver.distanceUnits = self.distance_units
-        self.logger.debug(f"distanceUnits: {self.distance_units}")
+        self.logger.debug(f"distanceUnits: {self.distance_units.name}")
         self.od_solver.defaultDestinationCount = self.num_destinations
         self.logger.debug(f"defaultDestinationCount: {self.num_destinations}")
         self.od_solver.defaultImpedanceCutoff = self.cutoff
@@ -205,15 +205,15 @@ class ODCostMatrix(
             origins_criteria (list): Origin ObjectID range to select from the input dataset
             destinations_criteria ([type]): Destination ObjectID range to select from the input dataset
         """
+        # Initialize the OD solver object
+        self.initialize_od_solver()
+
         # Select the origins and destinations to process
         self._select_inputs(origins_criteria, destinations_criteria)
         if not self.input_destinations_layer_obj:
             # No destinations met the criteria for this set of origins
             self.logger.debug("No destinations met the criteria for this set of origins. Skipping OD calculation.")
             return
-
-        # Initialize the OD solver object
-        self.initialize_od_solver()
 
         # Load the origins
         self.logger.debug("Loading origins...")
@@ -787,7 +787,7 @@ class ParallelODCalculator:
         """Solve the OD Cost Matrix in chunks and post-process the results."""
         # Validate OD Cost Matrix settings. Essentially, create a dummy ODCostMatrix class instance and set up the
         # solver object to ensure this at least works. Do this up front before spinning up a bunch of parallel processes
-        # that are guaranteed to all fail. While we're doing this, check and store the field name that  will represent
+        # that are guaranteed to all fail. While we're doing this, check and store the field name that will represent
         # costs in the output OD Lines table. We'll use this in post processing.
         self.optimized_cost_field = self._validate_od_settings()
 
