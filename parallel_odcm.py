@@ -139,6 +139,7 @@ class ODCostMatrix(
         self.origins_oid_field_name = desc_origins.oidFieldName
         self.destinations_oid_field_name = desc_destinations.oidFieldName
         self.origins_fields = desc_origins.fields
+        self.origins_has_cutoff_field = "cutoff" in [f.name.lower() for f in self.origins_fields]
         self.destinations_fields = desc_destinations.fields
         self.orig_origin_oid_field = "Orig_Origin_OID"
         self.orig_dest_oid_field = "Orig_Dest_OID"
@@ -497,7 +498,7 @@ class ODCostMatrix(
         self.logger.error(err)
         raise ValueError(err)
 
-    def _convert_time_cutoff_to_distance(self):
+    def _convert_time_cutoff_to_distance(self, cutoff):
         """Convert a time-based cutoff to distance units.
 
         For a time-based travel mode, the cutoff is expected to be in the user's specified time units. Convert this
@@ -513,14 +514,38 @@ class ODCostMatrix(
         # Convert the assumed max speed to the user-specified distance units / time units
         max_speed = max_speed * (self._mile_to_dist_units() / self._hour_to_time_units())  # distance units / time units
         # Convert the user's cutoff from time to the user's distance units
-        cutoff_dist = self.cutoff * max_speed
+        cutoff_dist = cutoff * max_speed
         # Add a 5% margin to be on the safe side
         cutoff_dist = cutoff_dist + (0.05 * cutoff_dist)
         self.logger.debug((
-            f"Time cutoff {self.cutoff} {self.time_units.name} converted to distance: "
+            f"Time cutoff {cutoff} {self.time_units.name} converted to distance: "
             f"{cutoff_dist} {self.distance_units.name}"
         ))
         return cutoff_dist
+
+    def _get_max_cutoff_for_chunk(self):
+        """Determine the max cutoff value that applies to this chunk of origins."""
+        if not self.origins_has_cutoff_field:
+            # There are no per-origin cutoffs, so the default cutoff is the only cutoff
+            self.logger.debug("Origins doesn't have a Cutoff field, so there are no per-origin cutoffs.")
+            return self.cutoff
+        self.logger.debug("Checking chunk of Origins for per-origin cutoffs...")
+        default_cutoff = self.cutoff if self.cutoff else 0
+        max_cutoff = 0
+        for row in arcpy.da.SearchCursor(self.input_origins_layer_obj, ["Cutoff"]):
+            # The cutoff for the origin is either the value specified in the field, or, if that value is null or
+            # invalid, the specified default cutoff
+            try:
+                origin_cutoff = row[0] if row[0] and row[0] > 0 else default_cutoff
+            except Exception:
+                # Invalid per-origin cutoff value.  Ignore it and use the default.
+                origin_cutoff = default_cutoff
+            max_cutoff = max(origin_cutoff, max_cutoff)
+        self.logger.debug(f"Max per-origin cutoff discovered: {max_cutoff}")
+        if max_cutoff == 0:
+            # No cutoffs specified for this chunk
+            return None
+        return max_cutoff
 
     def _select_inputs(self, origins_criteria, destinations_criteria):
         """Create layers from the origins and destinations so the layers contain only the desired inputs for the chunk.
@@ -563,20 +588,27 @@ class ODCostMatrix(
         # reasonable straight-line distance cutoff. The straight-line distance will always be >= the network distance,
         # so any destinations falling beyond our cutoff limit in straight-line distance are guaranteed to be irrelevant
         # for the network-based OD cost matrix analysis
-        # > If not using an impedance cutoff, we cannot do anything here, so just return
-        if not self.cutoff:
-            return
         # > If using a travel mode with impedance units that are not time or distance-based, we cannot determine how to
         # convert the cutoff units into a sensible distance buffer, so just return
         if not self.is_travel_mode_time_based and not self.is_travel_mode_dist_based:
             return
+        # > If not using an impedance cutoff, we cannot do anything here, so just return
+        if not self.cutoff and not self.origins_has_cutoff_field:
+            return
+        # Determine the max cutoff for this chunk by combining the specified default cutoff and any per-origin
+        # Cutoff field values
+        cutoff = self._get_max_cutoff_for_chunk()
+        self.logger.debug(f"Initial cutoff value to use: {cutoff}")
+        # > If no default or per-origin cutoffs specified for this chunk, we cannot do anything here, so just return
+        if not cutoff:
+            return
         # > If using a distance-based travel mode, use the cutoff value directly
         if self.is_travel_mode_dist_based:
-            cutoff_dist = self.cutoff + (0.05 * self.cutoff)  # Use 5% margin to be on the safe side
+            cutoff_dist = cutoff + (0.05 * cutoff)  # Use 5% margin to be on the safe side
         # > If using a time-based travel mode, convert the time-based cutoff to a distance value in the user's specified
         # distance units by assuming a fast maximum travel speed
         else:
-            cutoff_dist = self._convert_time_cutoff_to_distance()
+            cutoff_dist = self._convert_time_cutoff_to_distance(cutoff)
 
         # Use SelectLayerByLocation to select those within a straight-line distance
         self.logger.debug(
