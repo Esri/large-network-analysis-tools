@@ -1,6 +1,6 @@
 """Helper for unit tests to create required inputs.
 
-Copyright 2023 Esri
+Copyright 2024 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -61,6 +61,28 @@ def get_tract_centroids_with_store_id_fc(sf_gdb):
         for _ in cur:
             cur.updateRow([store_ids[idx], 2])
             idx += 1
+    return new_fc
+
+
+def get_tract_centroids_with_cutoff(sf_gdb):
+    """Create the TractCentroids_Cutoff feature class in the SanFrancisco.gdb/Analysis for use in unit tests."""
+    new_fc = os.path.join(sf_gdb, "Analysis", "TractCentroids_Cutoff")
+    if arcpy.Exists(new_fc):
+        # The feature class exists already, so there's no need to do anything.
+        return new_fc
+    # Copy the tutorial dataset's TractCentroids feature class to the new feature class
+    print(f"Creating {new_fc} for test input...")
+    orig_fc = os.path.join(sf_gdb, "Analysis", "TractCentroids")
+    if not arcpy.Exists(orig_fc):
+        raise ValueError(f"{orig_fc} is missing.")
+    arcpy.management.Copy(orig_fc, new_fc)
+    # Add and populate the Cutoff field
+    arcpy.management.AddField(new_fc, "Cutoff", "DOUBLE")
+    with arcpy.da.UpdateCursor(new_fc, ["NAME", "Cutoff"]) as cur:  # pylint: disable=no-member
+        # Give 060816029.00 a cutoff value of 15 and leave the rest null
+        for row in cur:
+            if row[0] == "060816029.00":
+                cur.updateRow([row[0], 15])
     return new_fc
 
 
