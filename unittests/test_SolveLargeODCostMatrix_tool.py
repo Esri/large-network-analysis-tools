@@ -1,7 +1,7 @@
 """Unit tests for the SolveLargeODCostMatrix script tool. The test cases focus
 on making sure the tool parameters work correctly.
 
-Copyright 2023 Esri
+Copyright 2024 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -21,6 +21,7 @@ from glob import glob
 import unittest
 import arcpy
 import portal_credentials
+import input_data_helper
 
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CWD))
@@ -38,10 +39,10 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         arcpy.ImportToolbox(tbx_path)
 
         self.input_data_folder = os.path.join(CWD, "TestInput")
-        sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
-        self.origins = os.path.join(sf_gdb, "Analysis", "TractCentroids")
-        self.destinations = os.path.join(sf_gdb, "Analysis", "Hospitals")
-        self.local_nd = os.path.join(sf_gdb, "Transportation", "Streets_ND")
+        self.sf_gdb = os.path.join(self.input_data_folder, "SanFrancisco.gdb")
+        self.origins = os.path.join(self.sf_gdb, "Analysis", "TractCentroids")
+        self.destinations = os.path.join(self.sf_gdb, "Analysis", "Hospitals")
+        self.local_nd = os.path.join(self.sf_gdb, "Transportation", "Streets_ND")
         tms = arcpy.nax.GetTravelModes(self.local_nd)
         self.local_tm_time = tms["Driving Time"]
         self.local_tm_dist = tms["Driving Distance"]
@@ -57,11 +58,6 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         os.makedirs(self.scratch_folder)
         self.output_gdb = os.path.join(self.scratch_folder, "outputs.gdb")
         arcpy.management.CreateFileGDB(os.path.dirname(self.output_gdb), os.path.basename(self.output_gdb))
-
-        # Copy some data to the output gdb to serve as barriers. Do not use tutorial data directly as input because
-        # the tests will write network location fields to it, and we don't want to modify the user's original data.
-        self.barriers = os.path.join(self.output_gdb, "Barriers")
-        arcpy.management.Copy(os.path.join(sf_gdb, "Analysis", "CentralDepots"), self.barriers)
 
     def test_run_tool_time_units_feature_class(self):
         """Test that the tool runs with a time-based travel mode. Write output to a feature class."""
@@ -97,6 +93,11 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
 
     def test_run_tool_distance_units_csv_barriers(self):
         """Test that the tool runs with a distance-based travel mode. Write output to CSVs. Also use barriers."""
+        # Copy some data to the output gdb to serve as barriers. Do not use tutorial data directly as input because
+        # the tests will write network location fields to it, and we don't want to modify the user's original data.
+        barriers = os.path.join(self.output_gdb, "Barriers")
+        arcpy.management.Copy(os.path.join(self.sf_gdb, "Analysis", "CentralDepots"), barriers)
+
         # Run tool
         out_origins = os.path.join(self.output_gdb, "Dist_Origins")
         out_destinations = os.path.join(self.output_gdb, "Dist_Destinations")
@@ -118,7 +119,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             5,  # cutoff
             2,  # number of destinations
             None,  # time of day
-            self.barriers,  # barriers
+            barriers,  # barriers
             True,  # precalculate network locations
             True  # Spatially sort inputs
         )
@@ -193,6 +194,48 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
         self.assertTrue(arcpy.Exists(out_od_lines))
         self.assertTrue(arcpy.Exists(out_origins))
         self.assertTrue(arcpy.Exists(out_destinations))
+
+    def test_run_tool_per_origin_cutoff(self):
+        """Test that the tool correctly uses the Cutoff field in the input origins layer."""
+        # Run tool
+        origins = input_data_helper.get_tract_centroids_with_cutoff(self.sf_gdb)
+        out_od_lines = os.path.join(self.output_gdb, "PerOriginCutoff_ODLines")
+        out_origins = os.path.join(self.output_gdb, "PerOriginCutoff_Origins")
+        out_destinations = os.path.join(self.output_gdb, "PerOriginCutoff_Destinations")
+        arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(  # pylint: disable=no-member
+            origins,
+            os.path.join(self.sf_gdb, "Analysis", "FireStations"),
+            self.local_nd,
+            self.local_tm_time,
+            "Minutes",
+            "Miles",
+            50,  # chunk size
+            4,  # max processes
+            out_origins,
+            out_destinations,
+            "Feature class",
+            out_od_lines,
+            None,
+            1,  # cutoff - tiny cutoff that is overridden for one destination
+            None,  # number of destinations
+            None,  # time of day
+            None,  # barriers
+            True,  # precalculate network locations
+            True  # Spatially sort inputs
+        )
+        # Check results
+        self.assertTrue(arcpy.Exists(out_od_lines))
+        self.assertTrue(arcpy.Exists(out_origins))
+        self.assertTrue(arcpy.Exists(out_destinations))
+        self.assertEqual(63, int(arcpy.management.GetCount(out_od_lines).getOutput(0)), "Incorrect number of OD lines")
+        num_dests = 0
+        for row in arcpy.da.SearchCursor(out_od_lines, ["OriginName", "Total_Time"]):
+            if row[0] == "060816029.00":
+                num_dests += 1
+                self.assertLessEqual(row[1], 15, "Travel time is out of bounds for origin with its own cutoff")
+            else:
+                self.assertLessEqual(row[1], 1, "Travel time is out of bounds for origin with with default cutoff")
+        self.assertEqual(13, num_dests, "Incorrect number of destinations found for origin with its own cutoff.")
 
     def test_error_required_output_od_lines(self):
         """Test for correct error when output format is Feature class and output OD Lines not specified."""

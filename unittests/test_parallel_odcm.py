@@ -1,6 +1,6 @@
-"""Unit tests for the parallel_.py module.
+"""Unit tests for the parallel_odcm.py module.
 
-Copyright 2023 Esri
+Copyright 2024 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -127,9 +127,8 @@ class TestParallelODCM(unittest.TestCase):
         # We start with a 20-minute cutoff. The method converts this to a reasonable distance in units of miles.
         od_inputs = deepcopy(self.od_args)
         od_inputs["travel_mode"] = self.local_tm_time
-        od_inputs["cutoff"] = 20
         od = parallel_odcm.ODCostMatrix(**od_inputs)
-        self.assertAlmostEqual(28, od._convert_time_cutoff_to_distance(), 1)
+        self.assertAlmostEqual(28, od._convert_time_cutoff_to_distance(20), 1)
 
     def test_ODCostMatrix_select_inputs(self):
         """Test the _select_inputs method of the ODCostMatrix class."""
