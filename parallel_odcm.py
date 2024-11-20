@@ -962,7 +962,7 @@ class ParallelODCalculator:
         # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
         # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
         # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
-        if self.num_destinations:
+        if self.num_destinations or self.df_dest_count is not None:
             # Handle each origin range separately to avoid pulling all results into memory at once
             for origin_range in self.origin_ranges:
                 csvs_for_origin_range = [
@@ -992,7 +992,7 @@ class ParallelODCalculator:
         # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
         # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
         # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
-        if self.num_destinations:
+        if self.num_destinations or self.df_dest_count is not None:
             # Handle each origin range separately to avoid pulling all results into memory at once
             for origin_range in self.origin_ranges:
                 files_for_origin_range = [
