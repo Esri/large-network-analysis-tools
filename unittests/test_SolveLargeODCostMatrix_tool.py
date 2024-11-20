@@ -216,7 +216,7 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             "Feature class",
             out_od_lines,
             None,
-            1,  # cutoff - tiny cutoff that is overridden for one destination
+            1,  # cutoff - tiny cutoff that is overridden for one origin
             None,  # number of destinations
             None,  # time of day
             None,  # barriers
@@ -236,6 +236,58 @@ class TestSolveLargeODCostMatrixTool(unittest.TestCase):
             else:
                 self.assertLessEqual(row[1], 1, "Travel time is out of bounds for origin with with default cutoff")
         self.assertEqual(13, num_dests, "Incorrect number of destinations found for origin with its own cutoff.")
+
+    def test_run_tool_per_origin_dest_count(self):
+        """Test that the tool correctly uses the TargetDestinationCount field in the input origins layer."""
+        # Run tool
+        origins = input_data_helper.get_stores_with_dest_count(self.sf_gdb)
+        out_od_lines = os.path.join(self.output_gdb, "PerOriginDestCount_ODLines")
+        out_origins = os.path.join(self.output_gdb, "PerOriginDestCount_Origins")
+        out_destinations = os.path.join(self.output_gdb, "PerOriginDestCount_Destinations")
+        arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(  # pylint: disable=no-member
+            origins,
+            self.destinations,
+            self.local_nd,
+            self.local_tm_time,
+            "Minutes",
+            "Miles",
+            10,  # chunk size
+            4,  # max processes
+            out_origins,
+            out_destinations,
+            "Feature class",
+            out_od_lines,
+            None,
+            None,  # cutoff
+            1,  # number of destinations - overridden for one origin
+            None,  # time of day
+            None,  # barriers
+            True,  # precalculate network locations
+            True  # Spatially sort inputs
+        )
+        # Check results
+        self.assertTrue(arcpy.Exists(out_od_lines))
+        self.assertTrue(arcpy.Exists(out_origins))
+        self.assertTrue(arcpy.Exists(out_destinations))
+        self.assertEqual(28, int(arcpy.management.GetCount(out_od_lines).getOutput(0)), "Incorrect number of OD lines")
+        # Check Store_1, which should have 3 destinations
+        num_rows = 0
+        prev_time = 0
+        for row in arcpy.da.SearchCursor(out_od_lines, [ "Total_Time", "DestinationRank"], "OriginName = 'Store_1'"):
+            num_rows += 1
+            self.assertEqual(num_rows, row[1], "Incorrect DestinationRank value for Store_1")
+            self.assertGreater(row[0], prev_time, "Total_Time value for Store_1 isn't increasing")
+            prev_time = row[0]
+        self.assertEqual(3, num_rows, "Incorrect number of destinations found for Store_1")
+        # Check Store_2, which should have 2 destinations
+        num_rows = 0
+        prev_time = 0
+        for row in arcpy.da.SearchCursor(out_od_lines, [ "Total_Time", "DestinationRank"], "OriginName = 'Store_2'"):
+            num_rows += 1
+            self.assertEqual(num_rows, row[1], "Incorrect DestinationRank value for Store_2")
+            self.assertGreater(row[0], prev_time, "Total_Time value for Store_2 isn't increasing")
+            prev_time = row[0]
+        self.assertEqual(2, num_rows, "Incorrect number of destinations found for Store_2")
 
     def test_error_required_output_od_lines(self):
         """Test for correct error when output format is Feature class and output OD Lines not specified."""

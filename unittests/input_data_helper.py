@@ -86,6 +86,31 @@ def get_tract_centroids_with_cutoff(sf_gdb):
     return new_fc
 
 
+def get_stores_with_dest_count(sf_gdb):
+    """Create the Stores_DestCount feature class in the SanFrancisco.gdb/Analysis for use in unit tests."""
+    new_fc = os.path.join(sf_gdb, "Analysis", "Stores_DestCount")
+    if arcpy.Exists(new_fc):
+        # The feature class exists already, so there's no need to do anything.
+        return new_fc
+    # Copy the tutorial dataset's Stores feature class to the new feature class
+    print(f"Creating {new_fc} for test input...")
+    orig_fc = os.path.join(sf_gdb, "Analysis", "Stores")
+    if not arcpy.Exists(orig_fc):
+        raise ValueError(f"{orig_fc} is missing.")
+    arcpy.management.Copy(orig_fc, new_fc)
+    # Add and populate the Cutoff field
+    arcpy.management.AddField(new_fc, "TargetDestinationCount", "LONG")
+    with arcpy.da.UpdateCursor(new_fc, ["NAME", "TargetDestinationCount"]) as cur:  # pylint: disable=no-member
+        # Give Store_1 a TargetDestinationCount of 3 and Store_2 a TargetDestinationCount of 2
+        # and leave the rest as null
+        for row in cur:
+            if row[0] == "Store_1":
+                cur.updateRow([row[0], 3])
+            if row[0] == "Store_2":
+                cur.updateRow([row[0], 2])
+    return new_fc
+
+
 def get_od_pair_csv(input_data_folder):
     """Create the od_pairs.csv input file in the input data folder for use in unit testing."""
     od_pair_file = os.path.join(input_data_folder, "od_pairs.csv")
