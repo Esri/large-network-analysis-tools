@@ -777,6 +777,7 @@ class ParallelODCalculator:
         self.total_jobs = len(self.origin_ranges) * len(destination_ranges)
 
         self.optimized_cost_field = None
+        self.df_dest_count = None
 
     def _validate_od_settings(self):
         """Validate OD cost matrix settings before spinning up a bunch of parallel processes doomed to failure.
@@ -846,6 +847,7 @@ class ParallelODCalculator:
         # Post-process outputs
         if self.od_line_files:
             self.logger.info("Post-processing OD Cost Matrix results...")
+            self._check_per_origin_dest_counts()
             self.od_line_files = sorted(self.od_line_files)
             if self.output_format is helpers.OutputFormat.featureclass:
                 self._post_process_od_line_fcs()
@@ -960,7 +962,7 @@ class ParallelODCalculator:
         # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
         # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
         # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
-        if self.num_destinations:
+        if self.num_destinations or self.df_dest_count is not None:
             # Handle each origin range separately to avoid pulling all results into memory at once
             for origin_range in self.origin_ranges:
                 csvs_for_origin_range = [
@@ -990,7 +992,7 @@ class ParallelODCalculator:
         # processing. Calculating the OD in chunks means our merged output may have more than k destinations for each
         # origin because each individual chunk found the closest k for that chunk. We need to eliminate all extra rows
         # beyond the first k. Sort the data by OriginOID and the Total_ field that was optimized for the analysis.
-        if self.num_destinations:
+        if self.num_destinations or self.df_dest_count is not None:
             # Handle each origin range separately to avoid pulling all results into memory at once
             for origin_range in self.origin_ranges:
                 files_for_origin_range = [
@@ -1033,12 +1035,44 @@ class ParallelODCalculator:
                 for arrow_file in files_for_origin_range:
                     os.remove(arrow_file)
 
+    def _check_per_origin_dest_counts(self):
+        """Check if the input origins had per-origin TargetDestinationCount values and preserve them in a dataframe."""
+        # Check if the input Origins table has a per-origin TargetDestinationCount
+        desc = arcpy.Describe(self.origins)
+        if "targetdestinationcount" not in [f.name.lower() for f in desc.fields]:
+            # No additional processing needed
+            return
+
+        # Create a dataframe to hold the per-origin TargetDestinationCount values
+        # Use the OID field because the OriginOID field in the output OD lines corresponds to this
+        fields = [desc.oidFieldName, "TargetDestinationCount"]
+        columns = ["OriginOID", "TargetDestinationCount"]
+        with arcpy.da.SearchCursor(self.origins, fields) as cur2:  # pylint: disable=no-member
+            self.df_dest_count = pd.DataFrame(cur2, columns=columns)
+        # Use the default number of destinations to find for any nulls
+        if self.num_destinations:
+            self.df_dest_count["TargetDestinationCount"].fillna(self.num_destinations, inplace=True)
+        self.df_dest_count.set_index("OriginOID", inplace=True)
+
     def _update_df_for_k_nearest_and_destination_rank(self, df):
         """Drop all but the k nearest records for each Origin from the dataframe and calculate DestinationRank."""
         # Sort according to OriginOID and cost field
         df.sort_values(["OriginOID", self.optimized_cost_field], inplace=True)
+
         # Keep only the first k records for each OriginOID
-        if self.num_destinations:
+        if self.df_dest_count is not None:
+            # Preserve the first k destinations for each origin using the per-origin TargetDestination count value
+            # preserved in the self.df_dest_count dataframe
+            def drop_rows(group):
+                """Drop rows in group according to the number specified in TargetDestinationCount."""
+                dest_count = self.df_dest_count.loc[group.iloc[0]["OriginOID"]]["TargetDestinationCount"]
+                if not pd.isna(dest_count):
+                    return group.head(int(dest_count))
+                else:
+                    return group
+            df = df.groupby("OriginOID").apply(lambda g: drop_rows(g)).reset_index(drop=True)
+        elif self.num_destinations:
+            # Keep only the first k records for each OriginOID
             df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
         # Properly calculate the DestinationRank field
         df["DestinationRank"] = df.groupby("OriginOID").cumcount() + 1

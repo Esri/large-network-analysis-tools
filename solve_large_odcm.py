@@ -19,12 +19,9 @@ Copyright 2024 Esri
    limitations under the License.
 """
 import os
-import sys
-import time
 import datetime
 import traceback
 import argparse
-import subprocess
 from distutils.util import strtobool
 
 import arcpy
