@@ -16,7 +16,7 @@ The LargeNetworkAnalysisTools.pyt toolbox has three geoprocessing tools:
 * ArcGIS Pro 2.5 or later (ArcGIS Pro 2.9 or later is recommended for improved performance and functionality, and older Pro versions have not been thoroughly tested)
 * One of the following three options:
   * A routable [network dataset](https://pro.arcgis.com/en/pro-app/help/analysis/networks/what-is-network-dataset-.htm) and the Network Analyst extension license
-  * An ArcGIS Online account with routing privileges and sufficient [credits](https://pro.arcgis.com/en/pro-app/tool-reference/appendices/geoprocessing-tools-that-use-credits.htm#ESRI_SECTION1_3EF40A7C01C042D8A76DB9518B793E9E)
+  * An ArcGIS Online account with routing privileges and sufficient [credits](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/credit-consumption-and-analysis-limits.htm#ESRI_SECTION1_91C68C10CB7A42B792C1961BF6660BB1)
   * A portal with [ArcGIS Enterprise routing services](https://pro.arcgis.com/en/pro-app/help/analysis/networks/using-arcgis-enterprise-routing-services.htm) configured.
 * Origin and destination points you wish to analyze
 
@@ -90,6 +90,16 @@ arcpy.LargeNetworkAnalysisTools.SolveLargeODCostMatrix(
 ```
 
 You can also run the provided scripts by directly calling solve_large_odcm.py from the command line instead of using the geoprocessing tool as the code's gateway. Call `python solve_large_odcm.py -h` to print the command line help to show you how to do this.
+
+### Credit consumption
+
+Running the tool will consume [credits](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/credit-consumption-and-analysis-limits.htm#ESRI_SECTION1_91C68C10CB7A42B792C1961BF6660BB1) if the **Network Data Source** parameter is set to ArcGIS Online or an ArcGIS Enterprise portal with routing services configured using ArcGIS Online.  No credits will be consumed if you use a network dataset or an Enterprise portal configured with your own data.
+
+This tool uses the Origin Destination Cost Matrix solver. Check the credit consumption table in the documentation link above to learn how credits are charged for this solver.
+
+To minimize credit consumption, use the **Cutoff** and **Number of Destinations to Find for Each Origin** parameters to reduce the problem size as much as possible. Using the **Spatially Sort Inputs** option in combination with the **Cutoff** parameter can also significantly reduce the problem size and thereby reduce credit consumption.
+
+Other tool settings do not affect credit consumption.
 
 ### Recommended settings for best performance
 
@@ -194,6 +204,14 @@ arcpy.LargeNetworkAnalysisTools.SolveLargeAnalysisWithKnownPairs(
 
 You can also run the provided scripts by directly calling solve_large_route_pair_analysis.py from the command line instead of using the geoprocessing tool as the code's gateway. Call `python solve_large_route_pair_analysis.py -h` to print the command line help to show you how to do this.
 
+### Credit consumption
+
+Running the tool will consume [credits](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/credit-consumption-and-analysis-limits.htm#ESRI_SECTION1_91C68C10CB7A42B792C1961BF6660BB1) if the **Network Data Source** parameter is set to ArcGIS Online or an ArcGIS Enterprise portal with routing services configured using ArcGIS Online.  No credits will be consumed if you use a network dataset or an Enterprise portal configured with your own data.
+
+This tool uses the Simple Routes solver.  Each origin-destination pair is one simple route.  Check the credit consumption table in the documentation link above to learn how credits are charged for this solver.
+
+Other tool settings do not affect credit consumption.
+
 ### Technical explanation of how this tool works
 
 The tool consists of several scripts:
@@ -273,6 +291,10 @@ arcpy.LargeNetworkAnalysisTools.ParallelCalculateLocations(
 ### Tool output
 
 The output feature class will be a copy of the input feature class with the [network location fields](https://pro.arcgis.com/en/pro-app/latest/help/analysis/networks/locating-analysis-inputs.htm#ESRI_SECTION1_9FF9489173C741DD95472F21B5AD8374) appended.  Because the original ObjectIDs may have shifted, the output feature class includes an ORIG_OID field with the values of the original ObjectID.  (If the feature class already had an ORIG_OID field, the new field may be called ORIG_OID1, ORIG_OID2, etc.)
+
+### Credit consumption
+
+This tool does not consume credits since it can only be run using a network dataset.
 
 ### Technical explanation of how this tool works
 
