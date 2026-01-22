@@ -890,7 +890,12 @@ class ParallelCalculateLocations(object):
         # Construct string-based travel mode
         travel_mode = parameters[5].value
         if travel_mode:
-            travel_mode = travel_mode._JSON  # pylint: disable=protected-access
+            if hasattr(travel_mode, "JSON"):
+                # Pro 3.7+
+                travel_mode = travel_mode.JSON
+            else:
+                # Pre 3.7
+                travel_mode = travel_mode._JSON  # pylint: disable=protected-access
         else:
             travel_mode = ""
 
