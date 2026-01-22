@@ -360,7 +360,13 @@ class RoutePairSolver(
                         raise
 
         # Return a JSON string representation of the travel mode to pass to the subprocess
-        return rt.travelMode._JSON  # pylint: disable=protected-access
+        if hasattr(rt.travelMode, "JSON"):
+            # Pro 3.7+
+            tm_json = rt.travelMode.JSON
+        else:
+            # Pre 3.7
+            tm_json = rt.travelMode._JSON  # pylint: disable=protected-access
+        return tm_json
 
     def _update_max_inputs_for_service(self):
         """Check the user's specified max origins and destinations and reduce max to portal limits if required."""
