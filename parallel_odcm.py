@@ -919,7 +919,7 @@ class ParallelODCalculator:
         )
 
         # Insert the rows from all the individual output feature classes into the final output
-        fields = ["SHAPE@"] + [f.name for f in desc.fields]
+        fields = ["SHAPE@"] + [f.name for f in desc.fields if f.type not in ["OID", "Geometry"]]
         with arcpy.da.InsertCursor(self.output_od_location, fields) as cur:  # pylint: disable=no-member
             # Handle each origin range separately to avoid pulling all results into memory at once
             for origin_range in self.origin_ranges:
