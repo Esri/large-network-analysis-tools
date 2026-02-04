@@ -919,7 +919,7 @@ class ParallelODCalculator:
         )
 
         # Insert the rows from all the individual output feature classes into the final output
-        fields = ["SHAPE@"] + [f.name for f in desc.fields]
+        fields = ["SHAPE@"] + [f.name for f in desc.fields if f.type not in ["OID", "Geometry"]]
         with arcpy.da.InsertCursor(self.output_od_location, fields) as cur:  # pylint: disable=no-member
             # Handle each origin range separately to avoid pulling all results into memory at once
             for origin_range in self.origin_ranges:
@@ -1051,7 +1051,7 @@ class ParallelODCalculator:
             self.df_dest_count = pd.DataFrame(cur2, columns=columns)
         # Use the default number of destinations to find for any nulls
         if self.num_destinations:
-            self.df_dest_count["TargetDestinationCount"].fillna(self.num_destinations, inplace=True)
+            self.df_dest_count.fillna({"TargetDestinationCount": self.num_destinations}, inplace=True)
         self.df_dest_count.set_index("OriginOID", inplace=True)
 
     def _update_df_for_k_nearest_and_destination_rank(self, df):
@@ -1070,7 +1070,7 @@ class ParallelODCalculator:
                     return group.head(int(dest_count))
                 else:
                     return group
-            df = df.groupby("OriginOID").apply(lambda g: drop_rows(g)).reset_index(drop=True)
+            df = df.groupby("OriginOID")[df.columns.tolist()].apply(lambda g: drop_rows(g)).reset_index(drop=True)
         elif self.num_destinations:
             # Keep only the first k records for each OriginOID
             df = df.groupby("OriginOID").head(self.num_destinations).reset_index(drop=True)
