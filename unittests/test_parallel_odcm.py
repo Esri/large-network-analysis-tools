@@ -356,7 +356,7 @@ class TestParallelODCM(unittest.TestCase):
         self.assertEqual(414, int(arcpy.management.GetCount(out_od_lines).getOutput(0)))
 
     def test_ParallelODCalculator_solve_od_in_parallel_featureclass_no_dest_limit(self):
-        """Test the solve_od_in_parallel function. Output to feature class. No destination limit.
+        """Test the solve_od_in_parallel function. Output to feature class. No destination limit. No cutoff
 
         A different codepath is used when post-processing OD Line feature classes if there is no destination limit.
         """
@@ -374,7 +374,7 @@ class TestParallelODCM(unittest.TestCase):
             "max_processes": 4,
             "time_units": "Minutes",
             "distance_units": "Miles",
-            "cutoff": 30,
+            "cutoff": None,
             "num_destinations": None,
             "time_of_day": None,
             "barriers": []
@@ -386,7 +386,8 @@ class TestParallelODCM(unittest.TestCase):
 
         # Check results
         self.assertTrue(arcpy.Exists(out_od_lines))
-        self.assertEqual(4545, int(arcpy.management.GetCount(out_od_lines).getOutput(0)))
+        # One origin is in an unreachable location, so it produces no results
+        self.assertEqual(4554, int(arcpy.management.GetCount(out_od_lines).getOutput(0)))
 
     def test_ParallelODCalculator_solve_od_in_parallel_csv(self):
         """Test the solve_od_in_parallel function. Output to CSV."""
