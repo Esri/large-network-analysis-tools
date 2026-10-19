@@ -7,7 +7,7 @@ This is a sample script users can modify to fit their specific needs.
 
 This script can be called from the script tool definition or from the command line.
 
-Copyright 2024 Esri
+Copyright 2026 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -22,10 +22,7 @@ import os
 import datetime
 import traceback
 import argparse
-from distutils.util import strtobool
-
 import arcpy
-
 import helpers
 from od_config import OD_PROPS, OD_PROPS_SET_BY_TOOL  # Import OD Cost Matrix settings from config file
 
@@ -561,13 +558,13 @@ def _run_from_command_line():
     # --precalculate-network-locations parameter
     help_string = "Whether or not to precalculate network location fields before solving the analysis."
     parser.add_argument(
-        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
 
     # --sort-inputs parameter
     help_string = "Whether or not to spatially sort origins and destinations."
     parser.add_argument(
-        "-si", "--sort-inputs", action="store", type=lambda x: bool(strtobool(x)),
+        "-si", "--sort-inputs", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="sort_inputs", help=help_string, required=True)
 
     # --barriers parameter

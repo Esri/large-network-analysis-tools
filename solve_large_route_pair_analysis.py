@@ -11,7 +11,7 @@ This is a sample script users can modify to fit their specific needs.
 
 This script can be called from the script tool definition or from the command line.
 
-Copyright 2024 Esri
+Copyright 2026 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -28,11 +28,8 @@ import uuid
 import traceback
 import argparse
 from math import floor
-from distutils.util import strtobool
 import pandas as pd
-
 import arcpy
-
 import helpers
 from rt_config import RT_PROPS, RT_PROPS_SET_BY_TOOL  # Import Route settings from config file
 
@@ -729,19 +726,19 @@ def _run_from_command_line():
     # --precalculate-network-locations parameter
     help_string = "Whether or not to precalculate network location fields before solving the analysis."
     parser.add_argument(
-        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(strtobool(x)),
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
 
     # --sort-origins parameter
     help_string = "Whether or not to sort the origins by assigned destination before solving the analysis."
     parser.add_argument(
-        "-so", "--sort-origins", action="store", type=lambda x: bool(strtobool(x)),
+        "-so", "--sort-origins", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="sort_origins", help=help_string, required=True)
 
     # --reverse-direction parameter
     help_string = "Whether to reverse the direction of travel (destination to origin)."
     parser.add_argument(
-        "-rd", "--reverse-direction", action="store", type=lambda x: bool(strtobool(x)),
+        "-rd", "--reverse-direction", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="reverse_direction", help=help_string, required=True)
 
     # Get arguments as dictionary.
