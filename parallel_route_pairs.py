@@ -880,7 +880,7 @@ def launch_parallel_rt_pairs():
     # --reverse-direction parameter
     help_string = "Whether to reverse the direction of travel (destination to origin)."
     parser.add_argument(
-        "-rd", "--reverse-direction", action="store", type=lambda x: helpers.cli_str_to_bool(x),
+        "-rd", "--reverse-direction", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="reverse_direction", help=help_string, required=True)
 
     # --out-routes parameter

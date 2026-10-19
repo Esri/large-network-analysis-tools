@@ -558,13 +558,13 @@ def _run_from_command_line():
     # --precalculate-network-locations parameter
     help_string = "Whether or not to precalculate network location fields before solving the analysis."
     parser.add_argument(
-        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: helpers.cli_str_to_bool(x),
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
 
     # --sort-inputs parameter
     help_string = "Whether or not to spatially sort origins and destinations."
     parser.add_argument(
-        "-si", "--sort-inputs", action="store", type=lambda x: helpers.cli_str_to_bool(x),
+        "-si", "--sort-inputs", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="sort_inputs", help=help_string, required=True)
 
     # --barriers parameter

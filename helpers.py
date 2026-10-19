@@ -57,11 +57,13 @@ PD_FIELD_TYPES = {
     "BigInteger": int64}
 
 
-def cli_str_to_bool(value):
+def cli_val_to_bool(value):
     """Convert a command line interface value to a boolean."""
-    if value in [True, "y", "yes", "t", "true", "on", 1]:
+    if isinstance(value, str):
+        value = value.lower()
+    if value in [True, "y", "yes", "t", "true", "on", "1", 1]:
         return True
-    if value in [False, "n", "no", "f", "false", "off", 0]:
+    if value in [False, "n", "no", "f", "false", "off", "0", 0]:
         return False
     raise ValueError(f"Invalid value ({value}) for boolean parameter")
 

@@ -726,19 +726,19 @@ def _run_from_command_line():
     # --precalculate-network-locations parameter
     help_string = "Whether or not to precalculate network location fields before solving the analysis."
     parser.add_argument(
-        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: helpers.cli_str_to_bool(x),
+        "-pnl", "--precalculate-network-locations", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="precalculate_network_locations", help=help_string, required=True)
 
     # --sort-origins parameter
     help_string = "Whether or not to sort the origins by assigned destination before solving the analysis."
     parser.add_argument(
-        "-so", "--sort-origins", action="store", type=lambda x: helpers.cli_str_to_bool(x),
+        "-so", "--sort-origins", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="sort_origins", help=help_string, required=True)
 
     # --reverse-direction parameter
     help_string = "Whether to reverse the direction of travel (destination to origin)."
     parser.add_argument(
-        "-rd", "--reverse-direction", action="store", type=lambda x: helpers.cli_str_to_bool(x),
+        "-rd", "--reverse-direction", action="store", type=lambda x: bool(helpers.cli_val_to_bool(x)),
         dest="reverse_direction", help=help_string, required=True)
 
     # Get arguments as dictionary.
