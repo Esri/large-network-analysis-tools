@@ -2,7 +2,7 @@
 
 This is a sample script users can modify to fit their specific needs.
 
-Copyright 2024 Esri
+Copyright 2026 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -55,6 +55,15 @@ MAX_ALLOWED_FC_ROWS_32BIT = 2000000000  # Use a 64bit OID feature class if the r
 PD_FIELD_TYPES = {
     "String": str, "Single": float, "Double": float, "SmallInteger": int, "Integer": int, "OID": int,
     "BigInteger": int64}
+
+
+def cli_str_to_bool(value):
+    """Convert a command line interface value to a boolean."""
+    if value in [True, "y", "yes", "t", "true", "on", 1]:
+        return True
+    if value in [False, "n", "no", "f", "false", "off", 0]:
+        return False
+    raise ValueError(f"Invalid value ({value}) for boolean parameter")
 
 
 def is_nds_service(network_data_source):

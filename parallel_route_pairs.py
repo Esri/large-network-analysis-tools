@@ -15,7 +15,7 @@ process, when running within ArcGIS Pro, cannot launch parallel subprocesses on 
 
 This script should not be called directly from the command line.
 
-Copyright 2024 Esri
+Copyright 2026 Esri
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -35,7 +35,6 @@ import datetime
 import traceback
 import argparse
 from math import ceil
-from distutils.util import strtobool
 from numpy import int64
 import pandas as pd
 
@@ -881,7 +880,7 @@ def launch_parallel_rt_pairs():
     # --reverse-direction parameter
     help_string = "Whether to reverse the direction of travel (destination to origin)."
     parser.add_argument(
-        "-rd", "--reverse-direction", action="store", type=lambda x: bool(strtobool(x)),
+        "-rd", "--reverse-direction", action="store", type=lambda x: helpers.cli_str_to_bool(x),
         dest="reverse_direction", help=help_string, required=True)
 
     # --out-routes parameter
